@@ -1,20 +1,11 @@
-#!/usr/bin/env python3
 """IPID selection-strategy classification.
 
-Usage:
-    python3 classify_ipid.py ipid/icmp_2026-06-29_15-56-56
+Reads a measurement's IPID sequences from ``data/raw/<measurement>/ipid.pq`` and
+writes a per-IP strategy label to ``data/processed/<measurement>/strategies.pq``.
 
-The single argument is a measurement key. Paths are derived from it:
+Run it on a measurement key (relative to the data dirs)::
 
-    input  : ./data/raw/<key>/ipid.pq
-    config : ./data/raw/<key>/ipid.snapshot.yaml
-    output : ./data/processed/<key>/strategies.pq        (created automatically)
-
-(The data root defaults to ./data and can be changed with --data-root.)
-
-The snapshot YAML supplies the measurement layout (connection_count,
-requests_per_connection, request_ip_ids); the classifier thresholds below are
-tuning parameters and stay in code.
+    python ipid_analysis/classify.py ipid/icmp_2026-06-29_15-56-56
 
 Design for scale (>100 GB / >300M rows):
   * DuckDB streams the file and splits/casts the comma-separated IPID strings in
@@ -29,21 +20,26 @@ Design for scale (>100 GB / >300M rows):
 
 from __future__ import annotations
 
-import argparse
-import math
-import re
-import sys
-import time
 from dataclasses import dataclass
 from enum import IntEnum
+import math
 from pathlib import Path
+import re
+import time
 
 import duckdb
+from loguru import logger
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-import yaml
 from scipy.special import gammaincc  # vectorized chi-square survival function
+from tqdm import tqdm
+import typer
+import yaml
+
+from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
+
+app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
 
@@ -55,7 +51,6 @@ MULTI_MAX_CLUSTERS = 16
 RANDOM_MIN_P_VALUE = 1e-9  # reject "random" if any uniformity p-value is below this
 CHI2_BINS = 4  # bins for the increment-uniformity test (see chi2_pvalue note)
 
-DATA_ROOT = Path("data")
 INPUT_NAME = "ipid.pq"
 SNAPSHOT_NAME = "ipid.snapshot.yaml"
 OUTPUT_NAME = "strategies.pq"
@@ -135,7 +130,7 @@ def chi2_pvalue(inc: np.ndarray, n_bins: int) -> np.ndarray:
 
     NOTE (assumption -- the original chi2_test was undefined): the increments of
     a random IPID source are uniform mod 2**16, so this bins each row's
-    increments into `n_bins` equal-width bins and tests against a uniform
+    increments into ``n_bins`` equal-width bins and tests against a uniform
     expectation. Swap this body if your intended test differs. Returns a p-value
     in [0, 1]; small => clearly non-uniform.
     """
@@ -153,7 +148,7 @@ def chi2_pvalue(inc: np.ndarray, n_bins: int) -> np.ndarray:
 
 def cluster_counts(seq: np.ndarray, max_diff: int) -> np.ndarray:
     """Per-row number of clusters: sort the row, then start a new cluster wherever
-    the gap between consecutive sorted values exceeds `max_diff`.
+    the gap between consecutive sorted values exceeds ``max_diff``.
 
     NOTE (assumption -- get_clusters was undefined): linear (non-wrapping)
     single-link clustering on the raw IPIDs. Replace if you need circular
@@ -188,11 +183,11 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
 
     # increments, all mod 2**16 via uint16 wraparound
     inc_all = np.diff(S, axis=1)
-    inc_src1 = np.diff(S[:, 0::2], axis=1)   # source A (interface a)
-    inc_src2 = np.diff(S[:, 1::2], axis=1)   # source B (interface b)
+    inc_src1 = np.diff(S[:, 0::2], axis=1)  # source A (interface a)
+    inc_src2 = np.diff(S[:, 1::2], axis=1)  # source B (interface b)
     # connection j = positions [j, j+conn, j+2*conn, ...] -> reshape + swap axes
     con = S.reshape(n, req, conn).transpose(0, 2, 1)
-    inc_con = np.diff(con, axis=2)           # (N, conn, req-1)
+    inc_con = np.diff(con, axis=2)  # (N, conn, req-1)
 
     # REFLECTION: sequence equals the request pattern shifted by a constant offset
     offset = (S64[:, 0] - pattern[0]) % MODULUS
@@ -260,99 +255,89 @@ def process(
         batch_size: int,
         compression: str | None,
         threads: int,
-        log_every: int,
-) -> None:
+) -> int:
+    """Stream input_path through the classifier into output_path. Returns the
+    number of IPs written."""
+    total = pq.ParquetFile(input_path).metadata.num_rows
     con = duckdb.connect(config={"threads": threads} if threads else {})
     reader = con.execute(READ_SQL, {"input": str(input_path)}).to_arrow_reader(batch_size)
     writer = pq.ParquetWriter(output_path, OUTPUT_SCHEMA, compression=compression)
 
     processed = 0
-    last_log = 0
-    start = time.monotonic()
     try:
-        for batch in reader:
-            ip_addr = batch.column("IP_ADDR").cast(pa.string())
-            valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
+        with tqdm(total=total, unit="IP", desc="classifying") as bar:
+            for batch in reader:
+                ip_addr = batch.column("IP_ADDR").cast(pa.string())
+                valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
 
-            codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
-            if matrix.shape[0]:
-                codes[valid] = classify_batch(matrix, cfg, skip_first)
+                codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
+                if matrix.shape[0]:
+                    codes[valid] = classify_batch(matrix, cfg, skip_first)
 
-            strategy = pa.DictionaryArray.from_arrays(pa.array(codes), STRATEGY_DICT)
-            writer.write_batch(pa.record_batch([ip_addr, strategy], schema=OUTPUT_SCHEMA))
+                strategy = pa.DictionaryArray.from_arrays(pa.array(codes), STRATEGY_DICT)
+                writer.write_batch(pa.record_batch([ip_addr, strategy], schema=OUTPUT_SCHEMA))
 
-            processed += len(valid)
-            if log_every and processed - last_log >= log_every:
-                rate = processed / (time.monotonic() - start)
-                print(f"{processed:,} IPs processed ({rate:,.0f}/s)", file=sys.stderr)
-                last_log = processed
+                processed += len(valid)
+                bar.update(len(valid))
     finally:
         writer.close()
         con.close()
-
-    elapsed = time.monotonic() - start
-    print(f"Done: {processed:,} IPs in {elapsed:.1f}s -> {output_path}", file=sys.stderr)
+    return processed
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description="Classify IPID selection strategies.")
-    p.add_argument("measurement", help="measurement key, e.g. ipid/icmp_2026-06-29_15-56-56")
-    p.add_argument("--data-root", type=Path, default=DATA_ROOT,
-                   help="data root (default: ./data)")
-    p.add_argument("--batch-size", type=int, default=1_000_000,
-                   help="rows per batch (default: 1000000)")
-    p.add_argument("--compression", default="zstd",
-                   choices=["zstd", "snappy", "gzip", "lz4", "none"])
-    p.add_argument("--threads", type=int, default=0,
-                   help="DuckDB threads (0 = all cores)")
-    p.add_argument("--protocol", default="auto",
-                   help="auto (from measurement name) | tcp | icmp | ...; "
-                        "tcp skips the first IPID of each connection")
-    p.add_argument("--log-every", type=int, default=5_000_000,
-                   help="log progress every N IPs to stderr (0 = off)")
-    args = p.parse_args()
+def resolve_protocol(measurement: str, protocol: str) -> str:
+    """'auto' derives the protocol from the measurement leaf (tcp-80 -> tcp)."""
+    if protocol != "auto":
+        return protocol.lower()
+    leaf = measurement.rstrip("/").split("/")[-1]
+    return re.split(r"[-_]", leaf, maxsplit=1)[0].lower()
 
-    raw_dir = args.data_root / "raw" / args.measurement
+
+@app.command()
+def main(
+        measurement: str = typer.Argument(
+            ..., help="measurement key, e.g. ipid/icmp_2026-06-29_15-56-56"
+        ),
+        protocol: str = typer.Option(
+            "auto", help="auto|tcp|udp|icmp; tcp skips the first IPID of each connection"
+        ),
+        batch_size: int = typer.Option(1_000_000, help="rows per batch"),
+        compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
+        threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
+) -> None:
+    raw_dir = RAW_DATA_DIR / measurement
     input_path = raw_dir / INPUT_NAME
     snapshot_path = raw_dir / SNAPSHOT_NAME
-    output_path = args.data_root / "processed" / args.measurement / OUTPUT_NAME
+    output_path = PROCESSED_DATA_DIR / measurement / OUTPUT_NAME
 
     for path in (input_path, snapshot_path):
         if not path.is_file():
-            sys.exit(f"error: not found: {path}")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.error(f"not found: {path}")
+            raise typer.Exit(code=1)
 
     cfg = load_config(snapshot_path)
+    proto = resolve_protocol(measurement, protocol)
+    skip_first = proto == "tcp"
 
-    # Protocol drives whether the first IPID of each connection is skipped.
-    protocol = args.protocol.lower()
-    if protocol == "auto":
-        leaf = args.measurement.rstrip("/").split("/")[-1]
-        protocol = re.split(r"[-_]", leaf, maxsplit=1)[0].lower()
-    skip_first = protocol == "tcp"
+    logger.info(
+        f"{measurement}: {proto}, "
+        f"{cfg.connection_count}x{cfg.requests_per_connection}={cfg.sequence_length} IPIDs"
+        + (", skipping first IPID per connection" if skip_first else "")
+    )
 
-    print(
-        f"input   : {input_path}\n"
-        f"config  : {snapshot_path} "
-        f"({cfg.connection_count}x{cfg.requests_per_connection} = {cfg.sequence_length} IPIDs, "
-        f"{cfg.request_ip_ids.size} request IDs)\n"
-        f"protocol: {protocol}"
-        + (" (skipping first IPID per connection)" if skip_first else "")
-        + f"\noutput  : {output_path}",
-        file=sys.stderr,
-        )
-
-    process(
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    start = time.monotonic()
+    n = process(
         input_path,
         output_path,
         cfg,
         skip_first,
-        batch_size=args.batch_size,
-        compression=None if args.compression == "none" else args.compression,
-        threads=args.threads,
-        log_every=args.log_every,
+        batch_size=batch_size,
+        compression=None if compression == "none" else compression,
+        threads=threads,
     )
+    logger.success(f"classified {n:,} IPs in {time.monotonic() - start:.1f}s -> {output_path}")
 
 
 if __name__ == "__main__":
-    main()
+    app()
