@@ -83,7 +83,7 @@ OUTPUT_SCHEMA = pa.schema(
 # DuckDB does the heavy lifting: scan + split + cast, multithreaded in C++.
 READ_SQL = """
            SELECT IP_ADDR,
-                  list_transform(string_split(IPID_SEQUENCE, ','), x - > CAST(x AS INTEGER)) AS ipid
+                  CAST(string_split(IPID_SEQUENCE, ',') AS INTEGER[]) AS ipid
            FROM read_parquet($input) \
            """
 
