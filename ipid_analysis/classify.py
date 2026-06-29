@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -167,11 +168,23 @@ def cluster_counts(seq: np.ndarray, max_diff: int) -> np.ndarray:
 # Vectorized classifier. S: (N, L) uint16 -> (N,) int8 codes.
 # Each mask mirrors one of the original is_* predicates.
 # ---------------------------------------------------------------------------
-def classify_batch(S: np.ndarray, cfg: MeasurementConfig) -> np.ndarray:
-    n = S.shape[0]
-    S64 = S.astype(np.int64)
+def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = False) -> np.ndarray:
     conn, req = cfg.connection_count, cfg.requests_per_connection
     req_ids = cfg.request_ip_ids
+
+    # Pattern over the original positions; trimmed identically to S below.
+    pattern = req_ids[np.arange(cfg.sequence_length) % req_ids.size]
+
+    if skip_first:
+        # TCP: the first IPID of each connection belongs to the handshake's last
+        # packet. With round-robin interleaving that is exactly the first round
+        # (positions 0..conn-1), so drop it from every view.
+        S = S[:, conn:]
+        pattern = pattern[conn:]
+        req -= 1
+
+    n = S.shape[0]
+    S64 = S.astype(np.int64)
 
     # increments, all mod 2**16 via uint16 wraparound
     inc_all = np.diff(S, axis=1)
@@ -182,7 +195,6 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig) -> np.ndarray:
     inc_con = np.diff(con, axis=2)           # (N, conn, req-1)
 
     # REFLECTION: sequence equals the request pattern shifted by a constant offset
-    pattern = req_ids[np.arange(cfg.sequence_length) % req_ids.size]
     offset = (S64[:, 0] - pattern[0]) % MODULUS
     expected = (pattern[None, :] + offset[:, None]) % MODULUS
     m_reflection = (S64 == expected).all(axis=1)
@@ -244,6 +256,7 @@ def process(
         input_path: Path,
         output_path: Path,
         cfg: MeasurementConfig,
+        skip_first: bool,
         batch_size: int,
         compression: str | None,
         threads: int,
@@ -263,7 +276,7 @@ def process(
 
             codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
             if matrix.shape[0]:
-                codes[valid] = classify_batch(matrix, cfg)
+                codes[valid] = classify_batch(matrix, cfg, skip_first)
 
             strategy = pa.DictionaryArray.from_arrays(pa.array(codes), STRATEGY_DICT)
             writer.write_batch(pa.record_batch([ip_addr, strategy], schema=OUTPUT_SCHEMA))
@@ -292,6 +305,9 @@ def main() -> None:
                    choices=["zstd", "snappy", "gzip", "lz4", "none"])
     p.add_argument("--threads", type=int, default=0,
                    help="DuckDB threads (0 = all cores)")
+    p.add_argument("--protocol", default="auto",
+                   help="auto (from measurement name) | tcp | icmp | ...; "
+                        "tcp skips the first IPID of each connection")
     p.add_argument("--log-every", type=int, default=5_000_000,
                    help="log progress every N IPs to stderr (0 = off)")
     args = p.parse_args()
@@ -307,19 +323,30 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     cfg = load_config(snapshot_path)
+
+    # Protocol drives whether the first IPID of each connection is skipped.
+    protocol = args.protocol.lower()
+    if protocol == "auto":
+        leaf = args.measurement.rstrip("/").split("/")[-1]
+        protocol = re.split(r"[-_]", leaf, maxsplit=1)[0].lower()
+    skip_first = protocol == "tcp"
+
     print(
         f"input   : {input_path}\n"
         f"config  : {snapshot_path} "
         f"({cfg.connection_count}x{cfg.requests_per_connection} = {cfg.sequence_length} IPIDs, "
         f"{cfg.request_ip_ids.size} request IDs)\n"
-        f"output  : {output_path}",
+        f"protocol: {protocol}"
+        + (" (skipping first IPID per connection)" if skip_first else "")
+        + f"\noutput  : {output_path}",
         file=sys.stderr,
-    )
+        )
 
     process(
         input_path,
         output_path,
         cfg,
+        skip_first,
         batch_size=args.batch_size,
         compression=None if args.compression == "none" else args.compression,
         threads=args.threads,
