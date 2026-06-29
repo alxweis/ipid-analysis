@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Optional
 
 import duckdb
-from loguru import logger
 import matplotlib.pyplot as plt
 import typer
+from loguru import logger
 
-from ipid_analysis.strategies import OUTPUT_NAME, STRATEGY_NAMES
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.strategies import OUTPUT_NAME, STRATEGY_NAMES
 
 app = typer.Typer()
 

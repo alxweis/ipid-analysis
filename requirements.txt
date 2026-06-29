@@ -1,8 +1,14 @@
+duckdb
 loguru
+matplotlib
 mkdocs
+numpy
 pip
+pyarrow
 python-dotenv
+pyyaml
 ruff
+scipy
 tqdm
 typer
 -e .

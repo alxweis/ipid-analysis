@@ -5,7 +5,7 @@ writes a per-IP strategy label to ``data/processed/<measurement>/strategies.pq``
 
 Run it on a measurement key (relative to the data dirs)::
 
-    python ipid_analysis/classify.py ipid/icmp_2026-06-29_15-56-56
+    python ipid_analysis/strategies.py ipid/icmp_2026-06-29_15-56-56
 
 Design for scale (>100 GB / >300M rows):
   * DuckDB streams the file and splits/casts the comma-separated IPID strings in
@@ -20,22 +20,22 @@ Design for scale (>100 GB / >300M rows):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import IntEnum
 import math
-from pathlib import Path
 import re
 import time
+from dataclasses import dataclass
+from enum import IntEnum
+from pathlib import Path
 
 import duckdb
-from loguru import logger
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from scipy.special import gammaincc  # vectorized chi-square survival function
-from tqdm import tqdm
 import typer
 import yaml
+from loguru import logger
+from scipy.special import gammaincc  # vectorized chi-square survival function
+from tqdm import tqdm
 
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 
@@ -82,9 +82,8 @@ OUTPUT_SCHEMA = pa.schema(
 
 # DuckDB does the heavy lifting: scan + split + cast, multithreaded in C++.
 READ_SQL = """
-           SELECT
-               IP_ADDR,
-               list_transform(string_split(IPID_SEQUENCE, ','), x -> CAST(x AS INTEGER)) AS ipid
+           SELECT IP_ADDR,
+                  list_transform(string_split(IPID_SEQUENCE, ','), x - > CAST(x AS INTEGER)) AS ipid
            FROM read_parquet($input) \
            """
 
@@ -224,7 +223,7 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
             p_min >= RANDOM_MIN_P_VALUE,
             int(IPIDStrategy.RANDOM),
             int(IPIDStrategy.UNCLASSIFIED),
-            )
+        )
     return codes
 
 
