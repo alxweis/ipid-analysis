@@ -66,6 +66,14 @@ class MeasurementID:
     port: int | None
     timestamp: datetime
 
+    def __str__(self) -> str:
+        if self.port is None:
+            prefix = self.protocol
+        else:
+            prefix = f"{self.protocol}-{self.port}"
+
+        return f"{prefix}_{self.timestamp:%Y-%m-%d_%H-%M-%S}"
+
 
 _MEASUREMENT_ID_RE = re.compile(
     r"^(?:(icmp)|(tcp|udp)-([0-9]{1,5}))_"
