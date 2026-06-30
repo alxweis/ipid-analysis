@@ -16,7 +16,7 @@ from ipid_analysis.config import IPID_STRATEGY_DIST_JSON_NAME, FIGURES_DIR, IPID
     PROCESSED_DATA_DIR, IPID_STRATEGY_DATA_NAME
 
 
-def _strategy_counts(strategies_path: Path) -> dict[str, int]:
+def _counts(strategies_path: Path) -> dict[str, int]:
     with duckdb.connect() as con:
         rows = con.execute(
             "SELECT IPID_SELECTION_STRATEGY AS s, count(*) AS n "
@@ -28,26 +28,26 @@ def _strategy_counts(strategies_path: Path) -> dict[str, int]:
     return {name: int(counts.get(name, 0)) for name in STRATEGY_NAMES}
 
 
-def _strategy_percentages(counts: dict[str, int], total: int) -> dict[str, float]:
+def _percentages(counts: dict[str, int], total: int) -> dict[str, float]:
     if not total:
         return {name: 0.0 for name in STRATEGY_NAMES}
     return {name: 100.0 * counts[name] / total for name in STRATEGY_NAMES}
 
 
-def strategy_distribution(measurement: str) -> tuple[dict[str, int], int, dict[str, float]]:
+def get_data(measurement: str) -> tuple[dict[str, int], int, dict[str, float]]:
     strategies_path = PROCESSED_DATA_DIR / Path(measurement) / IPID_STRATEGY_DATA_NAME
     if not strategies_path.is_file():
         logger.error(f"not found: {strategies_path}")
         raise typer.Exit(code=1)
 
-    counts = _strategy_counts(strategies_path)
+    counts = _counts(strategies_path)
     total = sum(counts.values())
-    percentages = _strategy_percentages(counts, total)
+    percentages = _percentages(counts, total)
 
     return counts, total, percentages
 
 
-def info_strategy_distribution(
+def create_info(
         measurement: str,
         counts: dict[str, int],
         total: int,
@@ -67,7 +67,7 @@ def info_strategy_distribution(
     return info
 
 
-def plot_strategy_distribution(measurement: str, percentages: dict[str, float]) -> tuple[Figure, Path]:
+def create_plot(measurement: str, percentages: dict[str, float]) -> tuple[Figure, Path]:
     labels = list(percentages)
     values = [percentages[k] for k in labels]
 
