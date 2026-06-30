@@ -1,23 +1,3 @@
-"""IPID selection-strategy classification.
-
-Reads a measurement's IPID sequences from ``data/raw/<measurement>/ipid.pq`` and
-writes a per-IP strategy label to ``data/processed/<measurement>/strategies.pq``.
-
-Run it on a measurement key (relative to the data dirs)::
-
-    python ipid_analysis/strategies.py ipid/icmp_2026-06-29_15-56-56
-
-Design for scale (>100 GB / >300M rows):
-  * DuckDB streams the file and splits/casts the comma-separated IPID strings in
-    C++ across all cores -- no per-row Python parsing.
-  * Only IP_ADDR and IPID_SEQUENCE are read; the timestamp columns are never
-    touched (the current rules do not use them -> saves most of the I/O).
-  * Each sequence has a fixed length, so a whole batch becomes one (N, L) uint16
-    matrix and every rule runs vectorized over the batch. No per-IP objects.
-  * The strategy column is dictionary-encoded (int8 + small dictionary), so it
-    costs ~1 byte/row instead of a string per row.
-"""
-
 from __future__ import annotations
 
 import math
@@ -37,7 +17,8 @@ from loguru import logger
 from scipy.special import gammaincc  # vectorized chi-square survival function
 from tqdm import tqdm
 
-from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR, IPID_MEASURE_NAME, IPID_CONFIG_SNAPSHOT_NAME, \
+    IPID_STRATEGY_DATA_NAME, IP_ADDR, IPID_SELECTION_STRATEGY
 
 app = typer.Typer()
 
@@ -48,17 +29,12 @@ MIN_STEPS_BEFORE_WRAPAROUND = 3
 MAX_INC = math.ceil(MODULUS / MIN_STEPS_BEFORE_WRAPAROUND) - 1  # 21845
 MULTI_MAX_INC = 800
 MULTI_MAX_CLUSTERS = 16
-RANDOM_MIN_P_VALUE = 1e-9  # reject "random" if any uniformity p-value is below this
-CHI2_BINS = 4  # bins for the increment-uniformity test (see chi2_pvalue note)
-
-INPUT_NAME = "ipid.pq"
-SNAPSHOT_NAME = "ipid.snapshot.yaml"
-OUTPUT_NAME = "strategies.pq"
+RANDOM_MIN_P_VALUE = 1e-9
+CHI2_BINS = 4
 
 
 class IPIDStrategy(IntEnum):
     """Values double as the dictionary codes; ORDER == classification priority."""
-
     REFLECTION = 0
     CONSTANT = 1
     PER_DESTINATION = 2
@@ -75,12 +51,11 @@ STRATEGY_DICT = pa.array(STRATEGY_NAMES, type=pa.string())
 
 OUTPUT_SCHEMA = pa.schema(
     [
-        ("IP_ADDR", pa.string()),
-        ("IPID_SELECTION_STRATEGY", pa.dictionary(pa.int8(), pa.string())),
+        (IP_ADDR, pa.string()),
+        (IPID_SELECTION_STRATEGY, pa.dictionary(pa.int8(), pa.string())),
     ]
 )
 
-# DuckDB does the heavy lifting: scan + split + cast, multithreaded in C++.
 READ_SQL = """
            SELECT IP_ADDR,
                   CAST(string_split(IPID_SEQUENCE, ',') AS INTEGER[]) AS ipid
@@ -89,7 +64,7 @@ READ_SQL = """
 
 
 # ---------------------------------------------------------------------------
-# Measurement configuration (from the snapshot YAML).
+# Measurement configuration
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class MeasurementConfig:
@@ -124,9 +99,7 @@ def _all_in_range(inc: np.ndarray, lo: int, hi: int, axis) -> np.ndarray:
 
 
 def chi2_pvalue(inc: np.ndarray, n_bins: int) -> np.ndarray:
-    """Chi-square goodness-of-fit p-value (per row) that the increments are
-    uniform over [0, 2**16).
-    """
+    """Chi-square goodness-of-fit p-value (per row) that the increments are uniform over [0, 2**16)."""
     m, length = inc.shape
     if length == 0:
         return np.ones(m)
@@ -140,9 +113,8 @@ def chi2_pvalue(inc: np.ndarray, n_bins: int) -> np.ndarray:
 
 
 def cluster_counts(seq: np.ndarray, max_diff: int) -> np.ndarray:
-    """Per-row cluster count, circular (mod 2**16): sort each row, count gaps
-    above max_diff, including the wrap gap from the largest value back to the
-    smallest. On a circle, #clusters == #large gaps (or 1 if none)."""
+    """Per-row cluster count, circular (mod 2**16): sort each row, count gaps above max_diff, including the wrap gap
+    from the largest value back to the smallest. On a circle, #clusters == #large gaps (or 1 if none)."""
     ordered = np.sort(seq, axis=1).astype(np.int64)
     interior = (np.diff(ordered, axis=1) > max_diff).sum(axis=1)
     wrap = MODULUS - (ordered[:, -1] - ordered[:, 0])  # gap max -> min over the wraparound
@@ -162,9 +134,8 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
     pattern = req_ids[np.arange(cfg.sequence_length) % req_ids.size]
 
     if skip_first:
-        # TCP: the first IPID of each connection belongs to the handshake's last
-        # packet. With round-robin interleaving that is exactly the first round
-        # (positions 0..conn-1), so drop it from every view.
+        # TCP: the first IPID of each connection belongs to the handshake's last packet. With round-robin interleaving
+        # that is exactly the first round (positions 0..conn-1), so drop it from every view.
         S = S[:, conn:]
         pattern = pattern[conn:]
         req -= 1
@@ -176,7 +147,7 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
     inc_all = np.diff(S, axis=1)
     inc_src1 = np.diff(S[:, 0::2], axis=1)  # source A
     inc_src2 = np.diff(S[:, 1::2], axis=1)  # source B
-    # connection j = positions [j, j+conn, j+2*conn, ...] -> reshape + swap axes
+    # connection i = positions [i, i+conn, i+2*conn, ...] -> reshape + swap axes
     con = S.reshape(n, req, conn).transpose(0, 2, 1)
     inc_con = np.diff(con, axis=2)  # (N, conn, req-1)
 
@@ -194,15 +165,15 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
     n_clusters = cluster_counts(S, MULTI_MAX_INC)
     m_multi = (n_clusters > 1) & (n_clusters <= MULTI_MAX_CLUSTERS)
 
-    # Resolve the cheap, deterministic rules first; -1 marks rows that still need
-    # the expensive RANDOM test, so chi2 runs only on the residual.
+    # Resolve the cheap, deterministic rules first; -1 marks rows that still need the expensive RANDOM test, so chi2
+    # runs only on the residual.
     det_masks = [m_reflection, m_constant, m_per_dest, m_per_conn, m_single, m_per_bucket, m_multi]
     codes = np.select(det_masks, list(range(len(det_masks))), default=-1).astype(np.int8)
 
     residual = np.flatnonzero(codes == -1)
     if residual.size:
-        # RANDOM: increments look uniform on every view (whole seq, both sources,
-        # each connection). Reject if the smallest p-value is below the threshold.
+        # RANDOM: increments look uniform on every view (whole seq, both sources, each connection). Reject if the
+        # smallest p-value is below the threshold.
         p_min = np.minimum.reduce(
             [
                 chi2_pvalue(inc_all[residual], CHI2_BINS),
@@ -221,8 +192,8 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
 
 # ---------------------------------------------------------------------------
 def _batch_to_matrix(ipid_list: pa.ListArray, seq_len: int) -> tuple[np.ndarray, np.ndarray]:
-    """Turn a list<int32> column into an (M, seq_len) uint16 matrix for the rows
-    that have exactly seq_len entries. Returns (valid_mask, matrix)."""
+    """Turn a list<int32> column into an (M, seq_len) uint16 matrix for the rows that have exactly seq_len entries.
+    Returns (valid_mask, matrix)."""
     lengths = ipid_list.value_lengths().to_numpy(zero_copy_only=False)
     if lengths.size == 0:
         return np.zeros(0, dtype=bool), np.empty((0, seq_len), dtype=np.uint16)
@@ -247,8 +218,7 @@ def process(
         compression: str | None,
         threads: int,
 ) -> int:
-    """Stream input_path through the classifier into output_path. Returns the
-    number of IPs written."""
+    """Stream input_path through the classifier into output_path. Returns the number of IPs written."""
     total = pq.ParquetFile(input_path).metadata.num_rows
     con = duckdb.connect(config={"threads": threads} if threads else {})
     reader = con.execute(READ_SQL, {"input": str(input_path)}).to_arrow_reader(batch_size)
@@ -258,7 +228,7 @@ def process(
     try:
         with tqdm(total=total, unit="IP", desc="classifying") as bar:
             for batch in reader:
-                ip_addr = batch.column("IP_ADDR").cast(pa.string())
+                ip_addr = batch.column(IP_ADDR).cast(pa.string())
                 valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
 
                 codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
@@ -276,10 +246,8 @@ def process(
     return processed
 
 
-def resolve_protocol(measurement: str, protocol: str) -> str:
+def resolve_protocol(measurement: str) -> str:
     """Derives the protocol from the measurement leaf."""
-    if protocol != "auto":
-        return protocol.lower()
     leaf = measurement.rstrip("/").split("/")[-1]
     return re.split(r"[-_]", leaf, maxsplit=1)[0].lower()
 
@@ -287,19 +255,16 @@ def resolve_protocol(measurement: str, protocol: str) -> str:
 @app.command()
 def main(
         measurement: str = typer.Argument(
-            ..., help="measurement key, e.g. ipid/icmp_2026-06-29_15-56-56"
-        ),
-        protocol: str = typer.Option(
-            "auto", help="auto|tcp|udp|icmp; tcp skips the first IPID of each connection"
+            ..., help="measurement key, e.g. ipid/tcp-80_YYYY-MM-DD_HH-MM-SS"
         ),
         batch_size: int = typer.Option(1_000_000, help="rows per batch"),
         compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
         threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
 ) -> None:
     raw_dir = RAW_DATA_DIR / measurement
-    input_path = raw_dir / INPUT_NAME
-    snapshot_path = raw_dir / SNAPSHOT_NAME
-    output_path = PROCESSED_DATA_DIR / measurement / OUTPUT_NAME
+    input_path = raw_dir / IPID_MEASURE_NAME
+    snapshot_path = raw_dir / IPID_CONFIG_SNAPSHOT_NAME
+    output_path = PROCESSED_DATA_DIR / measurement / IPID_STRATEGY_DATA_NAME
 
     for path in (input_path, snapshot_path):
         if not path.is_file():
@@ -307,7 +272,7 @@ def main(
             raise typer.Exit(code=1)
 
     cfg = load_config(snapshot_path)
-    proto = resolve_protocol(measurement, protocol)
+    proto = resolve_protocol(measurement)
     skip_first = proto == "tcp"
 
     logger.info(
