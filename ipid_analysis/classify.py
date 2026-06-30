@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import math
-import re
 import time
-from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
@@ -12,19 +10,18 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
-import yaml
 from loguru import logger
 from scipy.special import gammaincc  # vectorized chi-square survival function
 from tqdm import tqdm
 
-from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR, IPID_MEASURE_NAME, IPID_CONFIG_SNAPSHOT_NAME, \
-    IPID_STRATEGY_DATA_NAME, IP_ADDR, IPID_SELECTION_STRATEGY
+from ipid_analysis.config import PROCESSED_DATA_DIR, IPID_MEASURE_NAME, IPID_CONFIG_SNAPSHOT_NAME, \
+    STRATEGY_DATA_NAME, IP_ADDR, IPID_SELECTION_STRATEGY, load_config, IPID_DATA_DIR, MeasurementConfig
 
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
 
-# --- classifier thresholds (tuning, measurement-independent) ---------------
+# --- Classifier thresholds -------------------------------------------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3
 MAX_INC = math.ceil(MODULUS / MIN_STEPS_BEFORE_WRAPAROUND) - 1  # 21845
 MULTI_MAX_INC = 800
@@ -61,33 +58,6 @@ READ_SQL = """
                   CAST(string_split(IPID_SEQUENCE, ',') AS INTEGER[]) AS ipid
            FROM read_parquet($input) \
            """
-
-
-# ---------------------------------------------------------------------------
-# Measurement configuration
-# ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class MeasurementConfig:
-    connection_count: int
-    requests_per_connection: int
-    request_ip_ids: np.ndarray  # int64
-
-    @property
-    def sequence_length(self) -> int:
-        return self.connection_count * self.requests_per_connection
-
-
-def load_config(snapshot_path: Path) -> MeasurementConfig:
-    with snapshot_path.open() as fh:
-        data = yaml.safe_load(fh)
-    try:
-        return MeasurementConfig(
-            connection_count=int(data["connection_count"]),
-            requests_per_connection=int(data["requests_per_connection"]),
-            request_ip_ids=np.asarray(data["request_ip_ids"], dtype=np.int64),
-        )
-    except (KeyError, TypeError) as exc:
-        raise ValueError(f"{snapshot_path}: missing/invalid measurement fields ({exc})") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +149,7 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
                 chi2_pvalue(inc_all[residual], CHI2_BINS),
                 chi2_pvalue(inc_src1[residual], CHI2_BINS),
                 chi2_pvalue(inc_src2[residual], CHI2_BINS),
-                *[chi2_pvalue(inc_con[residual, j, :], CHI2_BINS) for j in range(conn)],
+                *[chi2_pvalue(inc_con[residual, i, :], CHI2_BINS) for i in range(conn)],
             ]
         )
         codes[residual] = np.where(
@@ -246,25 +216,19 @@ def process(
     return processed
 
 
-def resolve_protocol(measurement: str) -> str:
-    """Derives the protocol from the measurement leaf."""
-    leaf = measurement.rstrip("/").split("/")[-1]
-    return re.split(r"[-_]", leaf, maxsplit=1)[0].lower()
-
-
 @app.command()
 def main(
-        measurement: str = typer.Argument(
-            ..., help="measurement key, e.g. ipid/tcp-80_YYYY-MM-DD_HH-MM-SS"
+        measurement_id: str = typer.Argument(
+            ..., help="measurement id, e.g. tcp-80_YYYY-MM-DD_HH-MM-SS"
         ),
         batch_size: int = typer.Option(1_000_000, help="rows per batch"),
         compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
         threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
 ) -> None:
-    raw_dir = RAW_DATA_DIR / measurement
+    raw_dir = IPID_DATA_DIR / measurement_id
     input_path = raw_dir / IPID_MEASURE_NAME
     snapshot_path = raw_dir / IPID_CONFIG_SNAPSHOT_NAME
-    output_path = PROCESSED_DATA_DIR / measurement / IPID_STRATEGY_DATA_NAME
+    output_path = PROCESSED_DATA_DIR / measurement_id / STRATEGY_DATA_NAME
 
     for path in (input_path, snapshot_path):
         if not path.is_file():
@@ -272,11 +236,11 @@ def main(
             raise typer.Exit(code=1)
 
     cfg = load_config(snapshot_path)
-    proto = resolve_protocol(measurement)
+    proto = cfg.zmap.protocol
     skip_first = proto == "tcp"
 
     logger.info(
-        f"{measurement}: {proto}, "
+        f"{measurement_id}: {proto}, "
         f"{cfg.connection_count}x{cfg.requests_per_connection}={cfg.sequence_length} IPIDs"
         + (", skipping first IPID per connection" if skip_first else "")
     )

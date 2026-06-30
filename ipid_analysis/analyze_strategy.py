@@ -12,8 +12,8 @@ from loguru import logger
 from matplotlib.figure import Figure
 
 from ipid_analysis.classify import STRATEGY_NAMES
-from ipid_analysis.config import IPID_STRATEGY_DIST_JSON_NAME, FIGURES_DIR, IPID_STRATEGY_DIST_PDF_NAME, \
-    PROCESSED_DATA_DIR, IPID_STRATEGY_DATA_NAME
+from ipid_analysis.config import STRATEGY_DIST_JSON_NAME, FIGURES_DIR, STRATEGY_DIST_PDF_NAME, \
+    PROCESSED_DATA_DIR, STRATEGY_DATA_NAME, MeasurementID
 
 
 def _counts(strategies_path: Path) -> dict[str, int]:
@@ -34,8 +34,8 @@ def _percentages(counts: dict[str, int], total: int) -> dict[str, float]:
     return {name: 100.0 * counts[name] / total for name in STRATEGY_NAMES}
 
 
-def get_data(measurement: str) -> tuple[dict[str, int], int, dict[str, float]]:
-    strategies_path = PROCESSED_DATA_DIR / Path(measurement) / IPID_STRATEGY_DATA_NAME
+def get_data(measurement_id: MeasurementID) -> tuple[dict[str, int], int, dict[str, float]]:
+    strategies_path = PROCESSED_DATA_DIR / str(measurement_id) / STRATEGY_DATA_NAME
     if not strategies_path.is_file():
         logger.error(f"not found: {strategies_path}")
         raise typer.Exit(code=1)
@@ -48,26 +48,26 @@ def get_data(measurement: str) -> tuple[dict[str, int], int, dict[str, float]]:
 
 
 def create_info(
-        measurement: str,
+        measurement_id: MeasurementID,
         counts: dict[str, int],
         total: int,
         percentages: dict[str, float]
 ) -> dict[str, Any]:
     info = {
-        "source": measurement,
+        "source": str(measurement_id),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "total_ips": total,
         "counts": counts,
         "percentages": percentages,
     }
 
-    output_path = FIGURES_DIR / Path(measurement) / IPID_STRATEGY_DIST_JSON_NAME
+    output_path = FIGURES_DIR / str(measurement_id) / STRATEGY_DIST_JSON_NAME
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(info, indent=2) + "\n")
     return info
 
 
-def create_plot(measurement: str, percentages: dict[str, float]) -> tuple[Figure, Path]:
+def create_plot(measurement_id: MeasurementID, percentages: dict[str, float]) -> tuple[Figure, Path]:
     labels = list(percentages)
     values = [percentages[k] for k in labels]
 
@@ -83,7 +83,7 @@ def create_plot(measurement: str, percentages: dict[str, float]) -> tuple[Figure
     ax.spines[["top", "right"]].set_visible(False)
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
 
-    output_path = FIGURES_DIR / Path(measurement) / IPID_STRATEGY_DIST_PDF_NAME
+    output_path = FIGURES_DIR / str(measurement_id) / STRATEGY_DIST_PDF_NAME
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     return fig, output_path
