@@ -1,5 +1,3 @@
-"""Plot the IPID selection-strategy distribution of a classified measurement."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,21 +6,13 @@ from typing import Optional
 import duckdb
 import matplotlib.pyplot as plt
 import typer
-from loguru import logger
 
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
-from ipid_analysis.strategies import OUTPUT_NAME, STRATEGY_NAMES
+from ipid_analysis.classify import STRATEGY_NAMES
 
 app = typer.Typer()
 
 
 def strategy_distribution(strategies_path: Path) -> dict[str, float]:
-    """Percentage share per strategy over all rows.
-
-    Uses a streaming ``GROUP BY`` in DuckDB, so it never loads the file into
-    memory and works on the full >100 GB output. Strategies are returned in the
-    canonical order, missing ones as 0.0 (so plots are comparable across runs).
-    """
     con = duckdb.connect()
     rows = con.execute(
         "SELECT IPID_SELECTION_STRATEGY AS s, count(*) AS n "
@@ -38,11 +28,7 @@ def strategy_distribution(strategies_path: Path) -> dict[str, float]:
     return {name: 100.0 * counts.get(name, 0) / total for name in STRATEGY_NAMES}
 
 
-def plot_strategy_distribution(
-        dist: dict[str, float], output_path: Path, title: Optional[str] = None
-) -> plt.Figure:
-    """Bar chart of ``dist`` (x = IPID strategy, y = share in %). Saves to
-    ``output_path`` (PDF by extension) and returns the figure."""
+def plot_strategy_distribution(dist: dict[str, float], output_path: Path, title: Optional[str] = None) -> plt.Figure:
     labels = list(dist)
     values = [dist[k] for k in labels]
 
@@ -64,27 +50,8 @@ def plot_strategy_distribution(
 
 
 @app.command()
-def main(
-        measurement: str = typer.Argument(
-            ..., help="measurement key, e.g. ipid/icmp_2026-06-29_15-56-56"
-        ),
-        output_path: Optional[Path] = typer.Option(
-            None, help="output PDF (default: reports/figures/<name>_strategy_distribution.pdf)"
-        ),
-) -> None:
-    strategies_path = PROCESSED_DATA_DIR / measurement / OUTPUT_NAME
-    if not strategies_path.is_file():
-        logger.error(f"not found: {strategies_path}")
-        raise typer.Exit(code=1)
-
-    name = Path(measurement).name
-    if output_path is None:
-        output_path = FIGURES_DIR / f"{name}_strategy_distribution.pdf"
-
-    logger.info(f"reading {strategies_path}")
-    dist = strategy_distribution(strategies_path)
-    plot_strategy_distribution(dist, output_path, title=f"IPID strategy distribution — {name}")
-    logger.success(f"figure saved -> {output_path}")
+def main(measurement: str) -> None:
+    pass
 
 
 if __name__ == "__main__":
