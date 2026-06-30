@@ -52,9 +52,9 @@ def create_info(
         counts: dict[str, int],
         total: int,
         percentages: dict[str, float]
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], Path]:
     info = {
-        "source": str(measurement_id),
+        "ipid": str(measurement_id),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "total_ips": total,
         "counts": counts,
@@ -64,7 +64,7 @@ def create_info(
     output_path = FIGURES_DIR / str(measurement_id) / STRATEGY_DIST_JSON_NAME
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(info, indent=2) + "\n")
-    return info
+    return info, output_path
 
 
 def create_plot(measurement_id: MeasurementID, percentages: dict[str, float]) -> tuple[Figure, Path]:
