@@ -7,10 +7,10 @@ from ipid_analysis.config import MeasurementID, IPID_DATA_DIR, IPID_MEASURE_NAME
 
 
 def create_info(ipid_id: MeasurementID) -> dict:
-    ipid_path = IPID_DATA_DIR / ipid_id / IPID_MEASURE_NAME
-    snapshot_path = IPID_DATA_DIR / ipid_id / IPID_CONFIG_SNAPSHOT_NAME
+    ipid_path = IPID_DATA_DIR / str(ipid_id) / IPID_MEASURE_NAME
+    snapshot_path = IPID_DATA_DIR / str(ipid_id) / IPID_CONFIG_SNAPSHOT_NAME
     cfg = load_config(snapshot_path)
-    zmap_path = ZMAP_DATA_DIR / cfg.zmap / ZMAP_MEASURE_NAME
+    zmap_path = ZMAP_DATA_DIR / str(cfg.zmap) / ZMAP_MEASURE_NAME
 
     attempted = pq.ParquetFile(zmap_path).metadata.num_rows
     valid = pq.ParquetFile(ipid_path).metadata.num_rows

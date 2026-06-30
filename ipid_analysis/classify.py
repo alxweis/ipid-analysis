@@ -225,10 +225,10 @@ def main(
         compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
         threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
 ) -> None:
-    raw_dir = IPID_DATA_DIR / measurement_id
+    raw_dir = IPID_DATA_DIR / str(measurement_id)
     input_path = raw_dir / IPID_MEASURE_NAME
     snapshot_path = raw_dir / IPID_CONFIG_SNAPSHOT_NAME
-    output_path = PROCESSED_DATA_DIR / measurement_id / STRATEGY_DATA_NAME
+    output_path = PROCESSED_DATA_DIR / str(measurement_id) / STRATEGY_DATA_NAME
 
     for path in (input_path, snapshot_path):
         if not path.is_file():

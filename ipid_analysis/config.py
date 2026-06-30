@@ -38,11 +38,15 @@ IPID_SELECTION_STRATEGY = "IPID_SELECTION_STRATEGY"
 
 # File names
 IPID_MEASURE_NAME = "ipid.pq"
-ZMAP_MEASURE_NAME = "zmap.pq"
 IPID_CONFIG_SNAPSHOT_NAME = "ipid.snapshot.yaml"
+
+ZMAP_MEASURE_NAME = "zmap.pq"
+
 STRATEGY_DATA_NAME = "strategy.pq"
+
 STRATEGY_DIST_PDF_NAME = "strategy-distribution.pdf"
 STRATEGY_DIST_JSON_NAME = "strategy-distribution.json"
+
 COVERAGE_JSON_NAME = "coverage.json"
 
 # If tqdm is installed, configure loguru with tqdm.write
