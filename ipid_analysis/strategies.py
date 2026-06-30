@@ -126,12 +126,6 @@ def _all_in_range(inc: np.ndarray, lo: int, hi: int, axis) -> np.ndarray:
 def chi2_pvalue(inc: np.ndarray, n_bins: int) -> np.ndarray:
     """Chi-square goodness-of-fit p-value (per row) that the increments are
     uniform over [0, 2**16).
-
-    NOTE (assumption -- the original chi2_test was undefined): the increments of
-    a random IPID source are uniform mod 2**16, so this bins each row's
-    increments into ``n_bins`` equal-width bins and tests against a uniform
-    expectation. Swap this body if your intended test differs. Returns a p-value
-    in [0, 1]; small => clearly non-uniform.
     """
     m, length = inc.shape
     if length == 0:
@@ -146,16 +140,14 @@ def chi2_pvalue(inc: np.ndarray, n_bins: int) -> np.ndarray:
 
 
 def cluster_counts(seq: np.ndarray, max_diff: int) -> np.ndarray:
-    """Per-row number of clusters: sort the row, then start a new cluster wherever
-    the gap between consecutive sorted values exceeds ``max_diff``.
-
-    NOTE (assumption -- get_clusters was undefined): linear (non-wrapping)
-    single-link clustering on the raw IPIDs. Replace if you need circular
-    (mod-2**16) clustering.
-    """
+    """Per-row cluster count, circular (mod 2**16): sort each row, count gaps
+    above max_diff, including the wrap gap from the largest value back to the
+    smallest. On a circle, #clusters == #large gaps (or 1 if none)."""
     ordered = np.sort(seq, axis=1).astype(np.int64)
-    gaps = np.diff(ordered, axis=1)
-    return 1 + (gaps > max_diff).sum(axis=1)
+    interior = (np.diff(ordered, axis=1) > max_diff).sum(axis=1)
+    wrap = MODULUS - (ordered[:, -1] - ordered[:, 0])  # gap max -> min over the wraparound
+    k = interior + (wrap > max_diff)
+    return np.where(k == 0, 1, k)
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +174,8 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
 
     # increments, all mod 2**16 via uint16 wraparound
     inc_all = np.diff(S, axis=1)
-    inc_src1 = np.diff(S[:, 0::2], axis=1)  # source A (interface a)
-    inc_src2 = np.diff(S[:, 1::2], axis=1)  # source B (interface b)
+    inc_src1 = np.diff(S[:, 0::2], axis=1)  # source A
+    inc_src2 = np.diff(S[:, 1::2], axis=1)  # source B
     # connection j = positions [j, j+conn, j+2*conn, ...] -> reshape + swap axes
     con = S.reshape(n, req, conn).transpose(0, 2, 1)
     inc_con = np.diff(con, axis=2)  # (N, conn, req-1)
@@ -285,7 +277,7 @@ def process(
 
 
 def resolve_protocol(measurement: str, protocol: str) -> str:
-    """'auto' derives the protocol from the measurement leaf (tcp-80 -> tcp)."""
+    """Derives the protocol from the measurement leaf."""
     if protocol != "auto":
         return protocol.lower()
     leaf = measurement.rstrip("/").split("/")[-1]
