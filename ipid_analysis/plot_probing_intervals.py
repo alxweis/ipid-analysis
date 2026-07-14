@@ -17,11 +17,10 @@ import typer
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.plots import interval_stats, plot_probing_intervals
+from ipid_analysis.probing_intervals import KIND
 from ipid_analysis.strategies import DEFAULT_MANIFEST
 
 app = typer.Typer()
-
-KIND = "probing-intervals"  # output kind (hyphen); input file uses probing_intervals
 
 
 def _meta(m: IpidMeasurement) -> dict:
@@ -38,7 +37,7 @@ def _meta(m: IpidMeasurement) -> dict:
 
 def render(m: IpidMeasurement, bins: int = 50, clip_quantile: float = 0.99) -> tuple[Path, Path]:
     """Write the probing-interval PDF + JSON for one measurement. Returns (pdf, json)."""
-    intervals_path = PROCESSED_DATA_DIR / m.zmap_id / m.output_name("probing_intervals")
+    intervals_path = PROCESSED_DATA_DIR / m.zmap_id / m.output_name(KIND)
     if not intervals_path.is_file():
         raise FileNotFoundError(intervals_path)
 

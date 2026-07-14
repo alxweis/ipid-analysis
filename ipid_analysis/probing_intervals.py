@@ -5,7 +5,7 @@ deltas of SEND_TIMESTAMP_SEQUENCE (microseconds) -- per IP and write them to the
 campaign directory::
 
     python ipid_analysis/probing_intervals.py tcp.ipid.nec.fi.base
-    -> data/processed/<zmap_id>/<proto>-ipid-<mode>-<interval>-<scale>_probing_intervals.pq
+    -> data/processed/<zmap_id>/<proto>-ipid-<mode>-<interval>-<scale>_probing-intervals.pq
 
 The whole thing runs in DuckDB (split -> cast -> list-diff), streaming and
 multithreaded; no per-row Python. Output schema: IP_ADDR, PROBING_INTERVALS
@@ -27,6 +27,8 @@ from ipid_analysis.strategies import DEFAULT_MANIFEST, INPUT_NAME
 
 app = typer.Typer()
 
+KIND = "probing-intervals"  # artifact kind (hyphen); single source for .pq and plots
+
 # Split + cast the send timestamps, then take consecutive deltas via a list
 # comprehension (DuckDB list indexing is 1-based).
 INTERVALS_SQL = """
@@ -46,13 +48,13 @@ COPY (
 def probing_intervals_output_path(m: IpidMeasurement) -> Path:
     if not m.zmap_id:
         raise ValueError(f"{m.target}: no zmap id in manifest (needed for the output path)")
-    return PROCESSED_DATA_DIR / m.zmap_id / m.output_name("probing_intervals")
+    return PROCESSED_DATA_DIR / m.zmap_id / m.output_name(KIND)
 
 
 def extract_probing_intervals(
     m: IpidMeasurement, compression: str = "zstd", threads: int = 0
 ) -> Path:
-    """Write <...>_probing_intervals.pq for one measurement. Returns the path."""
+    """Write <...>_probing-intervals.pq for one measurement. Returns the path."""
     input_path = RAW_DATA_DIR / "ipid" / m.measurement_id / INPUT_NAME
     if not input_path.is_file():
         raise FileNotFoundError(input_path)
