@@ -46,9 +46,13 @@ class IpidMeasurement:
         """Output filename stem, e.g. 'tcp-ipid-nec-rt-base'."""
         return f"{self.protocol}-ipid-{self.conn_mode}-{self.interval}-{self.scale}"
 
+    def artifact_name(self, kind: str, ext: str = "pq") -> str:
+        """e.g. artifact_name('strategies', 'pdf') -> 'tcp-ipid-nec-rt-base_strategies.pdf'."""
+        return f"{self.stem}_{kind}.{ext}"
+
     def output_name(self, kind: str) -> str:
-        """e.g. output_name('strategies') -> 'tcp-ipid-nec-rt-base_strategies.pq'."""
-        return f"{self.stem}_{kind}.pq"
+        """Parquet artifact name, e.g. 'tcp-ipid-nec-rt-base_strategies.pq'."""
+        return self.artifact_name(kind, "pq")
 
 
 def load_manifest(path: Path) -> dict:
