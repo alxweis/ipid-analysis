@@ -74,6 +74,17 @@ analyse:
 %.json:
 	@:
 
+## Poll S3 for measurement handoff jobs
+##   usage: make workflow-worker ARGS="--s3-prefix s3://bucket/prefix"
+.PHONY: workflow-worker
+workflow-worker:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.s3_workflow $(ARGS)
+
+## Run the focused unit tests
+.PHONY: test
+test:
+	$(PYTHON_INTERPRETER) -m unittest discover -s tests -v
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################

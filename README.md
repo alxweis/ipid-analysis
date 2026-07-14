@@ -6,6 +6,34 @@
 
 A short description of the project.
 
+## S3 measurement handoff worker
+
+The analysis VM can process the stateless TCP RT measurement produced by
+`ipid-measure` without any direct network connection between the VMs. Both sides
+use the same S3 prefix and locally configured `s3cmd` credentials:
+
+```bash
+export IPID_ANALYSIS_S3_PREFIX=s3://bucket/ipid-analysis-workflow/
+make workflow-worker
+```
+
+For every `jobs/<measurement-id>/request.json`, the worker:
+
+1. downloads `ipid.pq` and `ipid.snapshot.yaml` from the completed measurement upload,
+2. runs the normal IPID selection-strategy classifier,
+3. writes `zmap_unclassified.pq` with the ZMap-compatible columns `IP_ADDR` and
+   `REPLY_TYPE`, containing only `UNCLASSIFIED` addresses,
+4. uploads that parquet and then publishes `done.json` with its row count, size,
+   and SHA-256 digest.
+
+If processing fails, `failed.json` is uploaded instead. Requests are idempotent:
+jobs with either terminal marker are skipped. Use `--once` to process the current
+queue and exit, which is useful for cron; the default process polls continuously.
+
+The corresponding `ipid-measure` run waits for the terminal marker and will not
+start the 25-request fixed-interval measurement until the result has been
+downloaded and verified.
+
 ## Project Organization
 
 ```
