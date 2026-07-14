@@ -34,20 +34,11 @@ def _meta(m: IpidMeasurement) -> dict:
     }
 
 
-@app.command()
-def main(
-    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.fi.base"),
-    manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
-) -> None:
-    m = resolve(load_manifest(manifest), target)
-    if m is None:
-        logger.error(f"{target}: not present in {manifest}")
-        raise typer.Exit(code=1)
-
+def render(m: IpidMeasurement) -> tuple[Path, Path]:
+    """Write the strategy PDF + JSON for one measurement. Returns (pdf, json)."""
     strategies_path = PROCESSED_DATA_DIR / m.zmap_id / m.output_name("strategies")
     if not strategies_path.is_file():
-        logger.error(f"not found: {strategies_path} (run strategies.py first)")
-        raise typer.Exit(code=1)
+        raise FileNotFoundError(strategies_path)
 
     fig_dir = FIGURES_DIR / m.zmap_id
     pdf_path = fig_dir / m.artifact_name("strategies", "pdf")
@@ -69,6 +60,23 @@ def main(
     json_path.write_text(json.dumps(info, indent=2) + "\n")
 
     plot_strategy_distribution(percentages, pdf_path, title=f"IPID strategy distribution — {m.stem}")
+    return pdf_path, json_path
+
+
+@app.command()
+def main(
+    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.fi.base"),
+    manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
+) -> None:
+    m = resolve(load_manifest(manifest), target)
+    if m is None:
+        logger.error(f"{target}: not present in {manifest}")
+        raise typer.Exit(code=1)
+    try:
+        pdf_path, json_path = render(m)
+    except FileNotFoundError as exc:
+        logger.error(f"not found: {exc} (run strategies.py first)")
+        raise typer.Exit(code=1) from exc
     logger.success(f"[{m.target}] -> {pdf_path}  +  {json_path.name}")
 
 

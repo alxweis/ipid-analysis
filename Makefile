@@ -63,6 +63,17 @@ data: requirements
 	$(PYTHON_INTERPRETER) ipid_analysis/dataset.py
 
 
+
+## Run postprocessing (strategies + probing intervals) and plotting for a manifest
+##   usage: make analyse data.json
+.PHONY: analyse
+analyse:
+	$(PYTHON_INTERPRETER) ipid_analysis/postprocess.py $(filter-out analyse,$(MAKECMDGOALS))
+
+# allow passing the manifest as a goal (`make analyse data.json`): make it a no-op target
+%.json:
+	@:
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################

@@ -36,6 +36,30 @@ def _meta(m: IpidMeasurement) -> dict:
     }
 
 
+def render(m: IpidMeasurement, bins: int = 50, clip_quantile: float = 0.99) -> tuple[Path, Path]:
+    """Write the probing-interval PDF + JSON for one measurement. Returns (pdf, json)."""
+    intervals_path = PROCESSED_DATA_DIR / m.zmap_id / m.output_name("probing_intervals")
+    if not intervals_path.is_file():
+        raise FileNotFoundError(intervals_path)
+
+    fig_dir = FIGURES_DIR / m.zmap_id
+    pdf_path = fig_dir / m.artifact_name(KIND, "pdf")
+    json_path = fig_dir / m.artifact_name(KIND, "json")
+
+    stats = interval_stats(intervals_path, n_bins=bins, clip_quantile=clip_quantile)
+    info = {
+        **_meta(m),
+        "source": str(intervals_path),
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        **stats,
+    }
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(info, indent=2) + "\n")
+
+    plot_probing_intervals(stats, pdf_path, title=f"Probing intervals — {m.stem}")
+    return pdf_path, json_path
+
+
 @app.command()
 def main(
     target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.fi.base"),
@@ -47,28 +71,11 @@ def main(
     if m is None:
         logger.error(f"{target}: not present in {manifest}")
         raise typer.Exit(code=1)
-
-    intervals_path = PROCESSED_DATA_DIR / m.zmap_id / m.output_name("probing_intervals")
-    if not intervals_path.is_file():
-        logger.error(f"not found: {intervals_path} (run probing_intervals.py first)")
-        raise typer.Exit(code=1)
-
-    fig_dir = FIGURES_DIR / m.zmap_id
-    pdf_path = fig_dir / m.artifact_name(KIND, "pdf")
-    json_path = fig_dir / m.artifact_name(KIND, "json")
-
-    stats = interval_stats(intervals_path, n_bins=bins, clip_quantile=clip_quantile)
-
-    info = {
-        **_meta(m),
-        "source": str(intervals_path),
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        **stats,
-    }
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(info, indent=2) + "\n")
-
-    plot_probing_intervals(stats, pdf_path, title=f"Probing intervals — {m.stem}")
+    try:
+        pdf_path, json_path = render(m, bins=bins, clip_quantile=clip_quantile)
+    except FileNotFoundError as exc:
+        logger.error(f"not found: {exc} (run probing_intervals.py first)")
+        raise typer.Exit(code=1) from exc
     logger.success(f"[{m.target}] -> {pdf_path}  +  {json_path.name}")
 
 
