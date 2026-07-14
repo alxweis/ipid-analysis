@@ -451,6 +451,42 @@ def strategies_output_path(m: IpidMeasurement) -> Path:
     return PROCESSED_DATA_DIR / m.zmap_id / m.output_name("strategies")
 
 
+def classify_paths(
+    input_path: Path,
+    snapshot_path: Path,
+    output_path: Path,
+    *,
+    protocol: str,
+    mass: bool = False,
+    batch_size: int = 1_000_000,
+    compression: str | None = "zstd",
+    threads: int = 0,
+) -> Path:
+    """Classify explicit input paths without requiring a campaign manifest.
+
+    This is the entry point used by the S3 workflow worker. It deliberately
+    reuses the same classifier as normal manifest-driven postprocessing.
+    """
+    for path in (input_path, snapshot_path):
+        if not path.is_file():
+            raise FileNotFoundError(path)
+
+    cfg = load_config(snapshot_path)
+    skip_first = protocol.lower() == "tcp" and not mass
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    process(
+        input_path,
+        output_path,
+        cfg,
+        skip_first,
+        mass,
+        batch_size=batch_size,
+        compression=compression,
+        threads=threads,
+    )
+    return output_path
+
+
 def classify_measurement(
     m: IpidMeasurement,
     batch_size: int = 1_000_000,
@@ -464,13 +500,9 @@ def classify_measurement(
     snapshot_path = raw_dir / SNAPSHOT_NAME
     output_path = strategies_output_path(m)
 
-    for path in (input_path, snapshot_path):
-        if not path.is_file():
-            raise FileNotFoundError(path)
-
-    cfg = load_config(snapshot_path)
     mass = m.scale == "mass"
-    skip_first = (m.protocol == "tcp") and not mass  # handshake skip is a 4x4-only concept
+    cfg = load_config(snapshot_path)
+    skip_first = (m.protocol == "tcp") and not mass
 
     if mass:
         logger.info(f"[{m.target}] {m.measurement_id}: mass, position-independent rules only")
@@ -481,18 +513,18 @@ def classify_measurement(
             + (", skipping first IPID per connection" if skip_first else "")
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
-    n = process(
+    classify_paths(
         input_path,
+        snapshot_path,
         output_path,
-        cfg,
-        skip_first,
-        mass,
+        protocol=m.protocol,
+        mass=mass,
         batch_size=batch_size,
         compression=compression,
         threads=threads,
     )
+    n = pq.ParquetFile(output_path).metadata.num_rows
     logger.success(f"[{m.target}] {n:,} IPs in {time.monotonic() - start:.1f}s -> {output_path}")
     return output_path
 
