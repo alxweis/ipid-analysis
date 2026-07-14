@@ -76,6 +76,32 @@ class IPIDStrategy(IntEnum):
 STRATEGY_NAMES = [s.name for s in IPIDStrategy]
 STRATEGY_DICT = pa.array(STRATEGY_NAMES, type=pa.string())
 
+# One display name and one fixed color per strategy, used consistently across all
+# figures. Edit here to change them everywhere.
+STRATEGY_PRETTY = {
+    "REFLECTION": "Reflection",
+    "CONSTANT": "Constant",
+    "PER_DESTINATION": "Per-Destination",
+    "PER_CONNECTION": "Per-Connection",
+    "SINGLE": "Single",
+    "PER_BUCKET": "Per-Bucket",
+    "MULTI": "Multi",
+    "RANDOM": "Random",
+    "UNCLASSIFIED": "Unclassified",
+}
+
+STRATEGY_COLORS = {
+    "REFLECTION": "#4C72B0",       # blue
+    "CONSTANT": "#DD8452",         # orange
+    "PER_DESTINATION": "#55A868",  # green
+    "PER_CONNECTION": "#C44E52",   # red
+    "SINGLE": "#8172B3",           # purple
+    "PER_BUCKET": "#937860",       # brown
+    "MULTI": "#DA8BC3",            # pink
+    "RANDOM": "#CCB974",           # olive
+    "UNCLASSIFIED": "#8C8C8C",     # gray (neutral catch-all)
+}
+
 OUTPUT_SCHEMA = pa.schema(
     [
         ("IP_ADDR", pa.string()),

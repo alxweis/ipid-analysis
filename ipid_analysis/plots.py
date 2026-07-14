@@ -17,7 +17,7 @@ matplotlib.use("Agg")  # headless: safe for CLI/servers
 
 import matplotlib.pyplot as plt  # noqa: E402
 
-from ipid_analysis.strategies import STRATEGY_NAMES  # noqa: E402
+from ipid_analysis.strategies import STRATEGY_COLORS, STRATEGY_NAMES, STRATEGY_PRETTY  # noqa: E402
 
 BAR_COLOR = "#4C72B0"
 ACCENT = "#DD8452"
@@ -48,21 +48,24 @@ def strategy_percentages(counts: dict[str, int], total: int) -> dict[str, float]
 def plot_strategy_distribution(
     percentages: dict[str, float], output_pdf: Path, title: str | None = None
 ) -> Path:
-    """Bar chart: x = IPID strategy, y = share of IP addresses (%)."""
+    """Bar chart: x = IPID strategy (pretty names), y = share of IP addresses (%)."""
     labels = list(percentages)
     values = [percentages[k] for k in labels]
+    x = np.arange(len(labels))
+    colors = [STRATEGY_COLORS.get(k, "#8C8C8C") for k in labels]
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.bar(labels, values, color=BAR_COLOR)
+    ax.bar(x, values, color=colors)
     ax.set_xlabel("IPID selection strategy")
     ax.set_ylabel("Share of IP addresses (%)")
     ax.set_title(title or "IPID selection-strategy distribution")
     ax.set_ylim(0, max(values) * 1.15 if any(values) else 1)
-    for x, v in enumerate(values):
+    for xi, v in zip(x, values):
         if v > 0:
-            ax.text(x, v, f"{v:.1f}%", ha="center", va="bottom", fontsize=8)
+            ax.text(xi, v, f"{v:.1f}%", ha="center", va="bottom", fontsize=8)
+    ax.set_xticks(x)
+    ax.set_xticklabels([STRATEGY_PRETTY.get(k, k) for k in labels], rotation=45, ha="right")
     ax.spines[["top", "right"]].set_visible(False)
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_pdf, bbox_inches="tight")
@@ -193,7 +196,13 @@ def plot_increment_cdf(cdf: dict, output_pdf: Path, title: str | None = None) ->
         if not d:
             continue
         x = np.maximum(np.asarray(d["increment"], dtype=float), 1.0)
-        ax.plot(x, d["cumulative_pct"], label=f"{name} (n={d['count']:,})", linewidth=1.6)
+        ax.plot(
+            x,
+            d["cumulative_pct"],
+            label=f"{STRATEGY_PRETTY.get(name, name)} (n={d['count']:,})",
+            color=STRATEGY_COLORS.get(name, "#8C8C8C"),
+            linewidth=1.6,
+        )
 
     ax.set_xscale("log")
     ax.set_xlabel("IP-ID Increment")
