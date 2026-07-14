@@ -11,6 +11,7 @@ from pathlib import Path
 
 import duckdb
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")  # headless: safe for CLI/servers
 
@@ -143,6 +144,65 @@ def plot_probing_intervals(stats: dict, output_pdf: Path, title: str | None = No
     ax.set_ylabel("Count")
     ax.set_title(title or "Probing-interval distribution")
     ax.spines[["top", "right"]].set_visible(False)
+
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_pdf, bbox_inches="tight")
+    plt.close(fig)
+    return output_pdf
+
+
+# --------------------------------------------------------------------------
+# Increment CDF (one line per strategy)
+# --------------------------------------------------------------------------
+def increment_cdf(increments_path: Path, n_points: int = 200) -> dict:
+    """Per-strategy empirical CDF of the IPID increments, as (increment,
+    cumulative_pct) points. Computed with DuckDB approx_quantile over the
+    unnested INCREMENTS column (sketch-based, streaming -> scales to the full
+    output)."""
+    probs = np.linspace(0.0, 1.0, n_points)
+    probs_sql = "[" + ",".join(f"{p:.5f}" for p in probs) + "]"
+    con = duckdb.connect()
+    rows = con.execute(
+        f"SELECT CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS s, count(*) AS n, "
+        f"approx_quantile(iv, {probs_sql}) AS qs "
+        f"FROM (SELECT IPID_SELECTION_STRATEGY, unnest(INCREMENTS) AS iv "
+        f"      FROM read_parquet($p)) GROUP BY 1",
+        {"p": str(increments_path)},
+    ).fetchall()
+    con.close()
+
+    pct = [round(float(p) * 100.0, 3) for p in probs]
+    out = {}
+    for s, n, qs in rows:
+        if n:
+            out[s] = {
+                "count": int(n),
+                "increment": [int(x) for x in qs],
+                "cumulative_pct": pct,
+            }
+    return out
+
+
+def plot_increment_cdf(cdf: dict, output_pdf: Path, title: str | None = None) -> Path:
+    """CDF line per strategy: x = IP-ID increment (log, powers of 10),
+    y = cumulative percentage [%]. Zero increments are clipped to 1 for the log
+    axis."""
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    for name in STRATEGY_NAMES:  # stable legend order
+        d = cdf.get(name)
+        if not d:
+            continue
+        x = np.maximum(np.asarray(d["increment"], dtype=float), 1.0)
+        ax.plot(x, d["cumulative_pct"], label=f"{name} (n={d['count']:,})", linewidth=1.6)
+
+    ax.set_xscale("log")
+    ax.set_xlabel("IP-ID Increment")
+    ax.set_ylabel("Cumulative Percentage [%]")
+    ax.set_ylim(0, 100)
+    ax.set_title(title or "IP-ID increment CDF")
+    ax.grid(True, which="both", ls=":", alpha=0.4)
+    if cdf:
+        ax.legend(fontsize=8)
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_pdf, bbox_inches="tight")

@@ -188,31 +188,37 @@ def cluster_counts(seq: np.ndarray, max_diff: int) -> np.ndarray:
 # Vectorized classifier. S: (N, L) uint16 -> (N,) int8 codes.
 # Each mask mirrors one of the original is_* predicates.
 # ---------------------------------------------------------------------------
-def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = False) -> np.ndarray:
+def increment_views(
+    S: np.ndarray, cfg: MeasurementConfig, skip_first: bool
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Shared subsequence structure for a base (N, L) matrix: applies the TCP
+    handshake skip, then returns (pattern, inc_all, inc_src1, inc_src2, inc_con).
+    Used by both the classifier and the increment extractor so they stay in sync."""
     conn, req = cfg.connection_count, cfg.requests_per_connection
-    req_ids = cfg.request_ip_ids
-
-    # Pattern over the original positions; trimmed identically to S below.
-    pattern = req_ids[np.arange(cfg.sequence_length) % req_ids.size]
+    pattern = cfg.request_ip_ids[np.arange(cfg.sequence_length) % cfg.request_ip_ids.size]
 
     if skip_first:
-        # TCP: the first IPID of each connection belongs to the handshake's last
-        # packet. With round-robin interleaving that is exactly the first round
-        # (positions 0..conn-1), so drop it from every view.
+        # TCP: first IPID of each connection is the handshake's last packet ->
+        # drop the first round (positions 0..conn-1) from every view.
         S = S[:, conn:]
         pattern = pattern[conn:]
         req -= 1
 
     n = S.shape[0]
-    S64 = S.astype(np.int64)
-
-    # increments, all mod 2**16 via uint16 wraparound
     inc_all = np.diff(S, axis=1)
     inc_src1 = np.diff(S[:, 0::2], axis=1)  # source A (interface a)
     inc_src2 = np.diff(S[:, 1::2], axis=1)  # source B (interface b)
-    # connection j = positions [j, j+conn, j+2*conn, ...] -> reshape + swap axes
-    con = S.reshape(n, req, conn).transpose(0, 2, 1)
+    con = S.reshape(n, req, conn).transpose(0, 2, 1)  # (N, conn, req)
     inc_con = np.diff(con, axis=2)  # (N, conn, req-1)
+    return pattern, inc_all, inc_src1, inc_src2, inc_con
+
+
+def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = False) -> np.ndarray:
+    conn = cfg.connection_count
+    pattern, inc_all, inc_src1, inc_src2, inc_con = increment_views(S, cfg, skip_first)
+
+    # trim S identically to the views for the REFLECTION comparison
+    S64 = (S[:, conn:] if skip_first else S).astype(np.int64)
 
     # REFLECTION: sequence equals the request pattern shifted by a constant offset
     offset = (S64[:, 0] - pattern[0]) % MODULUS
@@ -225,7 +231,7 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
     m_single = _all_in_range(inc_all, 1, MAX_INC, 1)
     m_per_bucket = _all_in_range(inc_con, 1, MAX_INC, (1, 2))
 
-    n_clusters = cluster_counts(S, MULTI_MAX_INC)
+    n_clusters = cluster_counts(S[:, conn:] if skip_first else S, MULTI_MAX_INC)
     m_multi = (n_clusters > 1) & (n_clusters <= MULTI_MAX_CLUSTERS)
 
     # Resolve the cheap, deterministic rules first; -1 marks rows that still need
