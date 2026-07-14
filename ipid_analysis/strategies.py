@@ -20,25 +20,25 @@ Design for scale (>100 GB / >300M rows):
 
 from __future__ import annotations
 
-import math
-import re
-import time
 from dataclasses import dataclass
 from enum import IntEnum
+import math
 from pathlib import Path
+import re
+import time
 
 import duckdb
+from loguru import logger
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-import typer
-import yaml
-from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
-from loguru import logger
 from scipy.special import gammaincc  # vectorized chi-square survival function
 from tqdm import tqdm
+import typer
+import yaml
 
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 
 app = typer.Typer()
 
@@ -85,10 +85,11 @@ OUTPUT_SCHEMA = pa.schema(
 
 # DuckDB does the heavy lifting: scan + split + cast, multithreaded in C++.
 READ_SQL = """
-           SELECT IP_ADDR,
-                  list_transform(string_split(IPID_SEQUENCE, ','), x - > CAST(x AS INTEGER)) AS ipid
-           FROM read_parquet($input) \
-           """
+SELECT
+    IP_ADDR,
+    list_transform(string_split(IPID_SEQUENCE, ','), x -> CAST(x AS INTEGER)) AS ipid
+FROM read_parquet($input)
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -250,13 +251,13 @@ def _batch_to_matrix(ipid_list: pa.ListArray, seq_len: int) -> tuple[np.ndarray,
 
 
 def process(
-        input_path: Path,
-        output_path: Path,
-        cfg: MeasurementConfig,
-        skip_first: bool,
-        batch_size: int,
-        compression: str | None,
-        threads: int,
+    input_path: Path,
+    output_path: Path,
+    cfg: MeasurementConfig,
+    skip_first: bool,
+    batch_size: int,
+    compression: str | None,
+    threads: int,
 ) -> int:
     """Stream input_path through the classifier into output_path. Returns the
     number of IPs written."""
@@ -303,10 +304,10 @@ def strategies_output_path(m: IpidMeasurement) -> Path:
 
 
 def classify_measurement(
-        m: IpidMeasurement,
-        batch_size: int = 1_000_000,
-        compression: str | None = "zstd",
-        threads: int = 0,
+    m: IpidMeasurement,
+    batch_size: int = 1_000_000,
+    compression: str | None = "zstd",
+    threads: int = 0,
 ) -> Path:
     """Classify one ipid measurement and write its strategies.pq into the
     campaign directory (data/processed/<zmap_id>/). Returns the output path."""
@@ -345,11 +346,11 @@ def classify_measurement(
 
 @app.command()
 def main(
-        target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.rt.base"),
-        manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
-        batch_size: int = typer.Option(1_000_000, help="rows per batch"),
-        compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
-        threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
+    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.rt.base"),
+    manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
+    batch_size: int = typer.Option(1_000_000, help="rows per batch"),
+    compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
+    threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
 ) -> None:
     m = resolve(load_manifest(manifest), target)
     if m is None:
