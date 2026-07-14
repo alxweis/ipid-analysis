@@ -87,9 +87,31 @@ OUTPUT_SCHEMA = pa.schema(
 READ_SQL = """
 SELECT
     IP_ADDR,
-    list_transform(string_split(IPID_SEQUENCE, ','), x -> CAST(x AS INTEGER)) AS ipid
+    -- Missing/non-numeric IPIDs (e.g. '-' for a probe without reply) become NULL
+    -- via TRY_CAST; any such row is emitted as an empty list so it falls through
+    -- to UNCLASSIFIED (the length != SEQUENCE_LENGTH path) instead of crashing.
+    CASE WHEN len(list_filter(ints, v -> v IS NULL)) = 0 THEN ints ELSE CAST([] AS INTEGER[]) END AS ipid
+FROM (
+    SELECT IP_ADDR,
+           list_transform(string_split(IPID_SEQUENCE, ','), x -> TRY_CAST(x AS INTEGER)) AS ints
+    FROM read_parquet($input)
+)
+"""
+
+# Mass measurements are not the fixed 4x4 structure (up to 4x25 = 80..100 values,
+# with '-' for lost replies). Drop the '-' and classify the *present* values with
+# position-independent rules only. Batches are capped to bound the padded matrix.
+READ_SQL_MASS = """
+SELECT
+    IP_ADDR,
+    list_filter(
+        list_transform(string_split(IPID_SEQUENCE, ','), x -> TRY_CAST(x AS INTEGER)),
+        v -> v IS NOT NULL
+    ) AS ipid
 FROM read_parquet($input)
 """
+
+MASS_BATCH_CAP = 250_000  # rows/batch for the (N x <=100) padded mass path
 
 
 # ---------------------------------------------------------------------------
@@ -250,20 +272,112 @@ def _batch_to_matrix(ipid_list: pa.ListArray, seq_len: int) -> tuple[np.ndarray,
     return valid, matrix
 
 
+def _mass_padded(ipid_list: pa.ListArray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Ragged list<int> -> (lengths, present_mask, values) padded to the batch's
+    max present length. `values` uses -1 for padding; `present_mask` marks the
+    real entries."""
+    lengths = ipid_list.value_lengths().to_numpy(zero_copy_only=False).astype(np.int64)
+    n = len(lengths)
+    w = int(lengths.max()) if n and lengths.max() > 0 else 0
+    if w == 0:
+        return lengths, np.zeros((n, 0), bool), np.full((n, 0), -1, np.int64)
+
+    flat = ipid_list.flatten().to_numpy(zero_copy_only=False).astype(np.int64)
+    starts = np.empty(n, dtype=np.int64)
+    starts[0] = 0
+    np.cumsum(lengths[:-1], out=starts[1:])
+
+    col = np.arange(w)
+    present = col[None, :] < lengths[:, None]
+    gather = np.clip(starts[:, None] + col[None, :], 0, max(flat.size - 1, 0))
+    values = np.where(present, flat[gather] if flat.size else -1, -1)
+    return lengths, present, values
+
+
+def _cluster_counts_mass(values: np.ndarray, present: np.ndarray, lengths: np.ndarray) -> np.ndarray:
+    """Circular single-link cluster count per row over the present values."""
+    n, w = values.shape
+    big = 1 << 20
+    ordered = np.sort(np.where(present, values, big), axis=1)
+    gaps = np.diff(ordered, axis=1)
+    gap_present = np.arange(w - 1)[None, :] < (lengths[:, None] - 1)
+    interior = np.where(gap_present, gaps > MULTI_MAX_INC, False).sum(axis=1)
+    idx_max = np.clip(lengths - 1, 0, w - 1)
+    span = ordered[np.arange(n), idx_max] - ordered[:, 0]  # max - min of present
+    wrap_big = ((MODULUS - span) > MULTI_MAX_INC) & (lengths >= 1)
+    k = interior + wrap_big
+    return np.where(lengths >= 1, np.where(k == 0, 1, k), 0)
+
+
+def _chi2_pvalue_mass(diff: np.ndarray, inc_present: np.ndarray) -> np.ndarray:
+    """Per-row uniformity p-value of the present increments (see chi2_pvalue)."""
+    m = diff.shape[0]
+    if m == 0:
+        return np.ones(0)
+    n_inc = inc_present.sum(axis=1)
+    bins = (diff * CHI2_BINS) // MODULUS
+    rows = np.broadcast_to(np.arange(m)[:, None], diff.shape)
+    flat_bin = (rows * CHI2_BINS + bins)[inc_present]
+    counts = np.bincount(flat_bin, minlength=m * CHI2_BINS).reshape(m, CHI2_BINS)
+    exp = np.where(n_inc > 0, n_inc / CHI2_BINS, 1.0)[:, None]
+    chi2 = ((counts - exp) ** 2 / exp).sum(axis=1)
+    p = gammaincc((CHI2_BINS - 1) / 2.0, chi2 / 2.0)
+    return np.where(n_inc > 0, p, 1.0)
+
+
+def classify_batch_mass(ipid_list: pa.ListArray) -> np.ndarray:
+    """Position-independent classification for mass measurements ('-' already
+    dropped). Only CONSTANT, SINGLE, MULTI, RANDOM apply; empty -> UNCLASSIFIED."""
+    lengths, present, values = _mass_padded(ipid_list)
+    n = len(lengths)
+    codes = np.full(n, int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
+    if values.shape[1] == 0:
+        return codes
+
+    diff = (values[:, 1:] - values[:, :-1]) & 0xFFFF  # consecutive present, mod 2**16
+    inc_present = np.arange(values.shape[1] - 1)[None, :] < (lengths[:, None] - 1)
+    has_inc = lengths >= 2
+
+    m_constant = (lengths >= 1) & np.where(inc_present, diff == 0, True).all(axis=1)
+    m_single = has_inc & np.where(inc_present, (diff >= 1) & (diff <= MAX_INC), True).all(axis=1)
+    n_clusters = _cluster_counts_mass(values, present, lengths)
+    m_multi = (n_clusters > 1) & (n_clusters <= MULTI_MAX_CLUSTERS)
+
+    codes = np.select(
+        [m_constant, m_single, m_multi],
+        [int(IPIDStrategy.CONSTANT), int(IPIDStrategy.SINGLE), int(IPIDStrategy.MULTI)],
+        default=-1,
+    ).astype(np.int8)
+
+    residual = np.flatnonzero(codes == -1)
+    if residual.size:
+        p = _chi2_pvalue_mass(diff[residual], inc_present[residual])
+        # rows with no increments (length < 2) can't be RANDOM -> UNCLASSIFIED
+        is_random = (p >= RANDOM_MIN_P_VALUE) & (lengths[residual] >= 2)
+        codes[residual] = np.where(
+            is_random, int(IPIDStrategy.RANDOM), int(IPIDStrategy.UNCLASSIFIED)
+        )
+    return codes
+
+
 def process(
     input_path: Path,
     output_path: Path,
     cfg: MeasurementConfig,
     skip_first: bool,
+    mass: bool,
     batch_size: int,
     compression: str | None,
     threads: int,
 ) -> int:
     """Stream input_path through the classifier into output_path. Returns the
-    number of IPs written."""
+    number of IPs written. `mass` selects the position-independent, variable-length
+    path (READ_SQL_MASS); otherwise the fixed 4x4 path."""
     total = pq.ParquetFile(input_path).metadata.num_rows
     con = duckdb.connect(config={"threads": threads} if threads else {})
-    reader = con.execute(READ_SQL, {"input": str(input_path)}).to_arrow_reader(batch_size)
+    read_sql = READ_SQL_MASS if mass else READ_SQL
+    reader_batch = min(batch_size, MASS_BATCH_CAP) if mass else batch_size
+    reader = con.execute(read_sql, {"input": str(input_path)}).to_arrow_reader(reader_batch)
     writer = pq.ParquetWriter(output_path, OUTPUT_SCHEMA, compression=compression)
 
     processed = 0
@@ -271,17 +385,19 @@ def process(
         with tqdm(total=total, unit="IP", desc="classifying") as bar:
             for batch in reader:
                 ip_addr = batch.column("IP_ADDR").cast(pa.string())
-                valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
-
-                codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
-                if matrix.shape[0]:
-                    codes[valid] = classify_batch(matrix, cfg, skip_first)
+                if mass:
+                    codes = classify_batch_mass(batch.column("ipid"))
+                else:
+                    valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
+                    codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
+                    if matrix.shape[0]:
+                        codes[valid] = classify_batch(matrix, cfg, skip_first)
 
                 strategy = pa.DictionaryArray.from_arrays(pa.array(codes), STRATEGY_DICT)
                 writer.write_batch(pa.record_batch([ip_addr, strategy], schema=OUTPUT_SCHEMA))
 
-                processed += len(valid)
-                bar.update(len(valid))
+                processed += len(codes)
+                bar.update(len(codes))
     finally:
         writer.close()
         con.close()
@@ -321,13 +437,17 @@ def classify_measurement(
             raise FileNotFoundError(path)
 
     cfg = load_config(snapshot_path)
-    skip_first = m.protocol == "tcp"
+    mass = m.scale == "mass"
+    skip_first = (m.protocol == "tcp") and not mass  # handshake skip is a 4x4-only concept
 
-    logger.info(
-        f"[{m.target}] {m.measurement_id}: "
-        f"{cfg.connection_count}x{cfg.requests_per_connection}={cfg.sequence_length} IPIDs"
-        + (", skipping first IPID per connection" if skip_first else "")
-    )
+    if mass:
+        logger.info(f"[{m.target}] {m.measurement_id}: mass, position-independent rules only")
+    else:
+        logger.info(
+            f"[{m.target}] {m.measurement_id}: "
+            f"{cfg.connection_count}x{cfg.requests_per_connection}={cfg.sequence_length} IPIDs"
+            + (", skipping first IPID per connection" if skip_first else "")
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
@@ -336,6 +456,7 @@ def classify_measurement(
         output_path,
         cfg,
         skip_first,
+        mass,
         batch_size=batch_size,
         compression=compression,
         threads=threads,

@@ -37,8 +37,14 @@ COPY (
         IP_ADDR,
         [ts[i + 1] - ts[i] FOR i IN range(1, len(ts))] AS PROBING_INTERVALS
     FROM (
+        -- drop missing samples ('-' -> NULL) so intervals are taken between
+        -- consecutive *present* timestamps (treat '-' as if it weren't there)
         SELECT IP_ADDR,
-               CAST(string_split(SEND_TIMESTAMP_SEQUENCE, ',') AS BIGINT[]) AS ts
+               list_filter(
+                   list_transform(string_split(SEND_TIMESTAMP_SEQUENCE, ','),
+                                  x -> TRY_CAST(x AS BIGINT)),
+                   v -> v IS NOT NULL
+               ) AS ts
         FROM read_parquet($input)
     )
 ) TO $output (FORMAT parquet, COMPRESSION $compression)
