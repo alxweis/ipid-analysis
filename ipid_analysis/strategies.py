@@ -5,7 +5,7 @@ writes a per-IP strategy label to ``data/processed/<measurement>/strategies.pq``
 
 Run it on a measurement key (relative to the data dirs)::
 
-    python ipid_analysis/strategies.py tcp.ipid.nec.rt.base
+    python ipid_analysis/strategies.py tcp.ipid.no-connection.rt-based.base
 
 Design for scale (>100 GB / >300M rows):
   * DuckDB streams the file and splits/casts the comma-separated IPID strings in
@@ -445,10 +445,8 @@ def resolve_protocol(measurement: str, protocol: str) -> str:
 
 
 def strategies_output_path(m: IpidMeasurement) -> Path:
-    """data/processed/<zmap_id>/<proto>-ipid-<mode>-<interval>-<scale>_strategies.pq"""
-    if not m.zmap_id:
-        raise ValueError(f"{m.target}: no zmap id in manifest (needed for the output path)")
-    return PROCESSED_DATA_DIR / m.zmap_id / m.output_name("strategies")
+    """Return the canonical campaign path for a strategies parquet."""
+    return m.artifact_path(PROCESSED_DATA_DIR, "strategies")
 
 
 def classify_paths(
@@ -531,7 +529,9 @@ def classify_measurement(
 
 @app.command()
 def main(
-    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.rt.base"),
+    target: str = typer.Argument(
+        ..., help="dotted target, e.g. tcp.ipid.no-connection.rt-based.base"
+    ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
     batch_size: int = typer.Option(1_000_000, help="rows per batch"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),

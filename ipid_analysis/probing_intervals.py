@@ -4,8 +4,8 @@ For one ipid measurement, compute the probing intervals -- the consecutive
 deltas of SEND_TIMESTAMP_SEQUENCE (microseconds) -- per IP and write them to the
 campaign directory::
 
-    python ipid_analysis/probing_intervals.py tcp.ipid.nec.fi.base
-    -> data/processed/<zmap_id>/<proto>-ipid-<mode>-<interval>-<scale>_probing-intervals.pq
+    python ipid_analysis/probing_intervals.py tcp.ipid.no-connection.fixed-interval.base
+    -> data/processed/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_probing-intervals.pq
 
 The whole thing runs in DuckDB (split -> cast -> list-diff), streaming and
 multithreaded; no per-row Python. Output schema: IP_ADDR, PROBING_INTERVALS
@@ -52,9 +52,7 @@ COPY (
 
 
 def probing_intervals_output_path(m: IpidMeasurement) -> Path:
-    if not m.zmap_id:
-        raise ValueError(f"{m.target}: no zmap id in manifest (needed for the output path)")
-    return PROCESSED_DATA_DIR / m.zmap_id / m.output_name(KIND)
+    return m.artifact_path(PROCESSED_DATA_DIR, KIND)
 
 
 def extract_probing_intervals(
@@ -81,7 +79,9 @@ def extract_probing_intervals(
 
 @app.command()
 def main(
-    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.fi.base"),
+    target: str = typer.Argument(
+        ..., help="dotted target, e.g. tcp.ipid.no-connection.fixed-interval.base"
+    ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4"),
     threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),

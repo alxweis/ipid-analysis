@@ -34,6 +34,52 @@ The corresponding `ipid-measure` run waits for the terminal marker and will not
 start the 25-request fixed-interval measurement until the result has been
 downloaded and verified.
 
+## Manifest and artifact naming
+
+The campaign manifest uses descriptive keys for connection and interval modes:
+
+```json
+{
+  "tcp": {
+    "zmap": "tcp-80_<timestamp>",
+    "ipid": {
+      "no-connection": {
+        "rt-based": {"base": "tcp-80_<timestamp>"},
+        "fixed-interval": {
+          "base": "tcp-80_<timestamp>",
+          "mass": "tcp-80_<timestamp>"
+        }
+      },
+      "connection": {
+        "rt-based": {"base": "tcp-80_<timestamp>"},
+        "fixed-interval": {"base": "tcp-80_<timestamp>"}
+      }
+    }
+  }
+}
+```
+
+CLI targets use the same names, for example
+`tcp.ipid.no-connection.fixed-interval.mass`.
+
+Every generated campaign artifact uses one shared layout below its ZMap run:
+
+```text
+<zmap-id>/
+└── <no-connection|connection>/
+    └── <rt-based|fixed-interval>-<base|mass>/
+        └── <n|c>-<rt|fi>-<b|m>_<kind>.<pq|pdf|json>
+```
+
+For example, the mass fixed-interval strategy artifacts without established
+connections are written as:
+
+```text
+data/processed/<zmap-id>/no-connection/fixed-interval-mass/n-fi-m_strategies.pq
+reports/figures/<zmap-id>/no-connection/fixed-interval-mass/n-fi-m_strategies.pdf
+reports/figures/<zmap-id>/no-connection/fixed-interval-mass/n-fi-m_strategies.json
+```
+
 ## Project Organization
 
 ```
