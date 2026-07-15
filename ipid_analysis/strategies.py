@@ -72,6 +72,7 @@ class IPIDStrategy(IntEnum):
     MULTI = 6
     RANDOM = 7
     UNCLASSIFIED = 8
+    NOT_ENOUGH_SAMPLES = 9
 
 
 STRATEGY_NAMES = [s.name for s in IPIDStrategy]
@@ -89,6 +90,7 @@ STRATEGY_PRETTY = {
     "MULTI": "Multi",
     "RANDOM": "Random",
     "UNCLASSIFIED": "Unclassified",
+    "NOT_ENOUGH_SAMPLES": "Not Enough Samples",
 }
 
 STRATEGY_COLORS = {
@@ -101,6 +103,7 @@ STRATEGY_COLORS = {
     "MULTI": "#DA8BC3",  # pink
     "RANDOM": "#CCB974",  # olive
     "UNCLASSIFIED": "#8C8C8C",  # gray (neutral catch-all)
+    "NOT_ENOUGH_SAMPLES": "#BDBDBD",  # light gray (merge-time probe failure)
 }
 
 OUTPUT_SCHEMA = pa.schema(
