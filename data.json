@@ -3,20 +3,20 @@
     "zmap": "tcp-80_2026-07-14_01-39-22",
     "os": "tcp-80_2026-07-14_01-41-56",
     "ipid": {
-      "nec": {
-        "rt": {
+      "no-connection": {
+        "rt-based": {
           "base": "tcp-80_2026-07-14_02-16-24"
         },
-        "fi": {
+        "fixed-interval": {
           "base": "tcp-80_2026-07-14_02-17-21",
           "mass": "tcp-80_2026-07-14_02-17-48"
         }
       },
-      "ec": {
-        "rt": {
+      "connection": {
+        "rt-based": {
           "base": "tcp-80_2026-07-14_02-20-18"
         },
-        "fi": {
+        "fixed-interval": {
           "base": "tcp-80_2026-07-14_02-21-13"
         }
       }

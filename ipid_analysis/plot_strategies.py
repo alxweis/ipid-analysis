@@ -1,8 +1,8 @@
 """Plot the IPID selection-strategy distribution of one measurement.
 
-    python ipid_analysis/plot_strategies.py tcp.ipid.nec.fi.base
-    -> reports/figures/<zmap_id>/<stem>_strategies.pdf
-    -> reports/figures/<zmap_id>/<stem>_strategies.json
+    python ipid_analysis/plot_strategies.py tcp.ipid.no-connection.fixed-interval.base
+    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_strategies.pdf
+    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_strategies.json
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def _meta(m: IpidMeasurement) -> dict:
     return {
         "target": m.target,
         "protocol": m.protocol,
-        "conn_mode": m.conn_mode,
+        "connection_mode": m.connection_mode,
         "interval": m.interval,
         "scale": m.scale,
         "measurement_id": m.measurement_id,
@@ -36,13 +36,12 @@ def _meta(m: IpidMeasurement) -> dict:
 
 def render(m: IpidMeasurement) -> tuple[Path, Path]:
     """Write the strategy PDF + JSON for one measurement. Returns (pdf, json)."""
-    strategies_path = PROCESSED_DATA_DIR / m.zmap_id / m.output_name("strategies")
+    strategies_path = m.artifact_path(PROCESSED_DATA_DIR, "strategies")
     if not strategies_path.is_file():
         raise FileNotFoundError(strategies_path)
 
-    fig_dir = FIGURES_DIR / m.zmap_id
-    pdf_path = fig_dir / m.artifact_name("strategies", "pdf")
-    json_path = fig_dir / m.artifact_name("strategies", "json")
+    pdf_path = m.artifact_path(FIGURES_DIR, "strategies", "pdf")
+    json_path = m.artifact_path(FIGURES_DIR, "strategies", "json")
 
     counts = strategy_counts(strategies_path)
     total = sum(counts.values())
@@ -65,7 +64,9 @@ def render(m: IpidMeasurement) -> tuple[Path, Path]:
 
 @app.command()
 def main(
-    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.fi.base"),
+    target: str = typer.Argument(
+        ..., help="dotted target, e.g. tcp.ipid.no-connection.fixed-interval.base"
+    ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
 ) -> None:
     m = resolve(load_manifest(manifest), target)

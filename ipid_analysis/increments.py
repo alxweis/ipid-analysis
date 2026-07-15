@@ -10,8 +10,8 @@ stored:
 Mass measurements only have position-independent strategies, so their increments
 are always over the whole (present) sequence.
 
-    python ipid_analysis/increments.py tcp.ipid.nec.fi.base
-    -> data/processed/<zmap_id>/<stem>_increments.pq
+    python ipid_analysis/increments.py tcp.ipid.no-connection.fixed-interval.base
+    -> data/processed/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.pq
 """
 
 from __future__ import annotations
@@ -108,15 +108,13 @@ def mass_increments(ipid_list: pa.ListArray):
 
 
 def increments_output_path(m: IpidMeasurement) -> Path:
-    if not m.zmap_id:
-        raise ValueError(f"{m.target}: no zmap id in manifest (needed for the output path)")
-    return PROCESSED_DATA_DIR / m.zmap_id / m.output_name("increments")
+    return m.artifact_path(PROCESSED_DATA_DIR, "increments")
 
 
 def extract_increments(
     m: IpidMeasurement, batch_size: int = 1_000_000, compression: str | None = "zstd", threads: int = 0
 ) -> Path:
-    """Write <stem>_increments.pq for one measurement. Returns the path."""
+    """Write the canonical increments parquet for one measurement."""
     input_path = RAW_DATA_DIR / "ipid" / m.measurement_id / INPUT_NAME
     snapshot_path = RAW_DATA_DIR / "ipid" / m.measurement_id / SNAPSHOT_NAME
     for path in (input_path, snapshot_path):
@@ -175,7 +173,9 @@ def extract_increments(
 
 @app.command()
 def main(
-    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.fi.base"),
+    target: str = typer.Argument(
+        ..., help="dotted target, e.g. tcp.ipid.no-connection.fixed-interval.base"
+    ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
     batch_size: int = typer.Option(1_000_000, help="rows per batch"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),

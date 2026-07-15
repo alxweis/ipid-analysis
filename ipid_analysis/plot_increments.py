@@ -1,8 +1,8 @@
 """Plot the IPID-increment CDF (one line per strategy) of one measurement.
 
-    python ipid_analysis/plot_increments.py tcp.ipid.nec.fi.base
-    -> reports/figures/<zmap_id>/<stem>_increments.pdf
-    -> reports/figures/<zmap_id>/<stem>_increments.json
+    python ipid_analysis/plot_increments.py tcp.ipid.no-connection.fixed-interval.base
+    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.pdf
+    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.json
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def _meta(m: IpidMeasurement) -> dict:
     return {
         "target": m.target,
         "protocol": m.protocol,
-        "conn_mode": m.conn_mode,
+        "connection_mode": m.connection_mode,
         "interval": m.interval,
         "scale": m.scale,
         "measurement_id": m.measurement_id,
@@ -38,13 +38,12 @@ def _meta(m: IpidMeasurement) -> dict:
 
 def render(m: IpidMeasurement) -> tuple[Path, Path]:
     """Write the increment-CDF PDF + JSON for one measurement. Returns (pdf, json)."""
-    increments_path = PROCESSED_DATA_DIR / m.zmap_id / m.output_name(KIND)
+    increments_path = m.artifact_path(PROCESSED_DATA_DIR, KIND)
     if not increments_path.is_file():
         raise FileNotFoundError(increments_path)
 
-    fig_dir = FIGURES_DIR / m.zmap_id
-    pdf_path = fig_dir / m.artifact_name(KIND, "pdf")
-    json_path = fig_dir / m.artifact_name(KIND, "json")
+    pdf_path = m.artifact_path(FIGURES_DIR, KIND, "pdf")
+    json_path = m.artifact_path(FIGURES_DIR, KIND, "json")
 
     cdf = increment_cdf(increments_path)
     info = {
@@ -62,7 +61,9 @@ def render(m: IpidMeasurement) -> tuple[Path, Path]:
 
 @app.command()
 def main(
-    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.fi.base"),
+    target: str = typer.Argument(
+        ..., help="dotted target, e.g. tcp.ipid.no-connection.fixed-interval.base"
+    ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
 ) -> None:
     m = resolve(load_manifest(manifest), target)

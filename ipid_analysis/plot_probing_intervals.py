@@ -1,8 +1,8 @@
 """Plot the probing-interval histogram of one measurement.
 
-    python ipid_analysis/plot_probing_intervals.py tcp.ipid.nec.fi.base
-    -> reports/figures/<zmap_id>/<stem>_probing-intervals.pdf
-    -> reports/figures/<zmap_id>/<stem>_probing-intervals.json
+    python ipid_analysis/plot_probing_intervals.py tcp.ipid.no-connection.fixed-interval.base
+    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_probing-intervals.pdf
+    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_probing-intervals.json
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _meta(m: IpidMeasurement) -> dict:
     return {
         "target": m.target,
         "protocol": m.protocol,
-        "conn_mode": m.conn_mode,
+        "connection_mode": m.connection_mode,
         "interval": m.interval,
         "scale": m.scale,
         "measurement_id": m.measurement_id,
@@ -37,13 +37,12 @@ def _meta(m: IpidMeasurement) -> dict:
 
 def render(m: IpidMeasurement, bins: int = 50, clip_quantile: float = 0.99) -> tuple[Path, Path]:
     """Write the probing-interval PDF + JSON for one measurement. Returns (pdf, json)."""
-    intervals_path = PROCESSED_DATA_DIR / m.zmap_id / m.output_name(KIND)
+    intervals_path = m.artifact_path(PROCESSED_DATA_DIR, KIND)
     if not intervals_path.is_file():
         raise FileNotFoundError(intervals_path)
 
-    fig_dir = FIGURES_DIR / m.zmap_id
-    pdf_path = fig_dir / m.artifact_name(KIND, "pdf")
-    json_path = fig_dir / m.artifact_name(KIND, "json")
+    pdf_path = m.artifact_path(FIGURES_DIR, KIND, "pdf")
+    json_path = m.artifact_path(FIGURES_DIR, KIND, "json")
 
     stats = interval_stats(intervals_path, n_bins=bins, clip_quantile=clip_quantile)
     info = {
@@ -61,7 +60,9 @@ def render(m: IpidMeasurement, bins: int = 50, clip_quantile: float = 0.99) -> t
 
 @app.command()
 def main(
-    target: str = typer.Argument(..., help="dotted target, e.g. tcp.ipid.nec.fi.base"),
+    target: str = typer.Argument(
+        ..., help="dotted target, e.g. tcp.ipid.no-connection.fixed-interval.base"
+    ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
     bins: int = typer.Option(50, help="histogram bins"),
     clip_quantile: float = typer.Option(0.99, help="clip the histogram range at this quantile"),
