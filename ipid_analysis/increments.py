@@ -112,7 +112,10 @@ def increments_output_path(m: IpidMeasurement) -> Path:
 
 
 def extract_increments(
-    m: IpidMeasurement, batch_size: int = 1_000_000, compression: str | None = "zstd", threads: int = 0
+    m: IpidMeasurement,
+    batch_size: int = 1_000_000,
+    compression: str | None = "zstd",
+    threads: int = 0,
 ) -> Path:
     """Write the canonical increments parquet for one measurement."""
     input_path = RAW_DATA_DIR / "ipid" / m.measurement_id / INPUT_NAME
@@ -133,7 +136,9 @@ def extract_increments(
     reader = con.execute(read_sql, {"input": str(input_path)}).to_arrow_reader(reader_batch)
     writer = pq.ParquetWriter(output_path, OUTPUT_SCHEMA, compression=compression)
 
-    logger.info(f"[{m.target}] {m.measurement_id}: extracting increments ({'mass' if mass else 'base'})")
+    logger.info(
+        f"[{m.target}] {m.measurement_id}: extracting increments ({'mass' if mass else 'base'})"
+    )
     start = time.monotonic()
     try:
         for batch in reader:

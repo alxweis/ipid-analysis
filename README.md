@@ -8,9 +8,10 @@ A short description of the project.
 
 ## S3 measurement handoff worker
 
-The analysis VM can process the stateless TCP RT measurement produced by
-`ipid-measure` without any direct network connection between the VMs. Both sides
-use the same S3 prefix and locally configured `s3cmd` credentials:
+The analysis VM can process stateless ICMP, TCP, and UDP-DNS RT measurements
+produced by `ipid-measure` without any direct network connection between the
+VMs. Both sides use the same S3 prefix and locally configured `s3cmd`
+credentials:
 
 ```bash
 export IPID_ANALYSIS_S3_PREFIX=s3://bucket/ipid-analysis-workflow/
@@ -31,8 +32,21 @@ jobs with either terminal marker are skipped. Use `--once` to process the curren
 queue and exit, which is useful for cron; the default process polls continuously.
 
 The corresponding `ipid-measure` run waits for the terminal marker and will not
-start the 25-request fixed-interval measurement until the result has been
-downloaded and verified.
+start that protocol's 25-request fixed-interval measurement until the result has
+been downloaded and verified.
+
+## Strategy classification by measurement scale
+
+Base measurements classify the position-dependent or cheaply identifiable
+strategies `REFLECTION`, `CONSTANT`, `PER_DESTINATION`, `PER_CONNECTION`,
+`SINGLE`, and `PER_BUCKET`. All other base sequences are `UNCLASSIFIED` and can
+be passed to a mass measurement.
+
+Mass measurements use only position-independent rules and classify `CONSTANT`,
+`MULTI`, and `RANDOM`. Any sequence not matching those rules remains
+`UNCLASSIFIED`. Minimum reply-rate filtering is performed by `ipid-measure`
+before fixed-interval rows are written, so analysis does not duplicate that
+measurement-stage decision as an IPID strategy.
 
 ## Manifest and artifact naming
 

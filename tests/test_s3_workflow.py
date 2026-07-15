@@ -64,7 +64,7 @@ class S3WorkflowTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Request.parse(data, "s3://bucket/workflow")
 
-    def test_worker_uploads_filtered_targets_before_done_marker(self):
+    def _assert_worker_uploads_filtered_targets(self, protocol, job_id):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source.pq"
@@ -72,13 +72,35 @@ class S3WorkflowTest(unittest.TestCase):
                 pa.table(
                     {
                         "IP_ADDR": ["192.0.2.10", "192.0.2.11"],
-                        "IPID_SEQUENCE": [",".join(["7"] * 16), "1,2"],
+                        "IPID_SEQUENCE": [
+                            ",".join(["7"] * 16),
+                            ",".join(
+                                str(value)
+                                for value in [
+                                    33_375,
+                                    55_746,
+                                    60_367,
+                                    41_743,
+                                    55_073,
+                                    33_497,
+                                    48_632,
+                                    17_680,
+                                    59_576,
+                                    20_173,
+                                    15_785,
+                                    2_685,
+                                    61_469,
+                                    4_930,
+                                    10_166,
+                                    1_083,
+                                ]
+                            ),
+                        ],
                     }
                 ),
                 source,
             )
             prefix = "s3://bucket/workflow"
-            job_id = "tcp-80_2026-01-01_00-00-00"
             job_prefix = f"{prefix}/jobs/{job_id}"
             request_uri = f"{job_prefix}/request.json"
             result_uri = f"{job_prefix}/zmap_unclassified.pq"
@@ -86,7 +108,7 @@ class S3WorkflowTest(unittest.TestCase):
             request = {
                 "version": 1,
                 "job_id": job_id,
-                "protocol": "tcp",
+                "protocol": protocol,
                 "measurement_id": job_id,
                 "ipid_uri": "s3://bucket/raw/ipid/run/ipid.pq",
                 "snapshot_uri": "s3://bucket/raw/ipid/run/ipid.snapshot.yaml",
@@ -102,6 +124,7 @@ class S3WorkflowTest(unittest.TestCase):
                     request["snapshot_uri"]: (
                         b"connection_count: 4\nrequests_per_connection: 4\n"
                         b"request_ip_ids: [1, 2, 3, 4]\n"
+                        b"fixed_interval:\n  minimum_reply_rate: 0.8\n"
                     ),
                 }
             )
@@ -114,6 +137,56 @@ class S3WorkflowTest(unittest.TestCase):
             result.write_bytes(client.objects[result_uri])
             self.assertEqual(pq.read_table(result)["IP_ADDR"].to_pylist(), ["192.0.2.11"])
             self.assertFalse((root / "work" / job_id).exists())
+
+    def test_worker_supports_all_measurement_protocols(self):
+        cases = [
+            ("icmp", "icmp_2026-01-01_00-00-00"),
+            ("tcp", "tcp-80_2026-01-01_00-00-00"),
+            ("udp-dns", "udp-dns-53_2026-01-01_00-00-00"),
+        ]
+        for protocol, job_id in cases:
+            with self.subTest(protocol=protocol):
+                self._assert_worker_uploads_filtered_targets(protocol, job_id)
+
+    def test_request_rejects_unsupported_protocol(self):
+        prefix = "s3://bucket/workflow"
+        job_id = "sctp_2026-01-01_00-00-00"
+        job_prefix = f"{prefix}/jobs/{job_id}"
+        data = {
+            "version": 1,
+            "job_id": job_id,
+            "protocol": "sctp",
+            "measurement_id": job_id,
+            "ipid_uri": "s3://bucket/raw/ipid/run/ipid.pq",
+            "snapshot_uri": "s3://bucket/raw/ipid/run/ipid.snapshot.yaml",
+            "result_uri": f"{job_prefix}/zmap_unclassified.pq",
+            "done_uri": f"{job_prefix}/done.json",
+            "failed_uri": f"{job_prefix}/failed.json",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+
+        with self.assertRaisesRegex(ValueError, "unsupported protocol"):
+            Request.parse(data, prefix)
+
+    def test_request_rejects_protocol_mismatching_measurement_id(self):
+        prefix = "s3://bucket/workflow"
+        job_id = "icmp_2026-01-01_00-00-00"
+        job_prefix = f"{prefix}/jobs/{job_id}"
+        data = {
+            "version": 1,
+            "job_id": job_id,
+            "protocol": "tcp",
+            "measurement_id": job_id,
+            "ipid_uri": "s3://bucket/raw/ipid/run/ipid.pq",
+            "snapshot_uri": "s3://bucket/raw/ipid/run/ipid.snapshot.yaml",
+            "result_uri": f"{job_prefix}/zmap_unclassified.pq",
+            "done_uri": f"{job_prefix}/done.json",
+            "failed_uri": f"{job_prefix}/failed.json",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+
+        with self.assertRaisesRegex(ValueError, "does not match measurement id"):
+            Request.parse(data, prefix)
 
 
 if __name__ == "__main__":

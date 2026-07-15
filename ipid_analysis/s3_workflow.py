@@ -1,10 +1,10 @@
 """S3-only worker for the measurement-to-analysis handoff.
 
 The worker polls for ``jobs/<id>/request.json`` objects. For each request it
-downloads the completed stateless TCP RT measurement, runs the normal IPID
-strategy classifier, uploads a ZMap-compatible UNCLASSIFIED target parquet, and
-only then publishes ``done.json``. A measurement VM can therefore treat the done
-marker as an atomic readiness signal.
+downloads the completed stateless RT measurement (ICMP, TCP, or UDP-DNS), runs
+the normal IPID strategy classifier, uploads a ZMap-compatible UNCLASSIFIED
+target parquet, and only then publishes ``done.json``. A measurement VM can
+therefore treat the done marker as an atomic readiness signal.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from ipid_analysis.strategies import classify_paths
 PROTOCOL_VERSION = 1
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TARGET_NAME = "zmap_unclassified.pq"
+SUPPORTED_PROTOCOLS = frozenset({"icmp", "tcp", "udp-dns"})
 
 app = typer.Typer()
 
@@ -40,6 +41,18 @@ def join_s3(prefix: str, *parts: str) -> str:
     for part in parts:
         value += "/" + part.strip("/")
     return value
+
+
+def measurement_protocol(measurement_id: str) -> str:
+    """Derive the workflow protocol from an ipid-measure measurement ID."""
+    prefix = measurement_id.split("_", 1)[0]
+    if prefix == "icmp":
+        return "icmp"
+    if prefix == "tcp" or prefix.startswith("tcp-"):
+        return "tcp"
+    if prefix == "udp-dns" or prefix.startswith("udp-dns-"):
+        return "udp-dns"
+    raise ValueError(f"unsupported measurement id protocol in {measurement_id!r}")
 
 
 @dataclass(frozen=True)
@@ -65,8 +78,14 @@ class Request:
             raise ValueError(f"unsupported request version {request.version}")
         if not JOB_ID_RE.fullmatch(request.job_id) or request.job_id != request.measurement_id:
             raise ValueError("invalid job_id or measurement_id")
-        if request.protocol != "tcp":
+        if request.protocol not in SUPPORTED_PROTOCOLS:
             raise ValueError(f"unsupported protocol {request.protocol!r}")
+        expected_protocol = measurement_protocol(request.measurement_id)
+        if request.protocol != expected_protocol:
+            raise ValueError(
+                f"protocol {request.protocol!r} does not match measurement id "
+                f"({expected_protocol!r})"
+            )
         if not request.ipid_uri.startswith("s3://") or not request.ipid_uri.endswith("/ipid.pq"):
             raise ValueError("invalid ipid_uri")
         if not request.snapshot_uri.startswith("s3://") or not request.snapshot_uri.endswith(
@@ -200,6 +219,7 @@ def process_request(
     if client.exists(failed_uri):
         return False
 
+    request = None
     try:
         request = load_request(client, request_uri, s3_prefix, work_dir)
         input_path = work_dir / "ipid.pq"
@@ -237,14 +257,15 @@ def process_request(
         return True
     except Exception as exc:
         failed_path = work_dir / "failed.json"
+        failed_job_id = request.job_id if request is not None else job_id
         write_json(
             failed_path,
-            {"version": PROTOCOL_VERSION, "job_id": request.job_id, "error": str(exc)},
+            {"version": PROTOCOL_VERSION, "job_id": failed_job_id, "error": str(exc)},
         )
         try:
             client.upload(failed_path, failed_uri)
         except Exception:
-            logger.exception(f"[{request.job_id}] could not upload failure marker")
+            logger.exception(f"[{failed_job_id}] could not upload failure marker")
         raise
 
 
