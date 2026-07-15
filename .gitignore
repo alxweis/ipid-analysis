@@ -189,3 +189,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# MaxMind databases are licensed external inputs, not repository artifacts.
+references/*.mmdb

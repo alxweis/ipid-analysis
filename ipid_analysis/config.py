@@ -15,6 +15,7 @@ RAW_DATA_DIR = DATA_DIR / "raw"
 INTERIM_DATA_DIR = DATA_DIR / "interim"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 EXTERNAL_DATA_DIR = DATA_DIR / "external"
+REFERENCES_DIR = PROJ_ROOT / "references"
 
 MODELS_DIR = PROJ_ROOT / "models"
 

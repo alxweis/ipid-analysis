@@ -16,6 +16,8 @@ skipped with a warning instead of aborting the run.
 
 After the individual measurements, every available no-connection RT-base and
 fixed-interval-mass pair is merged and its strategy distribution is plotted.
+Every available RT-base/fixed-interval-base pair is also compared with the
+three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
 
 from __future__ import annotations
@@ -25,8 +27,15 @@ from pathlib import Path
 from loguru import logger
 import typer
 
+from ipid_analysis.comparison import iter_base_comparisons
 from ipid_analysis.increments import extract_increments
 from ipid_analysis.manifest import iter_ipid_measurements, load_manifest
+from ipid_analysis.paper_figures import (
+    default_maxmind_database,
+    render_increment_comparison,
+    render_probing_interval_comparison,
+    render_strategy_intersection,
+)
 from ipid_analysis.plot_increments import render as render_increments_plot
 from ipid_analysis.plot_probing_intervals import render as render_intervals_plot
 from ipid_analysis.plot_strategies import (
@@ -48,6 +57,10 @@ def main(
     batch_size: int = typer.Option(1_000_000, help="rows per batch"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
+    maxmind_db: Path | None = typer.Option(
+        None,
+        help="GeoLite2/GeoIP2 .mmdb for continent plots; also read from IPID_MAXMIND_DB",
+    ),
 ) -> None:
     manifest = load_manifest(manifest_path)
     measurements = iter_ipid_measurements(manifest)
@@ -87,9 +100,54 @@ def main(
             logger.warning(f"[{merge.target}] missing merge input ({exc}) -- skipped")
             merged_skipped += 1
 
+    comparison_ok, comparison_skipped = 0, 0
+    continent_database = maxmind_db or default_maxmind_database()
+    for comparison in iter_base_comparisons(manifest):
+        completed = 0
+        for label, renderer in (
+            ("increment distributions", render_increment_comparison),
+            ("strategy intersection", render_strategy_intersection),
+        ):
+            try:
+                output, _, _ = renderer(
+                    comparison,
+                    compression=comp,
+                    threads=threads,
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                logger.warning(f"[{comparison.target}] missing {label} input ({exc}) -- skipped")
+            else:
+                logger.success(f"[{comparison.target}] {label} -> {output}")
+                completed += 1
+
+        if continent_database is None or not continent_database.is_file():
+            logger.warning(
+                f"[{comparison.target}] no MaxMind .mmdb configured; "
+                "continent probing-interval figure skipped"
+            )
+        else:
+            try:
+                output, _, _ = render_probing_interval_comparison(
+                    comparison,
+                    maxmind_database=continent_database,
+                    compression=comp,
+                    threads=threads,
+                )
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                logger.warning(f"[{comparison.target}] continent figure failed ({exc}) -- skipped")
+            else:
+                logger.success(f"[{comparison.target}] probing intervals by continent -> {output}")
+                completed += 1
+
+        if completed:
+            comparison_ok += 1
+        else:
+            comparison_skipped += 1
+
     logger.success(
         f"postprocessing + plotting done: {ok} measurements ok, {skipped} skipped; "
-        f"{merged_ok} merges ok, {merged_skipped} skipped"
+        f"{merged_ok} merges ok, {merged_skipped} skipped; "
+        f"{comparison_ok} comparisons produced output, {comparison_skipped} skipped"
     )
 
 
