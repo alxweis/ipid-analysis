@@ -12,8 +12,9 @@ Design for scale (>100 GB / >300M rows):
     C++ across all cores -- no per-row Python parsing.
   * Only IP_ADDR and IPID_SEQUENCE are read; the timestamp columns are never
     touched (the current rules do not use them -> saves most of the I/O).
-  * Each sequence has a fixed length, so a whole batch becomes one (N, L) uint16
-    matrix and every rule runs vectorized over the batch. No per-IP objects.
+  * Base sequences have a fixed length, so a whole batch becomes one (N, L)
+    uint16 matrix. Mass sequences are handled as variable-length arrays after
+    missing replies have been removed. All rules run vectorized over each batch.
   * The strategy column is dictionary-encoded (int8 + small dictionary), so it
     costs ~1 byte/row instead of a string per row.
 """
@@ -49,8 +50,8 @@ MIN_STEPS_BEFORE_WRAPAROUND = 3
 MAX_INC = math.ceil(MODULUS / MIN_STEPS_BEFORE_WRAPAROUND) - 1  # 21845
 MULTI_MAX_INC = 800
 MULTI_MAX_CLUSTERS = 16
-RANDOM_MIN_P_VALUE = 1e-9  # reject "random" if any uniformity p-value is below this
-CHI2_BINS = 4  # bins for the increment-uniformity test (see chi2_pvalue note)
+RANDOM_MIN_P_VALUE = 1e-9  # reject "random" if the value-uniformity p-value is below this
+CHI2_BINS = 4  # bins for the IPID-value uniformity test
 
 INPUT_NAME = "ipid.pq"
 SNAPSHOT_NAME = "ipid.snapshot.yaml"
@@ -91,15 +92,15 @@ STRATEGY_PRETTY = {
 }
 
 STRATEGY_COLORS = {
-    "REFLECTION": "#4C72B0",       # blue
-    "CONSTANT": "#DD8452",         # orange
+    "REFLECTION": "#4C72B0",  # blue
+    "CONSTANT": "#DD8452",  # orange
     "PER_DESTINATION": "#55A868",  # green
-    "PER_CONNECTION": "#C44E52",   # red
-    "SINGLE": "#8172B3",           # purple
-    "PER_BUCKET": "#937860",       # brown
-    "MULTI": "#DA8BC3",            # pink
-    "RANDOM": "#CCB974",           # olive
-    "UNCLASSIFIED": "#8C8C8C",     # gray (neutral catch-all)
+    "PER_CONNECTION": "#C44E52",  # red
+    "SINGLE": "#8172B3",  # purple
+    "PER_BUCKET": "#937860",  # brown
+    "MULTI": "#DA8BC3",  # pink
+    "RANDOM": "#CCB974",  # olive
+    "UNCLASSIFIED": "#8C8C8C",  # gray (neutral catch-all)
 }
 
 OUTPUT_SCHEMA = pa.schema(
@@ -114,8 +115,8 @@ READ_SQL = """
 SELECT
     IP_ADDR,
     -- Missing/non-numeric IPIDs (e.g. '-' for a probe without reply) become NULL
-    -- via TRY_CAST; any such row is emitted as an empty list so it falls through
-    -- to UNCLASSIFIED (the length != SEQUENCE_LENGTH path) instead of crashing.
+    -- via TRY_CAST. Such rows are emitted as empty lists so the fixed-position
+    -- classifier assigns UNCLASSIFIED instead of using incomplete positions.
     CASE WHEN len(list_filter(ints, v -> v IS NULL)) = 0 THEN ints ELSE CAST([] AS INTEGER[]) END AS ipid
 FROM (
     SELECT IP_ADDR,
@@ -175,41 +176,6 @@ def _all_in_range(inc: np.ndarray, lo: int, hi: int, axis) -> np.ndarray:
     return ((inc >= lo) & (inc <= hi)).all(axis=axis)
 
 
-def chi2_pvalue(inc: np.ndarray, n_bins: int) -> np.ndarray:
-    """Chi-square goodness-of-fit p-value (per row) that the increments are
-    uniform over [0, 2**16).
-
-    NOTE (assumption -- the original chi2_test was undefined): the increments of
-    a random IPID source are uniform mod 2**16, so this bins each row's
-    increments into ``n_bins`` equal-width bins and tests against a uniform
-    expectation. Swap this body if your intended test differs. Returns a p-value
-    in [0, 1]; small => clearly non-uniform.
-    """
-    m, length = inc.shape
-    if length == 0:
-        return np.ones(m)
-    bins = (inc.astype(np.int64) * n_bins) // MODULUS  # 0..n_bins-1
-    flat = np.arange(m).repeat(length) * n_bins + bins.ravel()
-    counts = np.bincount(flat, minlength=m * n_bins).reshape(m, n_bins)
-    expected = length / n_bins
-    chi2 = ((counts - expected) ** 2 / expected).sum(axis=1)
-    df = n_bins - 1
-    return gammaincc(df / 2.0, chi2 / 2.0)
-
-
-def cluster_counts(seq: np.ndarray, max_diff: int) -> np.ndarray:
-    """Per-row number of clusters: sort the row, then start a new cluster wherever
-    the gap between consecutive sorted values exceeds ``max_diff``.
-
-    NOTE (assumption -- get_clusters was undefined): linear (non-wrapping)
-    single-link clustering on the raw IPIDs. Replace if you need circular
-    (mod-2**16) clustering.
-    """
-    ordered = np.sort(seq, axis=1).astype(np.int64)
-    gaps = np.diff(ordered, axis=1)
-    return 1 + (gaps > max_diff).sum(axis=1)
-
-
 # ---------------------------------------------------------------------------
 # Vectorized classifier. S: (N, L) uint16 -> (N,) int8 codes.
 # Each mask mirrors one of the original is_* predicates.
@@ -257,32 +223,21 @@ def classify_batch(S: np.ndarray, cfg: MeasurementConfig, skip_first: bool = Fal
     m_single = _all_in_range(inc_all, 1, MAX_INC, 1)
     m_per_bucket = _all_in_range(inc_con, 1, MAX_INC, (1, 2))
 
-    n_clusters = cluster_counts(S[:, conn:] if skip_first else S, MULTI_MAX_INC)
-    m_multi = (n_clusters > 1) & (n_clusters <= MULTI_MAX_CLUSTERS)
-
-    # Resolve the cheap, deterministic rules first; -1 marks rows that still need
-    # the expensive RANDOM test, so chi2 runs only on the residual.
-    det_masks = [m_reflection, m_constant, m_per_dest, m_per_conn, m_single, m_per_bucket, m_multi]
-    codes = np.select(det_masks, list(range(len(det_masks))), default=-1).astype(np.int8)
-
-    residual = np.flatnonzero(codes == -1)
-    if residual.size:
-        # RANDOM: increments look uniform on every view (whole seq, both sources,
-        # each connection). Reject if the smallest p-value is below the threshold.
-        p_min = np.minimum.reduce(
-            [
-                chi2_pvalue(inc_all[residual], CHI2_BINS),
-                chi2_pvalue(inc_src1[residual], CHI2_BINS),
-                chi2_pvalue(inc_src2[residual], CHI2_BINS),
-                *[chi2_pvalue(inc_con[residual, j, :], CHI2_BINS) for j in range(conn)],
-            ]
-        )
-        codes[residual] = np.where(
-            p_min >= RANDOM_MIN_P_VALUE,
-            int(IPIDStrategy.RANDOM),
-            int(IPIDStrategy.UNCLASSIFIED),
-        )
-    return codes
+    # Base measurements intentionally stop after the position-dependent and
+    # cheaply determined rules. MULTI and RANDOM require the larger mass sample.
+    masks = [m_reflection, m_constant, m_per_dest, m_per_conn, m_single, m_per_bucket]
+    return np.select(
+        masks,
+        [
+            int(IPIDStrategy.REFLECTION),
+            int(IPIDStrategy.CONSTANT),
+            int(IPIDStrategy.PER_DESTINATION),
+            int(IPIDStrategy.PER_CONNECTION),
+            int(IPIDStrategy.SINGLE),
+            int(IPIDStrategy.PER_BUCKET),
+        ],
+        default=int(IPIDStrategy.UNCLASSIFIED),
+    ).astype(np.int8)
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +281,9 @@ def _mass_padded(ipid_list: pa.ListArray) -> tuple[np.ndarray, np.ndarray, np.nd
     return lengths, present, values
 
 
-def _cluster_counts_mass(values: np.ndarray, present: np.ndarray, lengths: np.ndarray) -> np.ndarray:
+def _cluster_counts_mass(
+    values: np.ndarray, present: np.ndarray, lengths: np.ndarray
+) -> np.ndarray:
     """Circular single-link cluster count per row over the present values."""
     n, w = values.shape
     big = 1 << 20
@@ -341,25 +298,30 @@ def _cluster_counts_mass(values: np.ndarray, present: np.ndarray, lengths: np.nd
     return np.where(lengths >= 1, np.where(k == 0, 1, k), 0)
 
 
-def _chi2_pvalue_mass(diff: np.ndarray, inc_present: np.ndarray) -> np.ndarray:
-    """Per-row uniformity p-value of the present increments (see chi2_pvalue)."""
-    m = diff.shape[0]
+def _chi2_pvalue_mass(values: np.ndarray, present: np.ndarray) -> np.ndarray:
+    """Per-row uniformity p-value of the present IPID values.
+
+    Operating on values instead of consecutive increments makes RANDOM
+    classification invariant to sample order and robust to missing replies.
+    """
+    m = values.shape[0]
     if m == 0:
         return np.ones(0)
-    n_inc = inc_present.sum(axis=1)
-    bins = (diff * CHI2_BINS) // MODULUS
-    rows = np.broadcast_to(np.arange(m)[:, None], diff.shape)
-    flat_bin = (rows * CHI2_BINS + bins)[inc_present]
+    sample_count = present.sum(axis=1)
+    bins = (values * CHI2_BINS) // MODULUS
+    rows = np.broadcast_to(np.arange(m)[:, None], values.shape)
+    flat_bin = (rows * CHI2_BINS + bins)[present]
     counts = np.bincount(flat_bin, minlength=m * CHI2_BINS).reshape(m, CHI2_BINS)
-    exp = np.where(n_inc > 0, n_inc / CHI2_BINS, 1.0)[:, None]
+    exp = np.where(sample_count > 0, sample_count / CHI2_BINS, 1.0)[:, None]
     chi2 = ((counts - exp) ** 2 / exp).sum(axis=1)
     p = gammaincc((CHI2_BINS - 1) / 2.0, chi2 / 2.0)
-    return np.where(n_inc > 0, p, 1.0)
+    return np.where(sample_count > 0, p, 1.0)
 
 
 def classify_batch_mass(ipid_list: pa.ListArray) -> np.ndarray:
     """Position-independent classification for mass measurements ('-' already
-    dropped). Only CONSTANT, SINGLE, MULTI, RANDOM apply; empty -> UNCLASSIFIED."""
+    dropped). Only CONSTANT, MULTI, and RANDOM apply; all other rows are
+    UNCLASSIFIED. The measurement stage already enforces its minimum reply rate."""
     lengths, present, values = _mass_padded(ipid_list)
     n = len(lengths)
     codes = np.full(n, int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
@@ -368,26 +330,24 @@ def classify_batch_mass(ipid_list: pa.ListArray) -> np.ndarray:
 
     diff = (values[:, 1:] - values[:, :-1]) & 0xFFFF  # consecutive present, mod 2**16
     inc_present = np.arange(values.shape[1] - 1)[None, :] < (lengths[:, None] - 1)
-    has_inc = lengths >= 2
-
     m_constant = (lengths >= 1) & np.where(inc_present, diff == 0, True).all(axis=1)
-    m_single = has_inc & np.where(inc_present, (diff >= 1) & (diff <= MAX_INC), True).all(axis=1)
     n_clusters = _cluster_counts_mass(values, present, lengths)
     m_multi = (n_clusters > 1) & (n_clusters <= MULTI_MAX_CLUSTERS)
 
     codes = np.select(
-        [m_constant, m_single, m_multi],
-        [int(IPIDStrategy.CONSTANT), int(IPIDStrategy.SINGLE), int(IPIDStrategy.MULTI)],
+        [m_constant, m_multi],
+        [int(IPIDStrategy.CONSTANT), int(IPIDStrategy.MULTI)],
         default=-1,
     ).astype(np.int8)
 
     residual = np.flatnonzero(codes == -1)
     if residual.size:
-        p = _chi2_pvalue_mass(diff[residual], inc_present[residual])
-        # rows with no increments (length < 2) can't be RANDOM -> UNCLASSIFIED
+        p = _chi2_pvalue_mass(values[residual], present[residual])
         is_random = (p >= RANDOM_MIN_P_VALUE) & (lengths[residual] >= 2)
         codes[residual] = np.where(
-            is_random, int(IPIDStrategy.RANDOM), int(IPIDStrategy.UNCLASSIFIED)
+            is_random,
+            int(IPIDStrategy.RANDOM),
+            int(IPIDStrategy.UNCLASSIFIED),
         )
     return codes
 
