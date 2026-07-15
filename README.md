@@ -48,6 +48,45 @@ Mass measurements use only position-independent rules and classify `CONSTANT`,
 before fixed-interval rows are written, so analysis does not duplicate that
 measurement-stage decision as an IPID strategy.
 
+## Merging base and mass strategies
+
+The canonical no-connection RT-base and fixed-interval-mass results can be
+merged after both measurements have been classified:
+
+```bash
+python ipid_analysis/strategy_merge.py \
+  tcp.ipid.no-connection.rt-based.base \
+  tcp.ipid.no-connection.fixed-interval.mass
+
+python ipid_analysis/plot_strategies.py \
+  tcp.ipid.no-connection.rt-based.base \
+  tcp.ipid.no-connection.fixed-interval.mass
+```
+
+A classified base strategy is retained. `UNCLASSIFIED` base rows are replaced
+by their mass strategy; if their intended mass probe produced no stored row,
+they become `NOT_ENOUGH_SAMPLES`. Base probe failures do not appear in the
+merged result because the base strategies file defines its population.
+
+| Base | Mass | Merged |
+|---|---|---|
+| classified strategy | not targeted | base strategy |
+| `UNCLASSIFIED` | classified strategy | mass strategy |
+| `UNCLASSIFIED` | `UNCLASSIFIED` | `UNCLASSIFIED` |
+| `UNCLASSIFIED` | probe failed | `NOT_ENOUGH_SAMPLES` |
+| probe failed | not targeted | omitted |
+
+The commands above write:
+
+```text
+data/processed/<zmap-id>/no-connection/merged/rt-based-base_fixed-interval-mass/n-rt-b_fi-m_strategies.pq
+reports/figures/<zmap-id>/no-connection/merged/rt-based-base_fixed-interval-mass/n-rt-b_fi-m_strategies.pdf
+reports/figures/<zmap-id>/no-connection/merged/rt-based-base_fixed-interval-mass/n-rt-b_fi-m_strategies.json
+```
+
+`postprocess.py` performs these canonical merges and plots automatically after
+all individual measurements in the manifest have been processed.
+
 ## Manifest and artifact naming
 
 The campaign manifest uses descriptive keys for connection and interval modes:
