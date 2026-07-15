@@ -87,6 +87,55 @@ reports/figures/<zmap-id>/no-connection/merged/rt-based-base_fixed-interval-mass
 `postprocess.py` performs these canonical merges and plots automatically after
 all individual measurements in the manifest have been processed.
 
+## ACM comparison figures
+
+For every protocol and connection mode that has both an RT-based base run and a
+fixed-interval base run, `make analyse data.json` additionally creates three
+compact, title-free paper figures:
+
+1. split violin plots of the per-IP median probing interval by MaxMind continent
+   (limited to p99.5),
+2. paired empirical increment CDFs for `SINGLE`, `PER_DESTINATION`,
+   `PER_CONNECTION`, and `PER_BUCKET` (limited to p99.9), and
+3. a row-normalized strategy-intersection heatmap.
+
+The MaxMind figure needs a GeoLite2/GeoIP2 Country or City database. Put it at
+`references/GeoLite2-Country.mmdb`, set `IPID_MAXMIND_DB`, or pass it directly:
+
+```bash
+python ipid_analysis/postprocess.py data.json \
+  --maxmind-db /path/to/GeoLite2-Country.mmdb
+
+python ipid_analysis/paper_figures.py \
+  udp-dns.ipid.connection.rt-based.base \
+  udp-dns.ipid.connection.fixed-interval.base \
+  --manifest data.json \
+  --maxmind-db /path/to/GeoLite2-Country.mmdb
+```
+
+If no MaxMind database is configured, the increment and intersection figures
+are still produced and only the continent figure is skipped with a warning.
+For a connection-mode comparison, the artifacts are written as:
+
+```text
+data/processed/<zmap-id>/<connection-mode>/comparison/
+  rt-based-base_fixed-interval-base/
+    <n|c>-rt-b_fi-b_ip-continents.pq
+    <n|c>-rt-b_fi-b_probing-intervals-by-continent.pq
+    <n|c>-rt-b_fi-b_increment-distributions.pq
+    <n|c>-rt-b_fi-b_strategy-intersection.pq
+
+reports/figures/<zmap-id>/<connection-mode>/comparison/
+  rt-based-base_fixed-interval-base/
+    <n|c>-rt-b_fi-b_probing-intervals-by-continent.{pdf,json}
+    <n|c>-rt-b_fi-b_increment-distributions.{pdf,json}
+    <n|c>-rt-b_fi-b_strategy-intersection.{pdf,json}
+```
+
+The aggregate Parquets make the plotted values independently inspectable. Each
+JSON sidecar records the source measurements, aggregation/normalization method,
+percentile handling, population sizes, and generation timestamp.
+
 ## Manifest and artifact naming
 
 The campaign manifest uses descriptive keys for connection and interval modes:

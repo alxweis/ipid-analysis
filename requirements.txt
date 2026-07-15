@@ -1,6 +1,7 @@
 duckdb
 loguru
 matplotlib
+geoip2
 mkdocs
 numpy
 pip

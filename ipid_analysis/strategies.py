@@ -94,16 +94,16 @@ STRATEGY_PRETTY = {
 }
 
 STRATEGY_COLORS = {
-    "REFLECTION": "#4C72B0",  # blue
-    "CONSTANT": "#DD8452",  # orange
-    "PER_DESTINATION": "#55A868",  # green
-    "PER_CONNECTION": "#C44E52",  # red
-    "SINGLE": "#8172B3",  # purple
-    "PER_BUCKET": "#937860",  # brown
-    "MULTI": "#DA8BC3",  # pink
-    "RANDOM": "#CCB974",  # olive
-    "UNCLASSIFIED": "#8C8C8C",  # gray (neutral catch-all)
-    "NOT_ENOUGH_SAMPLES": "#BDBDBD",  # light gray (merge-time probe failure)
+    "REFLECTION": "#E5C453",  # smooth yellow
+    "CONSTANT": "#4C78A8",  # smooth blue
+    "PER_DESTINATION": "#A678DE",  # smooth purple
+    "PER_CONNECTION": "#E78AC3",  # smooth pink
+    "SINGLE": "#E76F6F",  # smooth red
+    "PER_BUCKET": "#59C65D",  # smooth green
+    "MULTI": "#78C6E5",  # smooth light blue
+    "RANDOM": "#F28E2B",  # orange
+    "UNCLASSIFIED": "#D9D9D9",  # smooth light grey
+    "NOT_ENOUGH_SAMPLES": "#969696",  # smooth grey
 }
 
 OUTPUT_SCHEMA = pa.schema(
