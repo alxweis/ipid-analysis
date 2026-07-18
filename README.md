@@ -87,6 +87,41 @@ reports/figures/<zmap-id>/no-connection/merged/rt-based-base_fixed-interval-mass
 `postprocess.py` performs these canonical merges and plots automatically after
 all individual measurements in the manifest have been processed.
 
+### RT-based to fixed-interval strategy refinement
+
+For every canonical no-connection RT-base and fixed-interval-mass pair,
+`make analyse data.json` also creates a compact ACM-width stacked-bar figure.
+The upper bar contains the complete RT-based strategy distribution. The lower
+bar contains the strategy distribution of the fixed-interval mass result, whose
+target population is exactly the addresses classified as `UNCLASSIFIED` by the
+RT-based measurement. Light guide lines expand the RT `UNCLASSIFIED` segment to
+the fixed-interval bar.
+
+The renderer validates this population relationship and fails instead of
+creating a misleading figure if a fixed-interval address was not RT
+`UNCLASSIFIED`. Probe failures can make the stored fixed-interval result smaller
+than the target population; this coverage is recorded in the JSON sidecar.
+
+```bash
+python ipid_analysis/plot_strategy_refinement.py \
+  tcp.ipid.no-connection.rt-based.base \
+  tcp.ipid.no-connection.fixed-interval.mass \
+  --manifest data.json
+```
+
+The generated artifacts are:
+
+```text
+data/processed/<zmap-id>/no-connection/merged/
+  rt-based-base_fixed-interval-mass/
+    n-rt-b_fi-m_measurement-type-by-strategy.pq
+
+reports/figures/<zmap-id>/no-connection/merged/
+  rt-based-base_fixed-interval-mass/
+    n-rt-b_fi-m_measurement-type-by-strategy.pdf
+    n-rt-b_fi-m_measurement-type-by-strategy.json
+```
+
 ## ACM comparison figures
 
 For every protocol and connection mode that has both an RT-based base run and a
