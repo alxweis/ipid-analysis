@@ -22,6 +22,8 @@ TCP campaigns with an RT-based connection-oriented base measurement produce an
 additional version with that measurement's strategy distribution as a third bar.
 Protocol campaigns with an OS measurement also produce a row-normalized heatmap of
 merged IP-ID selection strategies by general-purpose and network OS.
+TCP campaigns also produce a paper plot of the merged strategy distribution
+split by the ZMap ``synack`` and ``rst`` reply classifications.
 Every available RT-base/fixed-interval-base pair is also compared with the
 three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
@@ -62,6 +64,7 @@ from ipid_analysis.plot_strategy_refinement import (
 from ipid_analysis.plot_strategy_refinement import (
     render_with_connection as render_strategy_refinement_with_connection_plot,
 )
+from ipid_analysis.plot_tcp_flags_strategy import render as render_tcp_flags_strategy_plot
 from ipid_analysis.probing_intervals import extract_probing_intervals
 from ipid_analysis.strategies import classify_measurement
 from ipid_analysis.strategy_merge import iter_strategy_merges, merge_strategies
@@ -128,8 +131,14 @@ def main(
                     logger.warning(
                         f"[{merge.target}] OS strategy heatmap failed ({exc}) -- skipped"
                     )
+            tcp_flags_pdf = None
             connection_pdf = None
             if merge.protocol == "tcp":
+                tcp_flags_pdf, _, _ = render_tcp_flags_strategy_plot(
+                    merge,
+                    compression=comp,
+                    threads=threads,
+                )
                 connection = resolve(
                     manifest,
                     "tcp.ipid.connection.rt-based.base",
@@ -147,10 +156,14 @@ def main(
                 else ""
             )
             os_message = f"; OS strategy heatmap -> {os_pdf}" if os_pdf is not None else ""
+            tcp_flags_message = (
+                f"; TCP flags by strategy -> {tcp_flags_pdf}" if tcp_flags_pdf is not None else ""
+            )
             logger.success(
                 f"[{merge.target}] {stats.rows:,} merged IPs, "
                 f"{stats.not_enough_samples:,} not enough samples -> {output}; "
-                f"strategy refinement -> {refinement_pdf}{connection_message}{os_message}"
+                f"strategy refinement -> {refinement_pdf}"
+                f"{connection_message}{tcp_flags_message}{os_message}"
             )
             merged_ok += 1
         except FileNotFoundError as exc:

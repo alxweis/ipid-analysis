@@ -149,6 +149,35 @@ reports/figures/<zmap-id>/no-connection/merged/
     n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json
 ```
 
+### TCP flags by merged strategy
+
+For TCP, `make analyse data.json` also joins the merged RT-based-base and
+fixed-interval-mass strategy result to the original ZMap `REPLY_TYPE` by
+`IP_ADDR`. It creates three independently normalized bars: all recognized TCP
+replies (`SYN-ACK/RST`), only `SYN-ACK`, and only `RST`. The label is `RST`
+rather than `RST-ACK` because ZMap persists the reply classification `rst`, not
+the complete received TCP flag set.
+
+```bash
+python ipid_analysis/plot_tcp_flags_strategy.py \
+  tcp.ipid.no-connection.rt-based.base \
+  tcp.ipid.no-connection.fixed-interval.mass \
+  --manifest data.json
+```
+
+The generated artifacts are:
+
+```text
+data/processed/<zmap-id>/no-connection/merged/
+  rt-based-base_fixed-interval-mass/
+    n-rt-b_fi-m_tcp-flags-by-strategy.pq
+
+reports/figures/<zmap-id>/no-connection/merged/
+  rt-based-base_fixed-interval-mass/
+    n-rt-b_fi-m_tcp-flags-by-strategy.pdf
+    n-rt-b_fi-m_tcp-flags-by-strategy.json
+```
+
 ### Operating systems by merged strategy
 
 For every ICMP, TCP, or UDP-DNS campaign with an `os` measurement,
