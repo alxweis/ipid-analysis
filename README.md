@@ -178,6 +178,45 @@ reports/figures/<zmap-id>/no-connection/merged/
     n-rt-b_fi-m_tcp-flags-by-strategy.json
 ```
 
+### Operating systems by merged strategy
+
+For every ICMP, TCP, or UDP-DNS campaign with an `os` measurement,
+`make analyse data.json` joins the protocol's OS fingerprints from
+`data/raw/os/<os-id>/os.pq` to that protocol's merged RT-based-base and
+fixed-interval-mass strategies by `IP_ADDR`. It creates one ACM-width heatmap
+per protocol, split into `General-Purpose OS` and `Network OS`. Every
+operating-system row is normalized independently to 100%, while its matched
+IP-address count is shown beside the row label. Exact zero cells are displayed
+as `-`.
+All nine IP-ID selection strategies remain visible even when a complete column
+is zero. `NOT_ENOUGH_SAMPLES` is recorded as excluded coverage in the JSON
+sidecar rather than presented as an IP-ID selection strategy.
+
+The OS grouping explicitly covers every `OS_NAME` currently emitted by
+`ipid-measure`. Its `rhel` fingerprint includes both RHEL and CentOS banners, so
+the figure labels that row `RHEL / CentOS` instead of implying a distinction
+that is not present in `os.pq`.
+
+```bash
+python ipid_analysis/plot_os_strategy.py \
+  <protocol>.ipid.no-connection.rt-based.base \
+  <protocol>.ipid.no-connection.fixed-interval.mass \
+  --manifest data.json
+```
+
+The generated artifacts are:
+
+```text
+data/processed/<zmap-id>/no-connection/merged/
+  rt-based-base_fixed-interval-mass/
+    n-rt-b_fi-m_operating-system-by-strategy.pq
+
+reports/figures/<zmap-id>/no-connection/merged/
+  rt-based-base_fixed-interval-mass/
+    n-rt-b_fi-m_operating-system-by-strategy.pdf
+    n-rt-b_fi-m_operating-system-by-strategy.json
+```
+
 ## ACM comparison figures
 
 For every protocol and connection mode that has both an RT-based base run and a
@@ -235,6 +274,7 @@ The campaign manifest uses descriptive keys for connection and interval modes:
 {
   "tcp": {
     "zmap": "tcp-80_<timestamp>",
+    "os": "tcp-80_<timestamp>",
     "ipid": {
       "no-connection": {
         "rt-based": {"base": "tcp-80_<timestamp>"},
