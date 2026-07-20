@@ -16,6 +16,8 @@ skipped with a warning instead of aborting the run.
 
 After the individual measurements, every available no-connection RT-base and
 fixed-interval-mass pair is merged and its strategy distribution is plotted.
+The same pair also produces a paper plot showing how the RT-based
+``UNCLASSIFIED`` population is refined by the fixed-interval mass measurement.
 Every available RT-base/fixed-interval-base pair is also compared with the
 three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
@@ -44,6 +46,7 @@ from ipid_analysis.plot_strategies import (
 from ipid_analysis.plot_strategies import (
     render_merged as render_merged_strategies_plot,
 )
+from ipid_analysis.plot_strategy_refinement import render as render_strategy_refinement_plot
 from ipid_analysis.probing_intervals import extract_probing_intervals
 from ipid_analysis.strategies import classify_measurement
 from ipid_analysis.strategy_merge import iter_strategy_merges, merge_strategies
@@ -91,9 +94,15 @@ def main(
                 threads=threads,
             )
             render_merged_strategies_plot(merge)
+            refinement_pdf, _, _ = render_strategy_refinement_plot(
+                merge,
+                compression=comp,
+                threads=threads,
+            )
             logger.success(
                 f"[{merge.target}] {stats.rows:,} merged IPs, "
-                f"{stats.not_enough_samples:,} not enough samples -> {output}"
+                f"{stats.not_enough_samples:,} not enough samples -> {output}; "
+                f"strategy refinement -> {refinement_pdf}"
             )
             merged_ok += 1
         except FileNotFoundError as exc:
