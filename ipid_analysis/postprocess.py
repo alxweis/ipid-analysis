@@ -20,6 +20,8 @@ The same pair also produces a paper plot showing how the RT-based
 ``UNCLASSIFIED`` population is refined by the fixed-interval mass measurement.
 TCP campaigns with an RT-based connection-oriented base measurement produce an
 additional version with that measurement's strategy distribution as a third bar.
+Protocol campaigns with an OS measurement also produce a row-normalized heatmap of
+merged IP-ID selection strategies by general-purpose and network OS.
 Every available RT-base/fixed-interval-base pair is also compared with the
 three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
@@ -41,6 +43,12 @@ from ipid_analysis.paper_figures import (
     render_strategy_intersection,
 )
 from ipid_analysis.plot_increments import render as render_increments_plot
+from ipid_analysis.plot_os_strategy import (
+    render as render_os_strategy_plot,
+)
+from ipid_analysis.plot_os_strategy import (
+    resolve_os_measurement_id,
+)
 from ipid_analysis.plot_probing_intervals import render as render_intervals_plot
 from ipid_analysis.plot_strategies import (
     render as render_strategies_plot,
@@ -106,6 +114,20 @@ def main(
                 compression=comp,
                 threads=threads,
             )
+            os_pdf = None
+            os_measurement_id = resolve_os_measurement_id(manifest, merge.protocol)
+            if os_measurement_id is not None:
+                try:
+                    os_pdf, _, _ = render_os_strategy_plot(
+                        merge,
+                        os_measurement_id,
+                        compression=comp,
+                        threads=threads,
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    logger.warning(
+                        f"[{merge.target}] OS strategy heatmap failed ({exc}) -- skipped"
+                    )
             connection_pdf = None
             if merge.protocol == "tcp":
                 connection = resolve(
@@ -124,10 +146,11 @@ def main(
                 if connection_pdf is not None
                 else ""
             )
+            os_message = f"; OS strategy heatmap -> {os_pdf}" if os_pdf is not None else ""
             logger.success(
                 f"[{merge.target}] {stats.rows:,} merged IPs, "
                 f"{stats.not_enough_samples:,} not enough samples -> {output}; "
-                f"strategy refinement -> {refinement_pdf}{connection_message}"
+                f"strategy refinement -> {refinement_pdf}{connection_message}{os_message}"
             )
             merged_ok += 1
         except FileNotFoundError as exc:
