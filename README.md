@@ -122,6 +122,33 @@ reports/figures/<zmap-id>/no-connection/merged/
     n-rt-b_fi-m_measurement-type-by-strategy.json
 ```
 
+For TCP campaigns that also contain
+`tcp.ipid.connection.rt-based.base`, the same analysis run creates a second
+figure with a third `RT-based & Connection-oriented` bar. The original
+two-bar figure remains unchanged. The three-bar variant can also be rendered
+directly:
+
+```bash
+python ipid_analysis/plot_strategy_refinement.py \
+  tcp.ipid.no-connection.rt-based.base \
+  tcp.ipid.no-connection.fixed-interval.mass \
+  tcp.ipid.connection.rt-based.base \
+  --manifest data.json
+```
+
+Its additional artifacts are:
+
+```text
+data/processed/<zmap-id>/no-connection/merged/
+  rt-based-base_fixed-interval-mass/
+    n-rt-b_fi-m_measurement-type-by-strategy-with-connection.pq
+
+reports/figures/<zmap-id>/no-connection/merged/
+  rt-based-base_fixed-interval-mass/
+    n-rt-b_fi-m_measurement-type-by-strategy-with-connection.pdf
+    n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json
+```
+
 ## ACM comparison figures
 
 For every protocol and connection mode that has both an RT-based base run and a
