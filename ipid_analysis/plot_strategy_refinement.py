@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import MultipleLocator  # noqa: E402
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
+from ipid_analysis.manifest import IpidMeasurement, resolve  # noqa: E402
 from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
     DEFAULT_MANIFEST,
@@ -43,9 +44,13 @@ from ipid_analysis.strategy_merge import (  # noqa: E402
 app = typer.Typer()
 
 KIND = "measurement-type-by-strategy"
+KIND_WITH_CONNECTION = "measurement-type-by-strategy-with-connection"
 RT_MODE = "RT-based"
 FIXED_MODE = "Fixed-Interval"
+CONNECTION_MODE = "RT-based & Connection-oriented"
 MODES = (RT_MODE, FIXED_MODE)
+MODES_WITH_CONNECTION = (RT_MODE, FIXED_MODE, CONNECTION_MODE)
+MODE_LABELS = {CONNECTION_MODE: "RT-based &\nConnection-oriented"}
 
 # Paper ordering follows the visual grouping used throughout the manuscript:
 # direct/simple behaviours, scoped counters, then the mass-only strategies.
@@ -233,14 +238,109 @@ def aggregate_measurement_type_strategies(
     }
 
 
+def aggregate_measurement_type_strategies_with_connection(
+    rt_path: Path,
+    fixed_path: Path,
+    connection_path: Path,
+    output_path: Path,
+    *,
+    compression: str | None = "zstd",
+    threads: int = 0,
+) -> dict:
+    """Add the TCP RT-based connection-oriented distribution to the refinement data."""
+    if not connection_path.is_file():
+        raise FileNotFoundError(connection_path)
+
+    con = duckdb.connect(config={"threads": threads} if threads else {})
+    try:
+        connection_rows, connection_ips = map(
+            int,
+            con.execute(
+                """
+                SELECT count(*), count(DISTINCT IP_ADDR)
+                FROM read_parquet($connection)
+                """,
+                {"connection": str(connection_path)},
+            ).fetchone(),
+        )
+        rows = con.execute(
+            """
+            SELECT CAST(IPID_SELECTION_STRATEGY AS VARCHAR), count(*)::BIGINT
+            FROM read_parquet($connection)
+            GROUP BY IPID_SELECTION_STRATEGY
+            """,
+            {"connection": str(connection_path)},
+        ).fetchall()
+    finally:
+        con.close()
+
+    if connection_rows == 0:
+        raise ValueError(f"{connection_path}: connection-oriented strategy result is empty")
+    if connection_rows != connection_ips:
+        raise ValueError(
+            f"{connection_path}: duplicate IP addresses in connection-oriented strategy result"
+        )
+
+    known = set(STRATEGY_NAMES)
+    unknown = sorted({str(strategy) for strategy, _ in rows} - known)
+    if unknown:
+        raise ValueError(f"unknown IP-ID strategies in connection-oriented input: {unknown}")
+
+    stats = aggregate_measurement_type_strategies(
+        rt_path,
+        fixed_path,
+        output_path,
+        compression=compression,
+        threads=threads,
+    )
+
+    connection_counts = {strategy: 0 for strategy in STRATEGY_NAMES} | {
+        str(strategy): int(count) for strategy, count in rows
+    }
+    connection_percentages = {
+        strategy: 100.0 * count / connection_rows for strategy, count in connection_counts.items()
+    }
+    connection_output_rows = [
+        {
+            "MEASUREMENT_TYPE": CONNECTION_MODE,
+            "IPID_SELECTION_STRATEGY": strategy,
+            "COUNT": count,
+            "TOTAL": connection_rows,
+            "PERCENTAGE": connection_percentages[strategy],
+        }
+        for strategy, count in connection_counts.items()
+        if count
+    ]
+    table = pa.concat_tables(
+        [
+            pq.read_table(output_path, schema=OUTPUT_SCHEMA),
+            pa.Table.from_pylist(connection_output_rows, schema=OUTPUT_SCHEMA),
+        ]
+    )
+    _write_table(table, output_path, compression)
+
+    stats["connection_oriented_ip_count"] = connection_ips
+    stats["bars"][CONNECTION_MODE] = {
+        "total": connection_rows,
+        "counts": connection_counts,
+        "percentages": connection_percentages,
+    }
+    return stats
+
+
 def _label_percentage(value: float) -> str:
     if value < 1.0:
         return f"{value:.1f}"
     return f"{value:.0f}"
 
 
-def plot_measurement_type_by_strategy(aggregate_path: Path, output_path: Path) -> Path:
-    """Render the two stacked bars and the RT-unclassified refinement guides."""
+def plot_measurement_type_by_strategy(
+    aggregate_path: Path,
+    output_path: Path,
+    *,
+    modes: tuple[str, ...] = MODES,
+) -> Path:
+    """Render stacked strategy bars and the RT-unclassified refinement guides."""
     rows = pq.read_table(aggregate_path).to_pylist()
     percentages = {
         (row["MEASUREMENT_TYPE"], row["IPID_SELECTION_STRATEGY"]): float(row["PERCENTAGE"])
@@ -249,7 +349,7 @@ def plot_measurement_type_by_strategy(aggregate_path: Path, output_path: Path) -
     represented = [
         strategy
         for strategy in PLOT_STRATEGY_ORDER
-        if any(percentages.get((mode, strategy), 0.0) > 0 for mode in MODES)
+        if any(percentages.get((mode, strategy), 0.0) > 0 for mode in modes)
     ]
     if not represented:
         raise ValueError(f"{aggregate_path}: no strategy shares to plot")
@@ -264,9 +364,10 @@ def plot_measurement_type_by_strategy(aggregate_path: Path, output_path: Path) -
     rt_unclassified_right = rt_unclassified_left + rt_unclassified_width
 
     configure_paper_style()
-    fig, ax = plt.subplots(figsize=(7.16, 2.45))
+    figure_height = 2.45 if len(modes) == 2 else 2.90
+    fig, ax = plt.subplots(figsize=(7.16, figure_height))
     bar_height = 0.38
-    y_positions = {RT_MODE: 1.0, FIXED_MODE: 0.0}
+    y_positions = {mode: float(len(modes) - index - 1) for index, mode in enumerate(modes)}
 
     if rt_unclassified_width > 0:
         rt_bottom = y_positions[RT_MODE] - bar_height / 2
@@ -294,7 +395,7 @@ def plot_measurement_type_by_strategy(aggregate_path: Path, output_path: Path) -
         ax.plot([rt_unclassified_left, 0.0], [rt_bottom, fixed_top], **connector_style)
         ax.plot([rt_unclassified_right, 100.0], [rt_bottom, fixed_top], **connector_style)
 
-    for mode in MODES:
+    for mode in modes:
         left = 0.0
         for strategy in PLOT_STRATEGY_ORDER:
             value = percentages.get((mode, strategy), 0.0)
@@ -323,8 +424,11 @@ def plot_measurement_type_by_strategy(aggregate_path: Path, output_path: Path) -
             left += value
 
     ax.set_xlim(0, 100)
-    ax.set_ylim(-0.52, 1.52)
-    ax.set_yticks([y_positions[RT_MODE], y_positions[FIXED_MODE]], [RT_MODE, FIXED_MODE])
+    ax.set_ylim(-0.52, len(modes) - 0.48)
+    ax.set_yticks(
+        [y_positions[mode] for mode in modes],
+        [MODE_LABELS.get(mode, mode) for mode in modes],
+    )
     ax.set_xlabel("IP-ID Selection Strategy [%]")
     ax.set_ylabel("Measurement Type")
     ax.xaxis.set_major_locator(MultipleLocator(20))
@@ -353,8 +457,29 @@ def plot_measurement_type_by_strategy(aggregate_path: Path, output_path: Path) -
         handlelength=1.45,
         handletextpad=0.4,
     )
-    fig.subplots_adjust(left=0.16, right=0.995, bottom=0.24, top=0.68)
+    left = 0.16 if len(modes) == 2 else 0.25
+    bottom = 0.24 if len(modes) == 2 else 0.20
+    fig.subplots_adjust(left=left, right=0.995, bottom=bottom, top=0.68)
     return _save_figure(fig, output_path)
+
+
+def _validate_connection_measurement(
+    merge: StrategyMerge,
+    connection: IpidMeasurement,
+) -> None:
+    if merge.protocol != "tcp":
+        raise ValueError("connection-oriented strategy refinement is only supported for TCP")
+    if (
+        connection.protocol != "tcp"
+        or connection.connection_mode != "connection"
+        or connection.interval != "rt-based"
+        or connection.scale != "base"
+    ):
+        raise ValueError(
+            "connection-oriented strategy refinement requires tcp.ipid.connection.rt-based.base"
+        )
+    if connection.zmap_id != merge.zmap_id:
+        raise ValueError("all strategy refinement targets must belong to the same zmap campaign")
 
 
 def render(
@@ -419,21 +544,114 @@ def render(
     return pdf_path, json_path, aggregate_path
 
 
+def render_with_connection(
+    merge: StrategyMerge,
+    connection: IpidMeasurement,
+    *,
+    processed_root: Path = PROCESSED_DATA_DIR,
+    figures_root: Path = FIGURES_DIR,
+    compression: str | None = "zstd",
+    threads: int = 0,
+) -> tuple[Path, Path, Path]:
+    """Create the TCP refinement plot with an additional connection-oriented bar."""
+    if merge.base.interval != "rt-based" or merge.mass.interval != "fixed-interval":
+        raise ValueError(
+            "strategy refinement requires an RT-based base target followed by a "
+            "fixed-interval mass target"
+        )
+    _validate_connection_measurement(merge, connection)
+
+    rt_path = merge.base.artifact_path(processed_root, "strategies")
+    fixed_path = merge.mass.artifact_path(processed_root, "strategies")
+    connection_path = connection.artifact_path(processed_root, "strategies")
+    aggregate_path = merge.artifact_path(processed_root, KIND_WITH_CONNECTION)
+    pdf_path = merge.artifact_path(figures_root, KIND_WITH_CONNECTION, "pdf")
+    json_path = merge.artifact_path(figures_root, KIND_WITH_CONNECTION, "json")
+
+    stats = aggregate_measurement_type_strategies_with_connection(
+        rt_path,
+        fixed_path,
+        connection_path,
+        aggregate_path,
+        compression=compression,
+        threads=threads,
+    )
+    plot_measurement_type_by_strategy(
+        aggregate_path,
+        pdf_path,
+        modes=MODES_WITH_CONNECTION,
+    )
+    _write_json(
+        json_path,
+        {
+            "target": f"{merge.target}+{connection.target}",
+            "protocol": merge.protocol,
+            "zmap_id": merge.zmap_id,
+            "measurements": {
+                "rt_based_base": merge.base.measurement_id,
+                "fixed_interval_mass": merge.mass.measurement_id,
+                "rt_based_connection_oriented": connection.measurement_id,
+            },
+            "sources": {
+                "rt_based": str(rt_path),
+                "fixed_interval": str(fixed_path),
+                "rt_based_connection_oriented": str(connection_path),
+            },
+            "aggregate": str(aggregate_path),
+            "figure": KIND_WITH_CONNECTION,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "methodology": {
+                "rt_based_normalization": "all rows in the RT-based base strategy result",
+                "fixed_interval_normalization": (
+                    "all successfully stored rows in the fixed-interval mass strategy result"
+                ),
+                "fixed_interval_target_population": (
+                    "IP addresses classified UNCLASSIFIED by the RT-based base measurement"
+                ),
+                "connection_oriented_normalization": (
+                    "all rows in the RT-based connection-oriented base strategy result"
+                ),
+                "connector": (
+                    "RT-based UNCLASSIFIED segment expands to the fixed-interval result bar"
+                ),
+            },
+            **stats,
+        },
+    )
+    return pdf_path, json_path, aggregate_path
+
+
 @app.command()
 def main(
     base_target: str = typer.Argument(..., help="RT-based base measurement target"),
     mass_target: str = typer.Argument(..., help="fixed-interval mass measurement target"),
+    connection_target: str | None = typer.Argument(
+        None,
+        help="optional TCP RT-based connection-oriented base measurement target",
+    ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, min=0, help="DuckDB threads; 0 uses all cores"),
 ) -> None:
     try:
-        merge = resolve_strategy_merge(load_manifest(manifest), base_target, mass_target)
-        outputs = render(
-            merge,
-            compression=None if compression == "none" else compression,
-            threads=threads,
-        )
+        manifest_data = load_manifest(manifest)
+        merge = resolve_strategy_merge(manifest_data, base_target, mass_target)
+        if connection_target is None:
+            outputs = render(
+                merge,
+                compression=None if compression == "none" else compression,
+                threads=threads,
+            )
+        else:
+            connection = resolve(manifest_data, connection_target)
+            if connection is None:
+                raise ValueError(f"{connection_target}: not present in manifest")
+            outputs = render_with_connection(
+                merge,
+                connection,
+                compression=None if compression == "none" else compression,
+                threads=threads,
+            )
     except (FileNotFoundError, ValueError) as exc:
         logger.error(str(exc))
         raise typer.Exit(code=1) from exc

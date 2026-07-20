@@ -18,6 +18,8 @@ After the individual measurements, every available no-connection RT-base and
 fixed-interval-mass pair is merged and its strategy distribution is plotted.
 The same pair also produces a paper plot showing how the RT-based
 ``UNCLASSIFIED`` population is refined by the fixed-interval mass measurement.
+TCP campaigns with an RT-based connection-oriented base measurement produce an
+additional version with that measurement's strategy distribution as a third bar.
 Every available RT-base/fixed-interval-base pair is also compared with the
 three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
@@ -31,7 +33,7 @@ import typer
 
 from ipid_analysis.comparison import iter_base_comparisons
 from ipid_analysis.increments import extract_increments
-from ipid_analysis.manifest import iter_ipid_measurements, load_manifest
+from ipid_analysis.manifest import iter_ipid_measurements, load_manifest, resolve
 from ipid_analysis.paper_figures import (
     default_maxmind_database,
     render_increment_comparison,
@@ -46,7 +48,12 @@ from ipid_analysis.plot_strategies import (
 from ipid_analysis.plot_strategies import (
     render_merged as render_merged_strategies_plot,
 )
-from ipid_analysis.plot_strategy_refinement import render as render_strategy_refinement_plot
+from ipid_analysis.plot_strategy_refinement import (
+    render as render_strategy_refinement_plot,
+)
+from ipid_analysis.plot_strategy_refinement import (
+    render_with_connection as render_strategy_refinement_with_connection_plot,
+)
 from ipid_analysis.probing_intervals import extract_probing_intervals
 from ipid_analysis.strategies import classify_measurement
 from ipid_analysis.strategy_merge import iter_strategy_merges, merge_strategies
@@ -99,10 +106,28 @@ def main(
                 compression=comp,
                 threads=threads,
             )
+            connection_pdf = None
+            if merge.protocol == "tcp":
+                connection = resolve(
+                    manifest,
+                    "tcp.ipid.connection.rt-based.base",
+                )
+                if connection is not None:
+                    connection_pdf, _, _ = render_strategy_refinement_with_connection_plot(
+                        merge,
+                        connection,
+                        compression=comp,
+                        threads=threads,
+                    )
+            connection_message = (
+                f"; connection-oriented refinement -> {connection_pdf}"
+                if connection_pdf is not None
+                else ""
+            )
             logger.success(
                 f"[{merge.target}] {stats.rows:,} merged IPs, "
                 f"{stats.not_enough_samples:,} not enough samples -> {output}; "
-                f"strategy refinement -> {refinement_pdf}"
+                f"strategy refinement -> {refinement_pdf}{connection_message}"
             )
             merged_ok += 1
         except FileNotFoundError as exc:

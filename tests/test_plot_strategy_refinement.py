@@ -8,7 +8,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ipid_analysis.manifest import IpidMeasurement
-from ipid_analysis.plot_strategy_refinement import KIND, render
+from ipid_analysis.plot_strategy_refinement import (
+    CONNECTION_MODE,
+    KIND,
+    KIND_WITH_CONNECTION,
+    render,
+    render_with_connection,
+)
 from ipid_analysis.strategy_merge import StrategyMerge
 
 
@@ -28,6 +34,14 @@ class StrategyRefinementPlotTest(unittest.TestCase):
             interval="fixed-interval",
             scale="mass",
             measurement_id="tcp-mass",
+            zmap_id="tcp-zmap",
+        )
+        self.connection = IpidMeasurement(
+            protocol="tcp",
+            connection_mode="connection",
+            interval="rt-based",
+            scale="base",
+            measurement_id="tcp-connection-base",
             zmap_id="tcp-zmap",
         )
         self.merge = StrategyMerge(self.base, self.mass)
@@ -117,6 +131,60 @@ class StrategyRefinementPlotTest(unittest.TestCase):
                     processed_root=processed,
                     figures_root=figures,
                 )
+
+    def test_render_refinement_plot_with_connection_oriented_bar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            processed = root / "processed"
+            figures = root / "figures"
+            self._write_strategies(
+                self.base.artifact_path(processed, "strategies"),
+                ["192.0.2.1", "192.0.2.2", "192.0.2.3"],
+                ["CONSTANT", "UNCLASSIFIED", "UNCLASSIFIED"],
+            )
+            self._write_strategies(
+                self.mass.artifact_path(processed, "strategies"),
+                ["192.0.2.2", "192.0.2.3"],
+                ["MULTI", "RANDOM"],
+            )
+            self._write_strategies(
+                self.connection.artifact_path(processed, "strategies"),
+                ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"],
+                ["PER_CONNECTION", "PER_CONNECTION", "SINGLE", "UNCLASSIFIED"],
+            )
+
+            pdf_path, json_path, aggregate_path = render_with_connection(
+                self.merge,
+                self.connection,
+                processed_root=processed,
+                figures_root=figures,
+            )
+
+            self.assertTrue(pdf_path.is_file())
+            self.assertTrue(json_path.is_file())
+            self.assertEqual(
+                aggregate_path,
+                self.merge.artifact_path(processed, KIND_WITH_CONNECTION),
+            )
+            shares = {
+                (row["MEASUREMENT_TYPE"], row["IPID_SELECTION_STRATEGY"]): row["PERCENTAGE"]
+                for row in pq.read_table(aggregate_path).to_pylist()
+            }
+            self.assertEqual(shares[(CONNECTION_MODE, "PER_CONNECTION")], 50.0)
+            self.assertEqual(shares[(CONNECTION_MODE, "SINGLE")], 25.0)
+            self.assertEqual(shares[(CONNECTION_MODE, "UNCLASSIFIED")], 25.0)
+
+            metadata = json.loads(json_path.read_text())
+            self.assertEqual(metadata["connection_oriented_ip_count"], 4)
+            self.assertEqual(
+                metadata["measurements"]["rt_based_connection_oriented"],
+                "tcp-connection-base",
+            )
+
+    def test_rejects_wrong_connection_oriented_target(self):
+        invalid = replace(self.connection, interval="fixed-interval")
+        with self.assertRaisesRegex(ValueError, "tcp.ipid.connection.rt-based.base"):
+            render_with_connection(self.merge, invalid)
 
     def test_requires_rt_base_followed_by_fixed_interval_mass(self):
         invalid = StrategyMerge(
