@@ -99,8 +99,9 @@ the fixed-interval bar.
 
 The renderer validates this population relationship and fails instead of
 creating a misleading figure if a fixed-interval address was not RT
-`UNCLASSIFIED`. Probe failures can make the stored fixed-interval result smaller
-than the target population; this coverage is recorded in the JSON sidecar.
+`UNCLASSIFIED`. Probe failures that make the stored fixed-interval result smaller
+than the target population are shown as `NOT_ENOUGH_SAMPLES`, so the lower bar
+still represents every intended follow-up target and sums to 100%.
 
 ```bash
 python ipid_analysis/plot_strategy_refinement.py \
@@ -188,9 +189,10 @@ per protocol, split into `General-Purpose OS` and `Network OS`. Every
 operating-system row is normalized independently to 100%, while its matched
 IP-address count is shown beside the row label. Exact zero cells are displayed
 as `-`.
-All nine IP-ID selection strategies remain visible even when a complete column
-is zero. `NOT_ENOUGH_SAMPLES` is recorded as excluded coverage in the JSON
-sidecar rather than presented as an IP-ID selection strategy.
+All nine IP-ID selection strategies plus the `NOT_ENOUGH_SAMPLES` follow-up
+outcome remain visible even when a complete column is zero. Each operating-system
+row therefore represents its complete matched merged population and still sums
+to 100%.
 
 The OS grouping explicitly covers every `OS_NAME` currently emitted by
 `ipid-measure`. Its `rhel` fingerprint includes both RHEL and CentOS banners, so

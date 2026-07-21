@@ -2,9 +2,9 @@
 
 The stateless fixed-interval mass measurement targets exactly the addresses
 classified as ``UNCLASSIFIED`` by the preceding RT-based base measurement.  The
-plot renders both per-measurement strategy distributions as horizontal stacked
-bars and visually connects the RT ``UNCLASSIFIED`` segment to the full
-fixed-interval bar.
+plot renders both populations as horizontal stacked bars and visually connects
+the RT ``UNCLASSIFIED`` segment to the full intended fixed-interval population.
+Targets without a stored follow-up result are shown as ``NOT_ENOUGH_SAMPLES``.
 """
 
 from __future__ import annotations
@@ -151,8 +151,6 @@ def aggregate_measurement_type_strategies(
 
         if rt_rows == 0:
             raise ValueError(f"{rt_path}: RT-based strategy result is empty")
-        if fixed_rows == 0:
-            raise ValueError(f"{fixed_path}: fixed-interval mass strategy result is empty")
         if rt_rows != rt_ips:
             raise ValueError(f"{rt_path}: duplicate IP addresses in RT-based strategy result")
         if fixed_rows != fixed_ips:
@@ -168,6 +166,8 @@ def aggregate_measurement_type_strategies(
             raise ValueError(
                 f"{fixed_path}: fixed-interval population exceeds the RT UNCLASSIFIED population"
             )
+        if rt_unclassified == 0:
+            raise ValueError(f"{rt_path}: no RT-based UNCLASSIFIED population to refine")
 
         rows = con.execute(
             """
@@ -193,8 +193,12 @@ def aggregate_measurement_type_strategies(
     if unknown:
         raise ValueError(f"unknown IP-ID strategies in refinement input: {unknown}")
 
-    totals = {RT_MODE: rt_rows, FIXED_MODE: fixed_rows}
     counts = {(str(mode), str(strategy)): int(count) for mode, strategy, count in rows}
+    missing = rt_unclassified - fixed_ips
+    counts[(FIXED_MODE, "NOT_ENOUGH_SAMPLES")] = (
+        counts.get((FIXED_MODE, "NOT_ENOUGH_SAMPLES"), 0) + missing
+    )
+    totals = {RT_MODE: rt_rows, FIXED_MODE: rt_unclassified}
     output_rows = []
     bars = {}
     for mode in MODES:
@@ -224,13 +228,13 @@ def aggregate_measurement_type_strategies(
     table = pa.Table.from_pylist(output_rows, schema=OUTPUT_SCHEMA)
     _write_table(table, output_path, compression)
 
-    missing = rt_unclassified - fixed_ips
     return {
         "rt_based_ip_count": rt_ips,
         "rt_based_unclassified_ip_count": rt_unclassified,
         "fixed_interval_target_ip_count": rt_unclassified,
         "fixed_interval_result_ip_count": fixed_ips,
         "fixed_interval_missing_result_ip_count": missing,
+        "not_enough_samples_count": bars[FIXED_MODE]["counts"]["NOT_ENOUGH_SAMPLES"],
         "fixed_interval_result_coverage_percent": (
             100.0 * fixed_ips / rt_unclassified if rt_unclassified else 0.0
         ),
@@ -529,7 +533,8 @@ def render(
             "methodology": {
                 "rt_based_normalization": "all rows in the RT-based base strategy result",
                 "fixed_interval_normalization": (
-                    "all successfully stored rows in the fixed-interval mass strategy result"
+                    "all intended fixed-interval targets; missing result rows are "
+                    "NOT_ENOUGH_SAMPLES"
                 ),
                 "fixed_interval_target_population": (
                     "IP addresses classified UNCLASSIFIED by the RT-based base measurement"
@@ -603,7 +608,8 @@ def render_with_connection(
             "methodology": {
                 "rt_based_normalization": "all rows in the RT-based base strategy result",
                 "fixed_interval_normalization": (
-                    "all successfully stored rows in the fixed-interval mass strategy result"
+                    "all intended fixed-interval targets; missing result rows are "
+                    "NOT_ENOUGH_SAMPLES"
                 ),
                 "fixed_interval_target_population": (
                     "IP addresses classified UNCLASSIFIED by the RT-based base measurement"
