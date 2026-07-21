@@ -99,14 +99,24 @@ class StrategyRefinementPlotTest(unittest.TestCase):
             self.assertEqual(shares[("RT-based", "REFLECTION")], 20.0)
             self.assertEqual(shares[("RT-based", "SINGLE")], 20.0)
             self.assertEqual(shares[("RT-based", "UNCLASSIFIED")], 60.0)
-            self.assertEqual(shares[("Fixed-Interval", "MULTI")], 50.0)
-            self.assertEqual(shares[("Fixed-Interval", "RANDOM")], 50.0)
+            self.assertAlmostEqual(shares[("Fixed-Interval", "MULTI")], 100 / 3)
+            self.assertAlmostEqual(shares[("Fixed-Interval", "RANDOM")], 100 / 3)
+            self.assertAlmostEqual(shares[("Fixed-Interval", "NOT_ENOUGH_SAMPLES")], 100 / 3)
+            self.assertAlmostEqual(
+                sum(
+                    row["PERCENTAGE"]
+                    for row in aggregate
+                    if row["MEASUREMENT_TYPE"] == "Fixed-Interval"
+                ),
+                100.0,
+            )
 
             metadata = json.loads(json_path.read_text())
             self.assertEqual(metadata["rt_based_unclassified_ip_count"], 3)
             self.assertEqual(metadata["fixed_interval_target_ip_count"], 3)
             self.assertEqual(metadata["fixed_interval_result_ip_count"], 2)
             self.assertEqual(metadata["fixed_interval_missing_result_ip_count"], 1)
+            self.assertEqual(metadata["not_enough_samples_count"], 1)
             self.assertAlmostEqual(metadata["fixed_interval_result_coverage_percent"], 200 / 3)
 
     def test_rejects_fixed_interval_address_that_was_not_unclassified(self):
@@ -144,8 +154,8 @@ class StrategyRefinementPlotTest(unittest.TestCase):
             )
             self._write_strategies(
                 self.mass.artifact_path(processed, "strategies"),
-                ["192.0.2.2", "192.0.2.3"],
-                ["MULTI", "RANDOM"],
+                ["192.0.2.2"],
+                ["MULTI"],
             )
             self._write_strategies(
                 self.connection.artifact_path(processed, "strategies"),
@@ -173,9 +183,12 @@ class StrategyRefinementPlotTest(unittest.TestCase):
             self.assertEqual(shares[(CONNECTION_MODE, "PER_CONNECTION")], 50.0)
             self.assertEqual(shares[(CONNECTION_MODE, "SINGLE")], 25.0)
             self.assertEqual(shares[(CONNECTION_MODE, "UNCLASSIFIED")], 25.0)
+            self.assertEqual(shares[("Fixed-Interval", "MULTI")], 50.0)
+            self.assertEqual(shares[("Fixed-Interval", "NOT_ENOUGH_SAMPLES")], 50.0)
 
             metadata = json.loads(json_path.read_text())
             self.assertEqual(metadata["connection_oriented_ip_count"], 4)
+            self.assertEqual(metadata["not_enough_samples_count"], 1)
             self.assertEqual(
                 metadata["measurements"]["rt_based_connection_oriented"],
                 "tcp-connection-base",

@@ -53,6 +53,7 @@ HEATMAP_STRATEGIES = (
     "MULTI",
     "RANDOM",
     "UNCLASSIFIED",
+    "NOT_ENOUGH_SAMPLES",
 )
 
 # OS_NAME values are emitted by ipid-measure/os/fingerprint.go. Keeping the
@@ -309,12 +310,15 @@ def aggregate_os_strategies(
 
     _write_table(pa.Table.from_pylist(output_rows, schema=OUTPUT_SCHEMA), output_path, compression)
     included_rows = sum(os_totals.values())
+    not_enough_samples = sum(
+        counts.get((os_name, "NOT_ENOUGH_SAMPLES"), 0) for os_name in represented_os
+    )
     return {
         "merged_ip_count": merged_ips,
         "os_ip_count": os_ips,
         "matched_ip_count": matched_rows,
         "included_ip_count": included_rows,
-        "excluded_not_enough_samples_ip_count": matched_rows - included_rows,
+        "not_enough_samples_ip_count": not_enough_samples,
         "unmatched_os_ip_count": unmatched_os_rows,
         "os_count": len(represented_os),
         "operating_systems": os_summary,
@@ -483,7 +487,9 @@ def render(
                 "strategy_input": "merged RT-based base and fixed-interval mass classification",
                 "os_input": "ipid-measure OS_NAME joined by IP_ADDR",
                 "normalization": "each operating-system row is normalized independently to 100%",
-                "excluded_category": "NOT_ENOUGH_SAMPLES is not an IP-ID selection strategy",
+                "not_enough_samples": (
+                    "missing fixed-interval follow-up results remain visible as a merged outcome"
+                ),
                 "zero_cell_label": "-",
                 "percentage_decimals": 1,
             },

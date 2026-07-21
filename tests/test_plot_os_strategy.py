@@ -102,21 +102,27 @@ class OSStrategyPlotTest(unittest.TestCase):
             shares = {
                 (row["OS_NAME"], row["IPID_SELECTION_STRATEGY"]): row["PERCENTAGE"] for row in rows
             }
-            self.assertAlmostEqual(shares[("ubuntu", "CONSTANT")], 100.0 * 2 / 3)
-            self.assertAlmostEqual(shares[("ubuntu", "SINGLE")], 100.0 / 3)
+            self.assertEqual(shares[("ubuntu", "CONSTANT")], 50.0)
+            self.assertEqual(shares[("ubuntu", "SINGLE")], 25.0)
+            self.assertEqual(shares[("ubuntu", "NOT_ENOUGH_SAMPLES")], 25.0)
             self.assertEqual(shares[("cisco-ios", "REFLECTION")], 50.0)
             self.assertEqual(shares[("cisco-ios", "RANDOM")], 50.0)
             groups = {row["OS_NAME"]: row["OS_GROUP"] for row in rows}
             self.assertEqual(groups["ubuntu"], GENERAL_PURPOSE_GROUP)
             self.assertEqual(groups["cisco-ios"], NETWORK_GROUP)
-            self.assertEqual(len(rows), 2 * 9)
+            self.assertEqual(len(rows), 2 * 10)
             self.assertEqual(shares[("ubuntu", "PER_CONNECTION")], 0.0)
+            self.assertEqual(
+                sum(row["PERCENTAGE"] for row in rows if row["OS_NAME"] == "ubuntu"),
+                100.0,
+            )
 
             metadata = json.loads(json_path.read_text())
             self.assertEqual(metadata["os_ip_count"], 7)
             self.assertEqual(metadata["matched_ip_count"], 6)
-            self.assertEqual(metadata["included_ip_count"], 5)
-            self.assertEqual(metadata["excluded_not_enough_samples_ip_count"], 1)
+            self.assertEqual(metadata["included_ip_count"], 6)
+            self.assertEqual(metadata["not_enough_samples_ip_count"], 1)
+            self.assertNotIn("excluded_not_enough_samples_ip_count", metadata)
             self.assertEqual(metadata["unmatched_os_ip_count"], 1)
             self.assertEqual(metadata["os_measurement_id"], "tcp-os")
             self.assertEqual(
