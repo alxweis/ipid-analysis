@@ -3,8 +3,9 @@
 The worker polls for ``jobs/<id>/request.json`` objects. For each request it
 downloads the completed stateless RT measurement (ICMP, TCP, or UDP-DNS), runs
 the normal IPID strategy classifier, uploads a ZMap-compatible UNCLASSIFIED
-target parquet, and only then publishes ``done.json``. A measurement VM can
-therefore treat the done marker as an atomic readiness signal.
+target parquet beside the measurement's ``ipid.pq``, and only then publishes
+``done.json`` under the job prefix. A measurement VM can therefore treat the
+done marker as an atomic readiness signal.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ import typer
 from ipid_analysis.config import INTERIM_DATA_DIR
 from ipid_analysis.strategies import classify_paths
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TARGET_NAME = "zmap_unclassified.pq"
 SUPPORTED_PROTOCOLS = frozenset({"icmp", "tcp", "udp-dns"})
@@ -88,20 +89,20 @@ class Request:
             )
         if not request.ipid_uri.startswith("s3://") or not request.ipid_uri.endswith("/ipid.pq"):
             raise ValueError("invalid ipid_uri")
-        if not request.snapshot_uri.startswith("s3://") or not request.snapshot_uri.endswith(
-            "/ipid.snapshot.yaml"
-        ):
-            raise ValueError("invalid snapshot_uri")
+        measurement_prefix = request.ipid_uri.rsplit("/", 1)[0]
+        expected_snapshot_uri = join_s3(measurement_prefix, "ipid.snapshot.yaml")
+        if request.snapshot_uri != expected_snapshot_uri:
+            raise ValueError("snapshot_uri does not match the IPID measurement prefix")
 
         job_prefix = join_s3(s3_prefix, "jobs", request.job_id)
         expected = {
-            "result_uri": join_s3(job_prefix, TARGET_NAME),
+            "result_uri": join_s3(measurement_prefix, TARGET_NAME),
             "done_uri": join_s3(job_prefix, "done.json"),
             "failed_uri": join_s3(job_prefix, "failed.json"),
         }
         for field, value in expected.items():
             if getattr(request, field) != value:
-                raise ValueError(f"{field} does not match the configured workflow prefix")
+                raise ValueError(f"{field} does not match its canonical S3 location")
         return request
 
 

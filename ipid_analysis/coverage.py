@@ -5,36 +5,65 @@ from pathlib import Path
 
 import duckdb
 
-from ipid_analysis.config import RAW_DATA_DIR
-from ipid_analysis.manifest import IpidMeasurement
+from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.manifest import IpidMeasurement, resolve
 
 
-def write_coverage(m: IpidMeasurement, raw_root: Path = RAW_DATA_DIR) -> Path:
+def _target_path(m: IpidMeasurement, manifest: dict, raw_root: Path) -> Path:
+    if (m.connection_mode, m.interval, m.scale) != (
+        "no-connection",
+        "fixed-interval",
+        "mass",
+    ):
+        return raw_root / "zmap" / m.zmap_id / "zmap.pq"
+
+    rt_base = resolve(manifest, f"{m.protocol}.ipid.no-connection.rt-based.base")
+    if rt_base is None:
+        raise ValueError(f"{m.target}: corresponding RT-based base measurement is missing")
+    return raw_root / rt_base.input_key / "zmap_unclassified.pq"
+
+
+def write_coverage(
+    m: IpidMeasurement,
+    manifest: dict,
+    raw_root: Path = RAW_DATA_DIR,
+    processed_root: Path = PROCESSED_DATA_DIR,
+) -> Path:
     measurement_dir = raw_root / m.input_key
     ipid_path = measurement_dir / "ipid.pq"
-    zmap_paths = sorted(path for path in measurement_dir.glob("zmap*.pq") if path.is_file())
+    zmap_path = _target_path(m, manifest, raw_root)
 
-    if not ipid_path.is_file():
-        raise FileNotFoundError(ipid_path)
-    if not zmap_paths:
-        raise FileNotFoundError(measurement_dir / "zmap*.pq")
-    if len(zmap_paths) > 1:
-        raise ValueError(
-            f"{measurement_dir}: expected exactly one zmap*.pq, found {len(zmap_paths)}"
-        )
+    for path in (ipid_path, zmap_path):
+        if not path.is_file():
+            raise FileNotFoundError(path)
 
     with duckdb.connect() as con:
-        ipid_count, zmap_count = con.execute(
+        ipid_count, zmap_count, outside_target_count = con.execute(
             """
             SELECT
                 (SELECT count(DISTINCT IP_ADDR) FROM read_parquet($ipid)),
-                (SELECT count(DISTINCT IP_ADDR) FROM read_parquet($zmap))
+                (SELECT count(DISTINCT IP_ADDR) FROM read_parquet($zmap)),
+                (SELECT count(*) FROM (
+                    SELECT DISTINCT IP_ADDR FROM read_parquet($ipid)
+                    EXCEPT
+                    SELECT DISTINCT IP_ADDR FROM read_parquet($zmap)
+                ))
             """,
-            {"ipid": str(ipid_path), "zmap": str(zmap_paths[0])},
+            {"ipid": str(ipid_path), "zmap": str(zmap_path)},
         ).fetchone()
 
-    output_path = measurement_dir / "coverage.json"
-    output_path.write_text(
+    if zmap_count == 0:
+        raise ValueError(f"{zmap_path}: measurement target is empty")
+    if outside_target_count:
+        raise ValueError(
+            f"{ipid_path}: {outside_target_count} IP address(es) are not present "
+            f"in the measurement target {zmap_path}"
+        )
+
+    output_path = m.artifact_path(processed_root, "coverage", "json")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary.write_text(
         json.dumps(
             {
                 "zmap_ip_count": int(zmap_count),
@@ -45,4 +74,5 @@ def write_coverage(m: IpidMeasurement, raw_root: Path = RAW_DATA_DIR) -> Path:
         )
         + "\n"
     )
+    temporary.replace(output_path)
     return output_path
