@@ -239,6 +239,9 @@ def process_request(
             compression="zstd",
             threads=threads,
         )
+        measurement_prefix = request.ipid_uri.rsplit("/", 1)[0]
+        strategies_uri = join_s3(measurement_prefix, "strategies.pq")
+        client.upload(strategies_path, strategies_uri)
         rows = build_unclassified_targets(strategies_path, result_path)
         client.upload(result_path, request.result_uri)
 
@@ -253,7 +256,10 @@ def process_request(
         done_path = work_dir / "done.json"
         write_json(done_path, asdict(done))
         client.upload(done_path, request.done_uri)
-        logger.success(f"[{request.job_id}] {rows:,} unclassified targets uploaded")
+        logger.success(
+            f"[{request.job_id}] persisted strategies and uploaded "
+            f"{rows:,} unclassified targets"
+        )
         cleanup_completed_job(work_dir)
         return True
     except Exception as exc:

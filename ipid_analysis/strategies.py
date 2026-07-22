@@ -26,6 +26,7 @@ from enum import IntEnum
 import math
 from pathlib import Path
 import re
+import shutil
 import time
 
 import duckdb
@@ -44,6 +45,7 @@ from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
+CLASSIFIER_VERSION = "1"
 
 # --- classifier thresholds (tuning, measurement-independent) ---------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3
@@ -110,7 +112,8 @@ OUTPUT_SCHEMA = pa.schema(
     [
         ("IP_ADDR", pa.string()),
         ("IPID_SELECTION_STRATEGY", pa.dictionary(pa.int8(), pa.string())),
-    ]
+    ],
+    metadata={b"classifier_version": CLASSIFIER_VERSION.encode()},
 )
 
 # DuckDB does the heavy lifting: scan + split + cast, multithreaded in C++.
@@ -407,9 +410,30 @@ def resolve_protocol(measurement: str, protocol: str) -> str:
     return re.split(r"[-_]", leaf, maxsplit=1)[0].lower()
 
 
-def strategies_output_path(m: IpidMeasurement) -> Path:
+def strategies_output_path(
+    m: IpidMeasurement,
+    processed_root: Path = PROCESSED_DATA_DIR,
+) -> Path:
     """Return the canonical campaign path for a strategies parquet."""
-    return m.artifact_path(PROCESSED_DATA_DIR, "strategies")
+    return m.artifact_path(processed_root, "strategies")
+
+
+def _publish_persisted_strategies(source_path: Path, output_path: Path) -> int:
+    """Atomically copy a persisted workflow classification into processed data."""
+    parquet = pq.ParquetFile(source_path)
+    if parquet.schema_arrow.names != OUTPUT_SCHEMA.names:
+        raise ValueError(f"{source_path}: invalid strategies schema")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary.unlink(missing_ok=True)
+    try:
+        shutil.copyfile(source_path, temporary)
+        temporary.replace(output_path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return parquet.metadata.num_rows
 
 
 def classify_paths(
@@ -453,13 +477,31 @@ def classify_measurement(
     batch_size: int = 1_000_000,
     compression: str | None = "zstd",
     threads: int = 0,
+    reclassify: bool = False,
+    raw_root: Path = RAW_DATA_DIR,
+    processed_root: Path = PROCESSED_DATA_DIR,
 ) -> Path:
     """Classify one ipid measurement and write its strategies.pq into the
-    campaign directory (data/processed/<zmap_id>/). Returns the output path."""
-    raw_dir = RAW_DATA_DIR / "ipid" / m.measurement_id
+    campaign directory. Existing processed or workflow classifications are
+    reused unless ``reclassify`` is true. Returns the output path."""
+    raw_dir = raw_root / "ipid" / m.measurement_id
     input_path = raw_dir / INPUT_NAME
     snapshot_path = raw_dir / SNAPSHOT_NAME
-    output_path = strategies_output_path(m)
+    persisted_path = raw_dir / OUTPUT_NAME
+    output_path = strategies_output_path(m, processed_root)
+
+    if persisted_path.is_file() and not reclassify:
+        n = _publish_persisted_strategies(persisted_path, output_path)
+        logger.success(
+            f"[{m.target}] reused {n:,} workflow-classified IPs "
+            f"from {persisted_path} -> {output_path}"
+        )
+        return output_path
+
+    if output_path.is_file() and not reclassify:
+        n = pq.ParquetFile(output_path).metadata.num_rows
+        logger.info(f"[{m.target}] reusing {n:,} classified IPs -> {output_path}")
+        return output_path
 
     mass = m.scale == "mass"
     cfg = load_config(snapshot_path)
@@ -499,6 +541,11 @@ def main(
     batch_size: int = typer.Option(1_000_000, help="rows per batch"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
+    reclassify: bool = typer.Option(
+        False,
+        "--reclassify",
+        help="ignore persisted strategies and classify the measurement again",
+    ),
 ) -> None:
     m = resolve(load_manifest(manifest), target)
     if m is None:
@@ -510,6 +557,7 @@ def main(
             batch_size=batch_size,
             compression=None if compression == "none" else compression,
             threads=threads,
+            reclassify=reclassify,
         )
     except FileNotFoundError as exc:
         logger.error(f"not found: {exc}")
