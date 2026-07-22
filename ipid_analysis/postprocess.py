@@ -4,12 +4,13 @@ measurement present in the manifest.
     python ipid_analysis/postprocess.py data.json
 
 Per measurement:
-  1. strategies.pq          (ipid_analysis.strategies)
-  2. probing-intervals.pq   (ipid_analysis.probing_intervals)
-  3. increments.pq          (ipid_analysis.increments)
-  4. strategies PDF + JSON          (ipid_analysis.plot_strategies)
-  5. probing-intervals PDF + JSON   (ipid_analysis.plot_probing_intervals)
-  6. increments CDF PDF + JSON      (ipid_analysis.plot_increments)
+  1. coverage.json          (ipid_analysis.coverage)
+  2. strategies.pq          (ipid_analysis.strategies)
+  3. probing-intervals.pq   (ipid_analysis.probing_intervals)
+  4. increments.pq          (ipid_analysis.increments)
+  5. strategies PDF + JSON          (ipid_analysis.plot_strategies)
+  6. probing-intervals PDF + JSON   (ipid_analysis.plot_probing_intervals)
+  7. increments CDF PDF + JSON      (ipid_analysis.plot_increments)
 
 Missing measurements (combination not in the manifest, or raw data absent) are
 skipped with a warning instead of aborting the run.
@@ -36,6 +37,7 @@ from loguru import logger
 import typer
 
 from ipid_analysis.comparison import iter_base_comparisons
+from ipid_analysis.coverage import write_coverage
 from ipid_analysis.increments import extract_increments
 from ipid_analysis.manifest import iter_ipid_measurements, load_manifest, resolve
 from ipid_analysis.paper_figures import (
@@ -91,6 +93,7 @@ def main(
     ok, skipped = 0, 0
     for m in measurements:
         try:
+            write_coverage(m)
             classify_measurement(m, batch_size=batch_size, compression=comp, threads=threads)
             extract_probing_intervals(m, compression=comp or "zstd", threads=threads)
             extract_increments(m, batch_size=batch_size, compression=comp, threads=threads)
