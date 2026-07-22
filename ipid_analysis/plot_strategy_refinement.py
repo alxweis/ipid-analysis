@@ -26,7 +26,8 @@ from matplotlib.patches import Patch, Polygon  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import MultipleLocator  # noqa: E402
 
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR  # noqa: E402
+from ipid_analysis.coverage import coverage_for_measurement  # noqa: E402
 from ipid_analysis.manifest import IpidMeasurement, resolve  # noqa: E402
 from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
@@ -491,6 +492,7 @@ def render(
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
+    raw_root: Path = RAW_DATA_DIR,
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> tuple[Path, Path, Path]:
@@ -528,6 +530,11 @@ def render(
             },
             "sources": {"rt_based": str(rt_path), "fixed_interval": str(fixed_path)},
             "aggregate": str(aggregate_path),
+            "ipid_measurement_coverage": coverage_for_measurement(
+                merge.base,
+                processed_root=processed_root,
+                raw_root=raw_root,
+            ),
             "figure": KIND,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "methodology": {
@@ -555,6 +562,7 @@ def render_with_connection(
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
+    raw_root: Path = RAW_DATA_DIR,
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> tuple[Path, Path, Path]:
@@ -603,6 +611,11 @@ def render_with_connection(
                 "rt_based_connection_oriented": str(connection_path),
             },
             "aggregate": str(aggregate_path),
+            "ipid_measurement_coverage": coverage_for_measurement(
+                merge.base,
+                processed_root=processed_root,
+                raw_root=raw_root,
+            ),
             "figure": KIND_WITH_CONNECTION,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "methodology": {

@@ -15,6 +15,7 @@ from loguru import logger
 import typer
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.coverage import coverage_for_measurement
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.plots import interval_stats, plot_probing_intervals
 from ipid_analysis.probing_intervals import KIND
@@ -49,6 +50,7 @@ def render(m: IpidMeasurement, bins: int = 50, clip_quantile: float = 0.99) -> t
         **_meta(m),
         "source": str(intervals_path),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ipid_measurement_coverage": coverage_for_measurement(m),
         **stats,
     }
     json_path.parent.mkdir(parents=True, exist_ok=True)

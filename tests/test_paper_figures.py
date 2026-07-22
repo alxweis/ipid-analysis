@@ -38,7 +38,7 @@ class PaperFiguresTest(unittest.TestCase):
         )
         self.comparison = BaseComparison(self.rt, self.fixed)
 
-    def _write_inputs(self, processed: Path) -> None:
+    def _write_inputs(self, processed: Path, raw: Path) -> None:
         intervals = {
             "IP_ADDR": ["192.0.2.1", "192.0.2.2", "198.51.100.1", "203.0.113.1"],
             "PROBING_INTERVALS": [
@@ -106,6 +106,11 @@ class PaperFiguresTest(unittest.TestCase):
                 path = measurement.artifact_path(processed, kind)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 pq.write_table(pa.table(data), path)
+        zmap_path = raw / "zmap" / self.comparison.zmap_id / "zmap.pq"
+        zmap_path.parent.mkdir(parents=True)
+        pq.write_table(
+            pa.table({"IP_ADDR": strategy_rows["IP_ADDR"] + ["203.0.113.2"]}), zmap_path
+        )
 
     def test_comparison_path_and_manifest_iteration(self):
         self.assertEqual(
@@ -141,8 +146,9 @@ class PaperFiguresTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             processed = root / "processed"
+            raw = root / "raw"
             figures = root / "figures"
-            self._write_inputs(processed)
+            self._write_inputs(processed, raw)
 
             def lookup(address: str):
                 if address.startswith("192.0.2."):
@@ -156,17 +162,20 @@ class PaperFiguresTest(unittest.TestCase):
                 continent_lookup=lookup,
                 processed_root=processed,
                 figures_root=figures,
+                raw_root=raw,
             )
             increment_pdf, increment_json, increment_aggregate = render_increment_comparison(
                 self.comparison,
                 processed_root=processed,
                 figures_root=figures,
+                raw_root=raw,
             )
             intersection_pdf, intersection_json, intersection_aggregate = (
                 render_strategy_intersection(
                     self.comparison,
                     processed_root=processed,
                     figures_root=figures,
+                    raw_root=raw,
                 )
             )
 
@@ -190,6 +199,12 @@ class PaperFiguresTest(unittest.TestCase):
                 interval_report["methodology"]["per_ip_statistic"],
                 "median of consecutive probing intervals",
             )
+            expected_coverage = {"rt_based": 80.0, "fixed_interval": 80.0}
+            for report_path in (interval_json, increment_json, intersection_json):
+                self.assertEqual(
+                    json.loads(report_path.read_text())["ipid_measurement_coverage"],
+                    expected_coverage,
+                )
 
             increment_table = pq.read_table(increment_aggregate)
             single_rt = increment_table.filter(

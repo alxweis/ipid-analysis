@@ -15,6 +15,7 @@ from loguru import logger
 import typer
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.coverage import coverage_for_measurement
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.plots import increment_cdf, plot_increment_cdf
 from ipid_analysis.strategies import DEFAULT_MANIFEST
@@ -50,6 +51,7 @@ def render(m: IpidMeasurement) -> tuple[Path, Path]:
         **_meta(m),
         "source": str(increments_path),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ipid_measurement_coverage": coverage_for_measurement(m),
         "strategies": cdf,
     }
     json_path.parent.mkdir(parents=True, exist_ok=True)

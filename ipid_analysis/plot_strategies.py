@@ -16,7 +16,8 @@ from pathlib import Path
 from loguru import logger
 import typer
 
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.coverage import coverage_for_measurement, ipid_measurement_coverage
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.plots import plot_strategy_distribution, strategy_counts, strategy_percentages
 from ipid_analysis.strategies import DEFAULT_MANIFEST
@@ -43,6 +44,7 @@ def _render_paths(
     json_path: Path,
     metadata: dict,
     title: str,
+    coverage: float,
 ) -> tuple[Path, Path]:
     if not strategies_path.is_file():
         raise FileNotFoundError(strategies_path)
@@ -56,6 +58,7 @@ def _render_paths(
         "source": str(strategies_path),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "total_ips": total,
+        "ipid_measurement_coverage": coverage,
         "counts": counts,
         "percentages": percentages,
     }
@@ -71,6 +74,7 @@ def render(
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
+    raw_root: Path = RAW_DATA_DIR,
 ) -> tuple[Path, Path]:
     """Write the strategy PDF + JSON for one measurement. Returns (pdf, json)."""
     return _render_paths(
@@ -79,6 +83,7 @@ def render(
         m.artifact_path(figures_root, "strategies", "json"),
         _meta(m),
         f"IPID strategy distribution — {m.stem}",
+        coverage_for_measurement(m, processed_root=processed_root, raw_root=raw_root),
     )
 
 
@@ -87,6 +92,7 @@ def render_merged(
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
+    raw_root: Path = RAW_DATA_DIR,
 ) -> tuple[Path, Path]:
     """Write the strategy PDF + JSON for a merged base/mass artifact."""
     metadata = {
@@ -99,12 +105,17 @@ def render_merged(
         "mass_target": merge.mass.target,
         "mass_measurement_id": merge.mass.measurement_id,
     }
+    strategies_path = merge.artifact_path(processed_root, "strategies")
     return _render_paths(
-        merge.artifact_path(processed_root, "strategies"),
+        strategies_path,
         merge.artifact_path(figures_root, "strategies", "pdf"),
         merge.artifact_path(figures_root, "strategies", "json"),
         metadata,
         f"Merged IPID strategy distribution — {merge.stem}",
+        ipid_measurement_coverage(
+            strategies_path,
+            raw_root / "zmap" / merge.zmap_id / "zmap.pq",
+        ),
     )
 
 

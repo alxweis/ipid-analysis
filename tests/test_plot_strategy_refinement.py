@@ -59,10 +59,16 @@ class StrategyRefinementPlotTest(unittest.TestCase):
             path,
         )
 
+    @staticmethod
+    def _write_zmap(path: Path, addresses: list[str]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(pa.table({"IP_ADDR": addresses}), path)
+
     def test_render_refinement_plot_and_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             processed = root / "processed"
+            raw = root / "raw"
             figures = root / "figures"
             base_path = self.base.artifact_path(processed, "strategies")
             mass_path = self.mass.artifact_path(processed, "strategies")
@@ -76,11 +82,16 @@ class StrategyRefinementPlotTest(unittest.TestCase):
                 ["192.0.2.3", "192.0.2.4"],
                 ["MULTI", "RANDOM"],
             )
+            self._write_zmap(
+                raw / "zmap" / self.merge.zmap_id / "zmap.pq",
+                [f"192.0.2.{index}" for index in range(1, 7)],
+            )
 
             pdf_path, json_path, aggregate_path = render(
                 self.merge,
                 processed_root=processed,
                 figures_root=figures,
+                raw_root=raw,
             )
 
             self.assertTrue(pdf_path.is_file())
@@ -118,6 +129,7 @@ class StrategyRefinementPlotTest(unittest.TestCase):
             self.assertEqual(metadata["fixed_interval_missing_result_ip_count"], 1)
             self.assertEqual(metadata["not_enough_samples_count"], 1)
             self.assertAlmostEqual(metadata["fixed_interval_result_coverage_percent"], 200 / 3)
+            self.assertAlmostEqual(metadata["ipid_measurement_coverage"], 500 / 6)
 
     def test_rejects_fixed_interval_address_that_was_not_unclassified(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -146,6 +158,7 @@ class StrategyRefinementPlotTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             processed = root / "processed"
+            raw = root / "raw"
             figures = root / "figures"
             self._write_strategies(
                 self.base.artifact_path(processed, "strategies"),
@@ -162,12 +175,17 @@ class StrategyRefinementPlotTest(unittest.TestCase):
                 ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"],
                 ["PER_CONNECTION", "PER_CONNECTION", "SINGLE", "UNCLASSIFIED"],
             )
+            self._write_zmap(
+                raw / "zmap" / self.merge.zmap_id / "zmap.pq",
+                [f"192.0.2.{index}" for index in range(1, 5)],
+            )
 
             pdf_path, json_path, aggregate_path = render_with_connection(
                 self.merge,
                 self.connection,
                 processed_root=processed,
                 figures_root=figures,
+                raw_root=raw,
             )
 
             self.assertTrue(pdf_path.is_file())

@@ -40,8 +40,10 @@ from ipid_analysis.comparison import (  # noqa: E402
 from ipid_analysis.config import (  # noqa: E402
     FIGURES_DIR,
     PROCESSED_DATA_DIR,
+    RAW_DATA_DIR,
     REFERENCES_DIR,
 )
+from ipid_analysis.coverage import coverage_for_measurement  # noqa: E402
 from ipid_analysis.manifest import load_manifest  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
     DEFAULT_MANIFEST,
@@ -224,6 +226,23 @@ def _common_metadata(comparison: BaseComparison, sources: dict[str, Path]) -> di
         },
         "sources": {key: str(path) for key, path in sources.items()},
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def _comparison_coverage(
+    comparison: BaseComparison,
+    *,
+    processed_root: Path,
+    raw_root: Path,
+) -> dict[str, float]:
+    return {
+        name: coverage_for_measurement(
+            measurement, processed_root=processed_root, raw_root=raw_root
+        )
+        for name, measurement in (
+            ("rt_based", comparison.rt_based),
+            ("fixed_interval", comparison.fixed_interval),
+        )
     }
 
 
@@ -704,6 +723,7 @@ def render_probing_interval_comparison(
     continent_lookup: Callable[[str], tuple[str, str] | None] | None = None,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
+    raw_root: Path = RAW_DATA_DIR,
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> tuple[Path, Path, Path]:
@@ -755,6 +775,11 @@ def render_probing_interval_comparison(
         "figure": PROBING_INTERVAL_KIND,
         "aggregate": str(aggregate_path),
         "maxmind_database": database_label,
+        "ipid_measurement_coverage": _comparison_coverage(
+            comparison,
+            processed_root=processed_root,
+            raw_root=raw_root,
+        ),
         "methodology": {
             "per_ip_statistic": "median of consecutive probing intervals",
             "input_unit": "microseconds",
@@ -776,6 +801,7 @@ def render_increment_comparison(
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
+    raw_root: Path = RAW_DATA_DIR,
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> tuple[Path, Path, Path]:
@@ -799,6 +825,11 @@ def render_increment_comparison(
             **_common_metadata(comparison, {"rt_based": rt_path, "fixed_interval": fixed_path}),
             "figure": INCREMENT_KIND,
             "aggregate": str(aggregate_path),
+            "ipid_measurement_coverage": _comparison_coverage(
+                comparison,
+                processed_root=processed_root,
+                raw_root=raw_root,
+            ),
             "strategies": list(INCREMENT_STRATEGIES),
             "methodology": {
                 "distribution": "empirical CDF of positive IP-ID increments",
@@ -817,6 +848,7 @@ def render_strategy_intersection(
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
+    raw_root: Path = RAW_DATA_DIR,
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> tuple[Path, Path, Path]:
@@ -840,6 +872,11 @@ def render_strategy_intersection(
             **_common_metadata(comparison, {"rt_based": rt_path, "fixed_interval": fixed_path}),
             "figure": INTERSECTION_KIND,
             "aggregate": str(aggregate_path),
+            "ipid_measurement_coverage": _comparison_coverage(
+                comparison,
+                processed_root=processed_root,
+                raw_root=raw_root,
+            ),
             "strategies": list(INTERSECTION_STRATEGIES),
             "methodology": {
                 "population": "inner intersection of IP addresses in both strategy files",

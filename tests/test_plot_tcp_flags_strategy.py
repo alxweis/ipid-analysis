@@ -94,6 +94,7 @@ class TCPFlagsStrategyPlotTest(unittest.TestCase):
             self.assertEqual(metadata["matched_ip_count"], 4)
             self.assertEqual(metadata["synack_ip_count"], 2)
             self.assertEqual(metadata["rst_ip_count"], 2)
+            self.assertEqual(metadata["ipid_measurement_coverage"], 100.0)
             self.assertEqual(
                 metadata["sources"]["merged_strategies"],
                 str(self.merge.artifact_path(processed, "strategies")),

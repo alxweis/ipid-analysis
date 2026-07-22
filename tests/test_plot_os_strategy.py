@@ -86,6 +86,10 @@ class OSStrategyPlotTest(unittest.TestCase):
                     ],
                 },
             )
+            self._write(
+                raw / "zmap" / self.merge.zmap_id / "zmap.pq",
+                {"IP_ADDR": merged_addresses + ["198.51.100.2"]},
+            )
 
             pdf_path, json_path, aggregate_path = render(
                 self.merge,
@@ -125,6 +129,7 @@ class OSStrategyPlotTest(unittest.TestCase):
             self.assertNotIn("excluded_not_enough_samples_ip_count", metadata)
             self.assertEqual(metadata["unmatched_os_ip_count"], 1)
             self.assertEqual(metadata["os_measurement_id"], "tcp-os")
+            self.assertAlmostEqual(metadata["ipid_measurement_coverage"], 600 / 7)
             self.assertEqual(
                 metadata["methodology"]["normalization"],
                 "each operating-system row is normalized independently to 100%",
@@ -217,6 +222,10 @@ class OSStrategyPlotTest(unittest.TestCase):
                 self._write(
                     raw / "os" / f"{protocol}-os" / "os.pq",
                     {"IP_ADDR": addresses, "OS_NAME": ["ubuntu", "cisco-ios"]},
+                )
+                self._write(
+                    raw / "zmap" / merge.zmap_id / "zmap.pq",
+                    {"IP_ADDR": addresses},
                 )
 
                 pdf_path, _, aggregate_path = render(

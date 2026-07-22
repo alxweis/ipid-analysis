@@ -51,6 +51,7 @@ class StrategyMergeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             processed = root / "processed"
+            raw = root / "raw"
             figures = root / "figures"
             base_path = self.base.artifact_path(processed, "strategies")
             mass_path = self.mass.artifact_path(processed, "strategies")
@@ -85,6 +86,12 @@ class StrategyMergeTest(unittest.TestCase):
                 ),
                 mass_path,
             )
+            zmap_path = raw / "zmap" / self.merge.zmap_id / "zmap.pq"
+            zmap_path.parent.mkdir(parents=True)
+            pq.write_table(
+                pa.table({"IP_ADDR": [f"192.0.2.{index}" for index in (1, 1, 2, 3, 4, 99)]}),
+                zmap_path,
+            )
 
             output, stats = merge_strategies(self.merge, processed_root=processed)
 
@@ -112,11 +119,13 @@ class StrategyMergeTest(unittest.TestCase):
                 self.merge,
                 processed_root=processed,
                 figures_root=figures,
+                raw_root=raw,
             )
             self.assertTrue(pdf_path.is_file())
             report = json.loads(json_path.read_text())
             self.assertEqual(report["total_ips"], 4)
             self.assertEqual(report["counts"]["NOT_ENOUGH_SAMPLES"], 1)
+            self.assertEqual(report["ipid_measurement_coverage"], 80.0)
             self.assertEqual(
                 pdf_path,
                 self.merge.artifact_path(figures, "strategies", "pdf"),

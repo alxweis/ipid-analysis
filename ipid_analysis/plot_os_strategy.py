@@ -24,6 +24,7 @@ from ipid_analysis.config import (  # noqa: E402
     PROCESSED_DATA_DIR,
     RAW_DATA_DIR,
 )
+from ipid_analysis.coverage import ipid_measurement_coverage  # noqa: E402
 from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
     DEFAULT_MANIFEST,
@@ -481,6 +482,10 @@ def render(
                 "os": str(os_path),
             },
             "aggregate": str(aggregate_path),
+            "ipid_measurement_coverage": ipid_measurement_coverage(
+                merged_path,
+                raw_root / "zmap" / merge.zmap_id / "zmap.pq",
+            ),
             "figure": KIND,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "methodology": {
