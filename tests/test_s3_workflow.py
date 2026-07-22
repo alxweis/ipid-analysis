@@ -7,9 +7,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ipid_analysis.s3_workflow import (
+    ANALYSIS_JOB_VERSION,
     PROTOCOL_VERSION,
+    AnalysisRequest,
     Request,
     build_unclassified_targets,
+    process_analysis_request,
     process_request,
 )
 
@@ -200,6 +203,104 @@ class S3WorkflowTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "does not match measurement id"):
             Request.parse(data, prefix)
+
+    def test_analysis_worker_downloads_manifest_inputs_and_runs_postprocessing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = "s3://bucket/workflow"
+            job_id = "icmp_2026-07-22_10-00-00"
+            os_id = "icmp_2026-07-22_10-00-01"
+            rt_id = "icmp_2026-07-22_10-00-02"
+            mass_id = "icmp_2026-07-22_10-00-03"
+            fixed_id = "icmp_2026-07-22_10-00-04"
+            job_prefix = f"{prefix}/analysis-jobs/{job_id}"
+            request_uri = f"{job_prefix}/request.json"
+            manifest_uri = f"{job_prefix}/manifest.json"
+            request = {
+                "version": ANALYSIS_JOB_VERSION,
+                "job_id": job_id,
+                "protocol": "icmp",
+                "manifest_uri": manifest_uri,
+                "zmap_prefix": "s3://bucket/raw/zmap/",
+                "os_prefix": "s3://bucket/raw/os/",
+                "ipid_prefix": "s3://bucket/raw/ipid/",
+                "done_uri": f"{job_prefix}/done.json",
+                "failed_uri": f"{job_prefix}/failed.json",
+                "created_at": "2026-07-22T10:05:00Z",
+            }
+            manifest = {
+                "icmp": {
+                    "zmap": job_id,
+                    "os": os_id,
+                    "ipid": {
+                        "no-connection": {
+                            "rt-based": {"base": rt_id},
+                            "fixed-interval": {"base": fixed_id, "mass": mass_id},
+                        }
+                    },
+                }
+            }
+            objects = {
+                request_uri: json.dumps(request).encode(),
+                manifest_uri: json.dumps(manifest).encode(),
+                f"s3://bucket/raw/zmap/{job_id}/zmap.pq": b"zmap",
+                f"s3://bucket/raw/os/{os_id}/os.pq": b"os",
+                f"s3://bucket/raw/ipid/{rt_id}/zmap_unclassified.pq": b"targets",
+                f"s3://bucket/raw/ipid/{rt_id}/strategies.pq": b"strategies",
+            }
+            for measurement_id in (rt_id, mass_id, fixed_id):
+                objects[f"s3://bucket/raw/ipid/{measurement_id}/ipid.pq"] = b"ipid"
+                objects[f"s3://bucket/raw/ipid/{measurement_id}/ipid.snapshot.yaml"] = b"snapshot"
+            client = FakeS3Client(objects)
+            calls = []
+
+            def fake_postprocess(manifest_path, log_path, batch_size, threads):
+                calls.append((manifest_path, batch_size, threads))
+                self.assertTrue((root / "raw" / "zmap" / job_id / "zmap.pq").is_file())
+                self.assertTrue((root / "raw" / "os" / os_id / "os.pq").is_file())
+                self.assertTrue((root / "raw" / "ipid" / rt_id / "strategies.pq").is_file())
+                self.assertTrue((root / "raw" / "ipid" / rt_id / "zmap_unclassified.pq").is_file())
+                log_path.write_text("postprocessing complete\n")
+
+            self.assertTrue(
+                process_analysis_request(
+                    client,
+                    request_uri,
+                    prefix,
+                    root / "jobs",
+                    1234,
+                    2,
+                    postprocess=fake_postprocess,
+                    raw_root=root / "raw",
+                )
+            )
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][1:], (1234, 2))
+            self.assertEqual(
+                client.uploads[-2:],
+                [f"{job_prefix}/postprocess.log", f"{job_prefix}/done.json"],
+            )
+            done = json.loads(client.objects[f"{job_prefix}/done.json"])
+            self.assertEqual(done["job_id"], job_id)
+            self.assertTrue((root / "jobs" / job_id / "manifest.json").is_file())
+
+    def test_analysis_request_rejects_noncanonical_manifest_location(self):
+        prefix = "s3://bucket/workflow"
+        job_id = "tcp-80_2026-07-22_10-00-00"
+        data = {
+            "version": ANALYSIS_JOB_VERSION,
+            "job_id": job_id,
+            "protocol": "tcp",
+            "manifest_uri": "s3://other/manifest.json",
+            "zmap_prefix": "s3://bucket/raw/zmap/",
+            "os_prefix": "s3://bucket/raw/os/",
+            "ipid_prefix": "s3://bucket/raw/ipid/",
+            "done_uri": f"{prefix}/analysis-jobs/{job_id}/done.json",
+            "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
+            "created_at": "2026-07-22T10:05:00Z",
+        }
+        with self.assertRaisesRegex(ValueError, "manifest_uri"):
+            AnalysisRequest.parse(data, prefix)
 
 
 if __name__ == "__main__":

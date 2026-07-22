@@ -74,7 +74,7 @@ analyse:
 %.json:
 	@:
 
-## Poll S3 for measurement handoff jobs
+## Poll S3 for RT handoff and complete postprocessing jobs
 ##   usage: make workflow-worker ARGS="--s3-prefix s3://bucket/prefix"
 .PHONY: workflow-worker
 workflow-worker:
