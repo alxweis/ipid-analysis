@@ -24,8 +24,9 @@ For every `jobs/<measurement-id>/request.json`, the worker:
 2. runs the normal IPID selection-strategy classifier,
 3. writes `zmap_unclassified.pq` with the ZMap-compatible columns `IP_ADDR` and
    `REPLY_TYPE`, containing only `UNCLASSIFIED` addresses,
-4. uploads that parquet and then publishes `done.json` with its row count, size,
-   and SHA-256 digest.
+4. uploads that parquet beside the RT measurement's `ipid.pq`, and then
+   publishes `jobs/<measurement-id>/done.json` with its canonical URI, row
+   count, size, and SHA-256 digest.
 
 If processing fails, `failed.json` is uploaded instead. Requests are idempotent:
 jobs with either terminal marker are skipped. Use `--once` to process the current

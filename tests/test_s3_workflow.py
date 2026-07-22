@@ -6,7 +6,12 @@ import unittest
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ipid_analysis.s3_workflow import Request, build_unclassified_targets, process_request
+from ipid_analysis.s3_workflow import (
+    PROTOCOL_VERSION,
+    Request,
+    build_unclassified_targets,
+    process_request,
+)
 
 
 class FakeS3Client:
@@ -48,9 +53,9 @@ class S3WorkflowTest(unittest.TestCase):
             self.assertEqual(table.column_names, ["IP_ADDR", "REPLY_TYPE"])
             self.assertEqual(table["IP_ADDR"].to_pylist(), ["192.0.2.1", "192.0.2.3"])
 
-    def test_request_rejects_result_outside_job_prefix(self):
+    def test_request_rejects_result_outside_measurement_prefix(self):
         data = {
-            "version": 1,
+            "version": PROTOCOL_VERSION,
             "job_id": "tcp-80_2026-01-01_00-00-00",
             "protocol": "tcp",
             "measurement_id": "tcp-80_2026-01-01_00-00-00",
@@ -103,10 +108,10 @@ class S3WorkflowTest(unittest.TestCase):
             prefix = "s3://bucket/workflow"
             job_prefix = f"{prefix}/jobs/{job_id}"
             request_uri = f"{job_prefix}/request.json"
-            result_uri = f"{job_prefix}/zmap_unclassified.pq"
+            result_uri = "s3://bucket/raw/ipid/run/zmap_unclassified.pq"
             done_uri = f"{job_prefix}/done.json"
             request = {
-                "version": 1,
+                "version": PROTOCOL_VERSION,
                 "job_id": job_id,
                 "protocol": protocol,
                 "measurement_id": job_id,
@@ -153,13 +158,13 @@ class S3WorkflowTest(unittest.TestCase):
         job_id = "sctp_2026-01-01_00-00-00"
         job_prefix = f"{prefix}/jobs/{job_id}"
         data = {
-            "version": 1,
+            "version": PROTOCOL_VERSION,
             "job_id": job_id,
             "protocol": "sctp",
             "measurement_id": job_id,
             "ipid_uri": "s3://bucket/raw/ipid/run/ipid.pq",
             "snapshot_uri": "s3://bucket/raw/ipid/run/ipid.snapshot.yaml",
-            "result_uri": f"{job_prefix}/zmap_unclassified.pq",
+            "result_uri": "s3://bucket/raw/ipid/run/zmap_unclassified.pq",
             "done_uri": f"{job_prefix}/done.json",
             "failed_uri": f"{job_prefix}/failed.json",
             "created_at": "2026-01-01T00:00:00Z",
@@ -173,13 +178,13 @@ class S3WorkflowTest(unittest.TestCase):
         job_id = "icmp_2026-01-01_00-00-00"
         job_prefix = f"{prefix}/jobs/{job_id}"
         data = {
-            "version": 1,
+            "version": PROTOCOL_VERSION,
             "job_id": job_id,
             "protocol": "tcp",
             "measurement_id": job_id,
             "ipid_uri": "s3://bucket/raw/ipid/run/ipid.pq",
             "snapshot_uri": "s3://bucket/raw/ipid/run/ipid.snapshot.yaml",
-            "result_uri": f"{job_prefix}/zmap_unclassified.pq",
+            "result_uri": "s3://bucket/raw/ipid/run/zmap_unclassified.pq",
             "done_uri": f"{job_prefix}/done.json",
             "failed_uri": f"{job_prefix}/failed.json",
             "created_at": "2026-01-01T00:00:00Z",

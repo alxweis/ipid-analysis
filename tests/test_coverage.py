@@ -41,7 +41,9 @@ class CoverageTest(unittest.TestCase):
 
     def test_uses_original_zmap_for_regular_measurement(self):
         with tempfile.TemporaryDirectory() as directory:
-            raw_root = Path(directory)
+            root = Path(directory)
+            raw_root = root / "raw"
+            processed_root = root / "processed"
             measurement = self._measurement("rt-based", "base", "tcp-base")
             measurement_dir = raw_root / measurement.input_key
             self._write(
@@ -50,8 +52,18 @@ class CoverageTest(unittest.TestCase):
             )
             self._write(measurement_dir / "ipid.pq", ["192.0.2.1"])
 
-            output_path = write_coverage(measurement, self.manifest, raw_root)
+            output_path = write_coverage(
+                measurement,
+                self.manifest,
+                raw_root,
+                processed_root,
+            )
 
+            self.assertEqual(
+                output_path,
+                measurement.artifact_path(processed_root, "coverage", "json"),
+            )
+            self.assertFalse((measurement_dir / "coverage.json").exists())
             self.assertEqual(
                 json.loads(output_path.read_text()),
                 {
@@ -63,7 +75,9 @@ class CoverageTest(unittest.TestCase):
 
     def test_uses_rt_unclassified_targets_for_fixed_interval_mass(self):
         with tempfile.TemporaryDirectory() as directory:
-            raw_root = Path(directory)
+            root = Path(directory)
+            raw_root = root / "raw"
+            processed_root = root / "processed"
             measurement = self._measurement("fixed-interval", "mass", "tcp-mass")
             self._write(
                 raw_root / "ipid" / "tcp-base" / "zmap_unclassified.pq",
@@ -71,11 +85,64 @@ class CoverageTest(unittest.TestCase):
             )
             self._write(raw_root / measurement.input_key / "ipid.pq", ["192.0.2.1"])
 
-            output_path = write_coverage(measurement, self.manifest, raw_root)
+            output_path = write_coverage(
+                measurement,
+                self.manifest,
+                raw_root,
+                processed_root,
+            )
 
             self.assertAlmostEqual(
                 json.loads(output_path.read_text())["coverage_percent"],
                 100 / 3,
+            )
+
+    def test_rejects_ipid_address_outside_measurement_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw_root = root / "raw"
+            processed_root = root / "processed"
+            measurement = self._measurement("rt-based", "base", "tcp-base")
+            self._write(
+                raw_root / "zmap" / "tcp-zmap" / "zmap.pq",
+                ["192.0.2.1"],
+            )
+            self._write(
+                raw_root / measurement.input_key / "ipid.pq",
+                ["192.0.2.1", "192.0.2.2"],
+            )
+
+            with self.assertRaisesRegex(ValueError, "not present in the measurement target"):
+                write_coverage(
+                    measurement,
+                    self.manifest,
+                    raw_root,
+                    processed_root,
+                )
+
+            self.assertFalse(
+                measurement.artifact_path(processed_root, "coverage", "json").exists()
+            )
+
+    def test_rejects_empty_measurement_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw_root = root / "raw"
+            processed_root = root / "processed"
+            measurement = self._measurement("rt-based", "base", "tcp-base")
+            self._write(raw_root / "zmap" / "tcp-zmap" / "zmap.pq", [])
+            self._write(raw_root / measurement.input_key / "ipid.pq", [])
+
+            with self.assertRaisesRegex(ValueError, "measurement target is empty"):
+                write_coverage(
+                    measurement,
+                    self.manifest,
+                    raw_root,
+                    processed_root,
+                )
+
+            self.assertFalse(
+                measurement.artifact_path(processed_root, "coverage", "json").exists()
             )
 
 
