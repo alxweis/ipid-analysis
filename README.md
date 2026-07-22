@@ -37,6 +37,15 @@ The corresponding `ipid-measure` run waits for the terminal marker and will not
 start that protocol's 25-request fixed-interval measurement until the result has
 been downloaded and verified.
 
+The same worker also starts the complete postprocessing automatically after a
+successful `make run-all-*` sweep. It polls
+`analysis-jobs/<zmap-id>/request.json`, downloads the manifest and its referenced
+ZMap, OS, and IP-ID outputs into `data/raw`, then runs the same processing as
+`make analyse <manifest>`. The persistent job files and log are kept under
+`data/analysis-jobs/<zmap-id>/`; S3 receives `postprocess.log` followed by either
+`done.json` or `failed.json`. A single worker processes the three protocol VMs'
+jobs sequentially, so no additional scheduler or locking service is required.
+
 ## Strategy classification by measurement scale
 
 Base measurements classify the position-dependent or cheaply identifiable
