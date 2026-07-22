@@ -22,9 +22,10 @@ For every `jobs/<measurement-id>/request.json`, the worker:
 
 1. downloads `ipid.pq` and `ipid.snapshot.yaml` from the completed measurement upload,
 2. runs the normal IPID selection-strategy classifier,
-3. writes `zmap_unclassified.pq` with the ZMap-compatible columns `IP_ADDR` and
+3. persists `strategies.pq` beside the RT measurement's `ipid.pq`,
+4. writes `zmap_unclassified.pq` with the ZMap-compatible columns `IP_ADDR` and
    `REPLY_TYPE`, containing only `UNCLASSIFIED` addresses,
-4. uploads that parquet beside the RT measurement's `ipid.pq`, and then
+5. uploads that parquet beside the RT measurement's `ipid.pq`, and then
    publishes `jobs/<measurement-id>/done.json` with its canonical URI, row
    count, size, and SHA-256 digest.
 
@@ -48,6 +49,21 @@ Mass measurements use only position-independent rules and classify `CONSTANT`,
 `UNCLASSIFIED`. Minimum reply-rate filtering is performed by `ipid-measure`
 before fixed-interval rows are written, so analysis does not duplicate that
 measurement-stage decision as an IPID strategy.
+
+The classification produced by the measurement handoff is the authoritative
+historical result. `make analyse data.json` first reuses an existing processed
+`strategies.pq`, otherwise imports the persisted raw-measurement
+`strategies.pq`, and only runs the classifier when neither exists. To
+deliberately recompute all measurement classifications with the current code,
+run:
+
+```bash
+make analyse data.json ARGS="--reclassify"
+```
+
+Reclassification does not replace the persisted historical input. Its result
+may differ from the classification that selected the original fixed-interval
+mass target when classifier rules have changed in the meantime.
 
 ## Merging base and mass strategies
 

@@ -80,6 +80,11 @@ def main(
     batch_size: int = typer.Option(1_000_000, help="rows per batch"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
+    reclassify: bool = typer.Option(
+        False,
+        "--reclassify",
+        help="ignore persisted strategies and classify every measurement again",
+    ),
     maxmind_db: Path | None = typer.Option(
         None,
         help="GeoLite2/GeoIP2 .mmdb for continent plots; also read from IPID_MAXMIND_DB",
@@ -94,7 +99,13 @@ def main(
     for m in measurements:
         try:
             write_coverage(m, manifest)
-            classify_measurement(m, batch_size=batch_size, compression=comp, threads=threads)
+            classify_measurement(
+                m,
+                batch_size=batch_size,
+                compression=comp,
+                threads=threads,
+                reclassify=reclassify,
+            )
             extract_probing_intervals(m, compression=comp or "zstd", threads=threads)
             extract_increments(m, batch_size=batch_size, compression=comp, threads=threads)
             render_strategies_plot(m)
