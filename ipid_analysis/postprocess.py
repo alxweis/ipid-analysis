@@ -93,7 +93,7 @@ def main(
     ok, skipped = 0, 0
     for m in measurements:
         try:
-            write_coverage(m)
+            write_coverage(m, manifest)
             classify_measurement(m, batch_size=batch_size, compression=comp, threads=threads)
             extract_probing_intervals(m, compression=comp or "zstd", threads=threads)
             extract_increments(m, batch_size=batch_size, compression=comp, threads=threads)
