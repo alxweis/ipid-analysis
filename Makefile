@@ -68,7 +68,7 @@ data: requirements
 ##   usage: make analyse data.json
 .PHONY: analyse
 analyse:
-	$(PYTHON_INTERPRETER) ipid_analysis/postprocess.py $(filter-out analyse,$(MAKECMDGOALS))
+	$(PYTHON_INTERPRETER) ipid_analysis/postprocess.py $(filter-out analyse,$(MAKECMDGOALS)) $(ARGS)
 
 # allow passing the manifest as a goal (`make analyse data.json`): make it a no-op target
 %.json:

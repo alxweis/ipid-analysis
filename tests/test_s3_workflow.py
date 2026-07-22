@@ -108,6 +108,7 @@ class S3WorkflowTest(unittest.TestCase):
             prefix = "s3://bucket/workflow"
             job_prefix = f"{prefix}/jobs/{job_id}"
             request_uri = f"{job_prefix}/request.json"
+            strategies_uri = "s3://bucket/raw/ipid/run/strategies.pq"
             result_uri = "s3://bucket/raw/ipid/run/zmap_unclassified.pq"
             done_uri = f"{job_prefix}/done.json"
             request = {
@@ -135,8 +136,15 @@ class S3WorkflowTest(unittest.TestCase):
             )
 
             self.assertTrue(process_request(client, request_uri, prefix, root / "work", 100, 1))
-            self.assertEqual(client.uploads[-2:], [result_uri, done_uri])
+            self.assertEqual(client.uploads[-3:], [strategies_uri, result_uri, done_uri])
             self.assertEqual(json.loads(client.objects[done_uri])["rows"], 1)
+
+            persisted = root / "persisted-strategies.pq"
+            persisted.write_bytes(client.objects[strategies_uri])
+            self.assertEqual(
+                pq.read_table(persisted)["IP_ADDR"].to_pylist(),
+                ["192.0.2.10", "192.0.2.11"],
+            )
 
             result = root / "result.pq"
             result.write_bytes(client.objects[result_uri])

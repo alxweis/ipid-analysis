@@ -6,11 +6,14 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ipid_analysis.manifest import IpidMeasurement
 from ipid_analysis.strategies import (
+    CLASSIFIER_VERSION,
     IPIDStrategy,
     MeasurementConfig,
     classify_batch,
     classify_batch_mass,
+    classify_measurement,
     classify_paths,
     load_config,
 )
@@ -151,8 +154,94 @@ class StrategyClassificationTest(unittest.TestCase):
 
             strategies = pq.read_table(output)["IPID_SELECTION_STRATEGY"].to_pylist()
             self.assertEqual(
+                pq.ParquetFile(output).schema_arrow.metadata[b"classifier_version"].decode(),
+                CLASSIFIER_VERSION,
+            )
+            self.assertEqual(
                 strategies,
                 [IPIDStrategy.UNCLASSIFIED.name, IPIDStrategy.UNCLASSIFIED.name],
+            )
+
+    @staticmethod
+    def _measurement() -> IpidMeasurement:
+        return IpidMeasurement(
+            protocol="icmp",
+            connection_mode="no-connection",
+            interval="rt-based",
+            scale="base",
+            measurement_id="icmp-run",
+            zmap_id="icmp-zmap",
+        )
+
+    @staticmethod
+    def _write_strategies(path: Path, strategy: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.table(
+                {
+                    "IP_ADDR": ["192.0.2.1"],
+                    "IPID_SELECTION_STRATEGY": [strategy],
+                }
+            ),
+            path,
+        )
+
+    def test_measurement_reuses_persisted_workflow_strategies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = root / "raw"
+            processed = root / "processed"
+            measurement = self._measurement()
+            persisted = raw / measurement.input_key / "strategies.pq"
+            self._write_strategies(persisted, "UNCLASSIFIED")
+            existing = measurement.artifact_path(processed, "strategies")
+            self._write_strategies(existing, "RANDOM")
+
+            output = classify_measurement(
+                measurement,
+                raw_root=raw,
+                processed_root=processed,
+            )
+
+            self.assertEqual(
+                pq.read_table(output)["IPID_SELECTION_STRATEGY"].to_pylist(),
+                ["UNCLASSIFIED"],
+            )
+
+    def test_reclassify_ignores_existing_processed_strategies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = root / "raw"
+            processed = root / "processed"
+            measurement = self._measurement()
+            raw_dir = raw / measurement.input_key
+            output = measurement.artifact_path(processed, "strategies")
+            self._write_strategies(output, "RANDOM")
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            pq.write_table(
+                pa.table(
+                    {
+                        "IP_ADDR": ["192.0.2.1"],
+                        "IPID_SEQUENCE": [",".join(["7"] * 16)],
+                    }
+                ),
+                raw_dir / "ipid.pq",
+            )
+            (raw_dir / "ipid.snapshot.yaml").write_text(
+                "connection_count: 4\nrequests_per_connection: 4\n"
+                "request_ip_ids: [1, 2, 3, 4]\n"
+            )
+
+            classify_measurement(
+                measurement,
+                reclassify=True,
+                raw_root=raw,
+                processed_root=processed,
+            )
+
+            self.assertEqual(
+                pq.read_table(output)["IPID_SELECTION_STRATEGY"].to_pylist(),
+                ["CONSTANT"],
             )
 
 
