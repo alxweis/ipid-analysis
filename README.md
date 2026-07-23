@@ -221,9 +221,11 @@ row therefore represents its complete matched merged population and still sums
 to 100%.
 
 The OS grouping explicitly covers every `OS_NAME` currently emitted by
-`ipid-measure`. Its `rhel` fingerprint includes both RHEL and CentOS banners, so
-the figure labels that row `RHEL / CentOS` instead of implying a distinction
-that is not present in `os.pq`.
+`ipid-measure`, including separate RHEL and CentOS fingerprints. Rows with an
+empty `OS_NAME` retain useful vendor, server-software, or device-type evidence
+in `os.pq` but are excluded from the operating-system heatmap. The metadata
+reports both the total evidence population and the subset with an identified
+operating system.
 
 ```bash
 python ipid_analysis/plot_os_strategy.py \

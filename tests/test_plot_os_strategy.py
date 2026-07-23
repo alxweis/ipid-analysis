@@ -118,7 +118,9 @@ class OSStrategyPlotTest(unittest.TestCase):
             )
 
             metadata = json.loads(json_path.read_text())
+            self.assertEqual(metadata["os_evidence_ip_count"], 7)
             self.assertEqual(metadata["os_ip_count"], 7)
+            self.assertEqual(metadata["unidentified_evidence_ip_count"], 0)
             self.assertEqual(metadata["matched_ip_count"], 6)
             self.assertEqual(metadata["included_ip_count"], 6)
             self.assertEqual(metadata["not_enough_samples_ip_count"], 1)
@@ -129,6 +131,52 @@ class OSStrategyPlotTest(unittest.TestCase):
                 metadata["methodology"]["normalization"],
                 "each operating-system row is normalized independently to 100%",
             )
+
+    def test_keeps_fallback_evidence_out_of_os_heatmap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            processed = root / "processed"
+            raw = root / "raw"
+            figures = root / "figures"
+            addresses = ["192.0.2.1", "192.0.2.2", "192.0.2.3"]
+            self._write(
+                self.merge.artifact_path(processed, "strategies"),
+                {
+                    "IP_ADDR": addresses,
+                    "IPID_SELECTION_STRATEGY": ["CONSTANT", "RANDOM", "SINGLE"],
+                },
+            )
+            self._write(
+                raw / "os" / "tcp-os" / "os.pq",
+                {
+                    "IP_ADDR": addresses,
+                    "OS_NAME": ["centos", "drayos", ""],
+                    "DETECTED_NAME": ["centos", "drayos", "nginx"],
+                    "DETECTED_TYPE": ["os", "os", "server-software"],
+                },
+            )
+
+            _, json_path, aggregate_path = render(
+                self.merge,
+                "tcp-os",
+                processed_root=processed,
+                raw_root=raw,
+                figures_root=figures,
+            )
+
+            rows = pq.read_table(aggregate_path).to_pylist()
+            represented = {row["OS_NAME"] for row in rows}
+            self.assertEqual(represented, {"centos", "drayos"})
+            groups = {row["OS_NAME"]: row["OS_GROUP"] for row in rows}
+            self.assertEqual(groups["centos"], GENERAL_PURPOSE_GROUP)
+            self.assertEqual(groups["drayos"], NETWORK_GROUP)
+
+            metadata = json.loads(json_path.read_text())
+            self.assertEqual(metadata["os_evidence_ip_count"], 3)
+            self.assertEqual(metadata["os_ip_count"], 2)
+            self.assertEqual(metadata["matched_ip_count"], 2)
+            self.assertEqual(metadata["included_ip_count"], 2)
+            self.assertEqual(metadata["unidentified_evidence_ip_count"], 1)
 
     def test_rejects_unknown_os_name(self):
         with tempfile.TemporaryDirectory() as directory:

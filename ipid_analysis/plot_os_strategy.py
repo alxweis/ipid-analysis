@@ -64,7 +64,8 @@ OS_GROUPS = {
         ("ubuntu", "Ubuntu"),
         ("debian", "Debian"),
         ("raspbian", "Raspbian"),
-        ("rhel", "RHEL / CentOS"),
+        ("rhel", "RHEL"),
+        ("centos", "CentOS"),
         ("fedora", "Fedora"),
         ("rocky", "Rocky Linux"),
         ("alma", "AlmaLinux"),
@@ -85,6 +86,8 @@ OS_GROUPS = {
         ("aix", "AIX"),
         ("hpux", "HP-UX"),
         ("unix", "Unix"),
+        ("vmware-esxi", "VMware ESXi"),
+        ("proxmox-ve", "Proxmox VE"),
     ),
     NETWORK_GROUP: (
         ("cisco-ios", "Cisco IOS"),
@@ -92,11 +95,33 @@ OS_GROUPS = {
         ("cisco-iosxr", "Cisco IOS XR"),
         ("cisco-nxos", "Cisco NX-OS"),
         ("cisco-asa", "Cisco ASA"),
+        ("cisco-ftd", "Cisco FTD"),
         ("huawei-vrp", "Huawei VRP"),
         ("juniper-junos", "Juniper Junos"),
+        ("juniper-junos-evolved", "Juniper Junos Evolved"),
+        ("juniper-screenos", "Juniper ScreenOS"),
         ("mikrotik-routeros", "MikroTik RouterOS"),
+        ("mikrotik-swos", "MikroTik SwOS"),
         ("fortinet-fortios", "Fortinet FortiOS"),
         ("paloalto-panos", "Palo Alto PAN-OS"),
+        ("sonicos", "SonicWall SonicOS"),
+        ("zynos", "Zyxel ZyNOS"),
+        ("zyxel-zld", "Zyxel ZLD"),
+        ("zyxel-uos", "Zyxel uOS"),
+        ("drayos", "DrayTek DrayOS"),
+        ("watchguard-fireware", "WatchGuard Fireware"),
+        ("sophos-sfos", "Sophos Firewall OS"),
+        ("fritzos", "AVM FRITZ!OS"),
+        ("asuswrt", "ASUSWRT"),
+        ("edgeos", "Ubiquiti EdgeOS"),
+        ("unifi-os", "Ubiquiti UniFi OS"),
+        ("airos", "Ubiquiti airOS"),
+        ("arubaos", "ArubaOS"),
+        ("arubaos-cx", "ArubaOS-CX"),
+        ("nokia-sros", "Nokia SR OS"),
+        ("dell-os10", "Dell SmartFabric OS10"),
+        ("cumulus-linux", "NVIDIA Cumulus Linux"),
+        ("sonic", "SONiC"),
         ("vyos", "VyOS"),
         ("pfsense", "pfSense"),
         ("opnsense", "OPNsense"),
@@ -109,8 +134,14 @@ OS_GROUPS = {
         ("openwrt", "OpenWrt"),
         ("dd-wrt", "DD-WRT"),
         ("synology", "Synology"),
+        ("synology-dsm", "Synology DSM"),
+        ("synology-srm", "Synology SRM"),
         ("qnap", "QNAP"),
+        ("qnap-qts", "QNAP QTS"),
+        ("qnap-quts-hero", "QNAP QuTS hero"),
         ("truenas", "TrueNAS"),
+        ("truenas-core", "TrueNAS CORE"),
+        ("truenas-scale", "TrueNAS SCALE"),
         ("embedded", "Embedded OS"),
         ("router", "Router OS"),
         ("printer", "Printer OS"),
@@ -206,18 +237,24 @@ def aggregate_os_strategies(
                 SELECT IP_ADDR,
                        upper(trim(CAST(IPID_SELECTION_STRATEGY AS VARCHAR))) AS STRATEGY
                 FROM read_parquet($merged)
-            ), os AS (
+            ), os_evidence AS (
                 SELECT IP_ADDR, lower(trim(CAST(OS_NAME AS VARCHAR))) AS OS_NAME
                 FROM read_parquet($os)
+            ), identified_os AS (
+                SELECT IP_ADDR, OS_NAME
+                FROM os_evidence
+                WHERE OS_NAME IS NOT NULL AND OS_NAME <> ''
             )
             SELECT
                 (SELECT count(*) FROM strategies),
                 (SELECT count(DISTINCT IP_ADDR) FROM strategies),
-                (SELECT count(*) FROM os),
-                (SELECT count(DISTINCT IP_ADDR) FROM os),
+                (SELECT count(*) FROM os_evidence),
+                (SELECT count(DISTINCT IP_ADDR) FROM os_evidence),
+                (SELECT count(*) FROM identified_os),
+                (SELECT count(DISTINCT IP_ADDR) FROM identified_os),
                 count(*) FILTER (WHERE strategies.IP_ADDR IS NOT NULL),
                 count(*) FILTER (WHERE strategies.IP_ADDR IS NULL)
-            FROM os
+            FROM identified_os
             LEFT JOIN strategies USING (IP_ADDR)
             """,
             {"merged": str(merged_path), "os": str(os_path)},
@@ -225,8 +262,10 @@ def aggregate_os_strategies(
         (
             merged_rows,
             merged_ips,
-            os_rows,
-            os_ips,
+            os_evidence_rows,
+            os_evidence_ips,
+            identified_os_rows,
+            identified_os_ips,
             matched_rows,
             unmatched_os_rows,
         ) = map(int, population)
@@ -238,6 +277,8 @@ def aggregate_os_strategies(
                    count(*)::BIGINT AS N
             FROM read_parquet($os) AS o
             INNER JOIN read_parquet($merged) AS s USING (IP_ADDR)
+            WHERE o.OS_NAME IS NOT NULL
+              AND trim(CAST(o.OS_NAME AS VARCHAR)) <> ''
             GROUP BY 1, 2
             """,
             {"merged": str(merged_path), "os": str(os_path)},
@@ -247,12 +288,14 @@ def aggregate_os_strategies(
 
     if merged_rows == 0:
         raise ValueError(f"{merged_path}: merged strategy result is empty")
-    if os_rows == 0:
+    if os_evidence_rows == 0:
         raise ValueError(f"{os_path}: OS result is empty")
     if merged_rows != merged_ips:
         raise ValueError(f"{merged_path}: duplicate IP addresses in merged strategy result")
-    if os_rows != os_ips:
+    if os_evidence_rows != os_evidence_ips:
         raise ValueError(f"{os_path}: duplicate IP addresses in OS result")
+    if identified_os_rows == 0:
+        raise ValueError(f"{os_path}: OS result contains no identified operating systems")
     if matched_rows == 0:
         raise ValueError(f"{os_path}: no OS fingerprints match the merged strategy population")
 
@@ -315,7 +358,9 @@ def aggregate_os_strategies(
     )
     return {
         "merged_ip_count": merged_ips,
-        "os_ip_count": os_ips,
+        "os_evidence_ip_count": os_evidence_ips,
+        "os_ip_count": identified_os_ips,
+        "unidentified_evidence_ip_count": os_evidence_ips - identified_os_ips,
         "matched_ip_count": matched_rows,
         "included_ip_count": included_rows,
         "not_enough_samples_ip_count": not_enough_samples,
@@ -486,6 +531,10 @@ def render(
             "methodology": {
                 "strategy_input": "merged RT-based base and fixed-interval mass classification",
                 "os_input": "ipid-measure OS_NAME joined by IP_ADDR",
+                "os_selection": (
+                    "only non-empty OS_NAME values are plotted; vendor, software, "
+                    "device-type, and unknown evidence remains excluded"
+                ),
                 "normalization": "each operating-system row is normalized independently to 100%",
                 "not_enough_samples": (
                     "missing fixed-interval follow-up results remain visible as a merged outcome"
