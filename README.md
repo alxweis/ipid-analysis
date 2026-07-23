@@ -213,17 +213,20 @@ For every ICMP, TCP, or UDP-DNS campaign with an `os` measurement,
 fixed-interval-mass strategies by `IP_ADDR`. It creates one ACM-width heatmap
 per protocol, split into `General-Purpose OS` and `Network OS`. Every
 operating-system row is normalized independently to 100%, while its matched
-IP-address count is shown beside the row label. Exact zero cells are displayed
-as `-`.
+IP-address count is shown beside the row label. Within each group, operating
+systems are ordered by descending IP-address count. Exact zero cells are
+displayed as `-`.
 All nine IP-ID selection strategies plus the `NOT_ENOUGH_SAMPLES` follow-up
 outcome remain visible even when a complete column is zero. Each operating-system
 row therefore represents its complete matched merged population and still sums
 to 100%.
 
 The OS grouping explicitly covers every `OS_NAME` currently emitted by
-`ipid-measure`. Its `rhel` fingerprint includes both RHEL and CentOS banners, so
-the figure labels that row `RHEL / CentOS` instead of implying a distinction
-that is not present in `os.pq`.
+`ipid-measure`, including separate RHEL and CentOS fingerprints. Rows with an
+empty `OS_NAME` retain useful vendor, server-software, or device-type evidence
+in `os.pq` but are excluded from the operating-system heatmap. The metadata
+reports both the total evidence population and the subset with an identified
+operating system.
 
 ```bash
 python ipid_analysis/plot_os_strategy.py \
