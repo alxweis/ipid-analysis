@@ -213,8 +213,9 @@ For every ICMP, TCP, or UDP-DNS campaign with an `os` measurement,
 fixed-interval-mass strategies by `IP_ADDR`. It creates one ACM-width heatmap
 per protocol, split into `General-Purpose OS` and `Network OS`. Every
 operating-system row is normalized independently to 100%, while its matched
-IP-address count is shown beside the row label. Exact zero cells are displayed
-as `-`.
+IP-address count is shown beside the row label. Within each group, operating
+systems are ordered by descending IP-address count. Exact zero cells are
+displayed as `-`.
 All nine IP-ID selection strategies plus the `NOT_ENOUGH_SAMPLES` follow-up
 outcome remain visible even when a complete column is zero. Each operating-system
 row therefore represents its complete matched merged population and still sums

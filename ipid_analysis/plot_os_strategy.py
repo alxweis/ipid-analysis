@@ -172,6 +172,21 @@ PERCENTAGE_CMAP = LinearSegmentedColormap.from_list(
 )
 
 
+def _ordered_os_by_group(totals: dict[str, int]) -> dict[str, list[str]]:
+    """Order represented operating systems by descending IP count per group."""
+    return {
+        group: sorted(
+            (
+                os_name
+                for os_name, _ in definitions
+                if totals.get(os_name, 0) > 0
+            ),
+            key=lambda os_name: (-totals[os_name], OS_INFO[os_name][1].casefold()),
+        )
+        for group, definitions in OS_GROUPS.items()
+    }
+
+
 def resolve_os_measurement_id(manifest: dict, protocol: str) -> str | None:
     """Return a protocol's OS measurement id, or None when it is absent."""
     section = manifest.get(protocol)
@@ -313,11 +328,9 @@ def aggregate_os_strategies(
         os_name: sum(counts.get((os_name, strategy), 0) for strategy in HEATMAP_STRATEGIES)
         for os_name in OS_INFO
     }
+    represented_by_group = _ordered_os_by_group(os_totals)
     represented_os = [
-        os_name
-        for definitions in OS_GROUPS.values()
-        for os_name, _ in definitions
-        if os_totals[os_name] > 0
+        os_name for group in OS_GROUPS for os_name in represented_by_group[group]
     ]
     represented_groups = {OS_INFO[os_name][0] for os_name in represented_os}
     missing_groups = [group for group in OS_GROUPS if group not in represented_groups]
@@ -392,10 +405,7 @@ def plot_os_by_strategy(aggregate_path: Path, output_path: Path) -> Path:
         (row["OS_NAME"], row["IPID_SELECTION_STRATEGY"]): float(row["PERCENTAGE"]) for row in rows
     }
     totals = {row["OS_NAME"]: int(row["OS_TOTAL"]) for row in rows}
-    group_rows = {
-        group: [os_name for os_name, _ in definitions if os_name in totals]
-        for group, definitions in OS_GROUPS.items()
-    }
+    group_rows = _ordered_os_by_group(totals)
     missing_groups = [group for group, os_names in group_rows.items() if not os_names]
     if missing_groups:
         raise ValueError(

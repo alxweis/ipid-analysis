@@ -12,6 +12,7 @@ from ipid_analysis.plot_os_strategy import (
     GENERAL_PURPOSE_GROUP,
     KIND,
     NETWORK_GROUP,
+    _ordered_os_by_group,
     render,
     resolve_os_measurement_id,
 )
@@ -131,6 +132,23 @@ class OSStrategyPlotTest(unittest.TestCase):
                 metadata["methodology"]["normalization"],
                 "each operating-system row is normalized independently to 100%",
             )
+
+    def test_orders_each_os_group_by_descending_ip_count(self):
+        ordered = _ordered_os_by_group(
+            {
+                "ubuntu": 4,
+                "debian": 9,
+                "centos": 9,
+                "cisco-ios": 3,
+                "drayos": 7,
+            }
+        )
+
+        self.assertEqual(
+            ordered[GENERAL_PURPOSE_GROUP],
+            ["centos", "debian", "ubuntu"],
+        )
+        self.assertEqual(ordered[NETWORK_GROUP], ["drayos", "cisco-ios"])
 
     def test_keeps_fallback_evidence_out_of_os_heatmap(self):
         with tempfile.TemporaryDirectory() as directory:
