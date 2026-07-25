@@ -130,7 +130,7 @@ make plot-chi2-pvalue-cdf
 make plot-chi2-pvalue-cdf ARGS="--samples-per-strategy 10000 --seed 42"
 ```
 
-The plot uses 10,000 sequences for every nontrivial strategy and 100 each for
+The plot uses 10,000 sequences for every nontrivial strategy and 1,000 each for
 `REFLECTION` and `CONSTANT`. The lossy dataset removes exactly 20 random values
 from each 100-value sequence. The paired lossy+reordered dataset uses the same
 loss mask and additionally permutes 16 of the remaining 80 values. One p-value

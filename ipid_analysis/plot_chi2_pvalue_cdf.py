@@ -43,7 +43,7 @@ PRESENT_SEQUENCE_LENGTH = 80
 LOSS_FRACTION = 0.20
 REORDER_FRACTION = 0.20
 DEFAULT_SAMPLES_PER_STRATEGY = 10_000
-TRIVIAL_SAMPLES_PER_STRATEGY = 100
+TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
 DEFAULT_SEED = 42
 LOSSY_DATASET = "lossy"
 LOSSY_REORDERED_DATASET = "lossy-reordered"
@@ -557,7 +557,7 @@ def main(
         DEFAULT_SAMPLES_PER_STRATEGY,
         min=1,
         help=(
-            "synthetic sequences per nontrivial strategy; REFLECTION and CONSTANT always use 100"
+            "synthetic sequences per nontrivial strategy; REFLECTION and CONSTANT always use 1000"
         ),
     ),
     seed: int = typer.Option(DEFAULT_SEED, help="deterministic random seed"),
