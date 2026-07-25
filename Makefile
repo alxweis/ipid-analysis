@@ -85,10 +85,16 @@ workflow-worker:
 test:
 	$(PYTHON_INTERPRETER) -m unittest discover -s tests -v
 
-## Validate the classifier with reproducible synthetic 4x4 and 4x25 sequences
+## Validate the classifier and plot synthetic strategy Chi-square p-value CDFs
 .PHONY: validate-classifier
 validate-classifier:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.classifier_validation $(ARGS)
+	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_chi2_pvalue_cdf $(ARGS)
+
+## Plot global Chi-square p-value CDFs for synthetic 4x20 strategy sequences
+.PHONY: plot-chi2-pvalue-cdf
+plot-chi2-pvalue-cdf:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_chi2_pvalue_cdf $(ARGS)
 
 #################################################################################
 # Self Documenting Commands                                                     #
