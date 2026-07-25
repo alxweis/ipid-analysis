@@ -89,6 +89,31 @@ Reclassification does not replace the persisted historical input. Its result
 may differ from the classification that selected the original fixed-interval
 mass target when classifier rules have changed in the meantime.
 
+### Synthetic classifier validation
+
+Generate reproducible, measurement-shaped IP-ID sequences and evaluate the
+classifier independently of a campaign:
+
+```bash
+make validate-classifier
+# Optional:
+make validate-classifier ARGS="--samples-per-strategy 1000 --seed 42"
+```
+
+The RT-based dataset uses the real 4 x 4 round/connection interleaving and
+evaluates `REFLECTION`, `CONSTANT`, `SINGLE`, `PER_CONNECTION`,
+`PER_DESTINATION`, `PER_BUCKET`, and `UNCLASSIFIED`. The fixed-interval dataset
+uses 4 x 25 sequences and evaluates `CONSTANT`, `MULTI`, `RANDOM`, and
+`UNCLASSIFIED`. Its robustness variants apply exactly 20 missing replies and
+then additionally permute 16 of the remaining 80 IP-ID values per sequence.
+
+The raw-format synthetic sequences and detected labels are written to
+`data/processed/classifier-validation/synthetic-classifier-validation.pq`.
+Three confusion-matrix PDFs and their metric JSON sidecars are written below
+`reports/figures/classifier-validation/`. The JSON reports include accuracy,
+balanced accuracy, per-class precision/recall/F1, macro and weighted averages,
+Cohen's kappa, and multiclass Matthews correlation coefficient.
+
 ## Merging base and mass strategies
 
 The canonical no-connection RT-base and fixed-interval-mass results can be
