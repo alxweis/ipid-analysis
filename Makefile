@@ -85,6 +85,11 @@ workflow-worker:
 test:
 	$(PYTHON_INTERPRETER) -m unittest discover -s tests -v
 
+## Validate the classifier with reproducible synthetic 4x4 and 4x25 sequences
+.PHONY: validate-classifier
+validate-classifier:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.classifier_validation $(ARGS)
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################
