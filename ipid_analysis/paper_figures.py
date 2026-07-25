@@ -31,10 +31,11 @@ import typer
 matplotlib.use("Agg")
 
 from matplotlib import font_manager  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.ticker import MultipleLocator  # noqa: E402
+from matplotlib.ticker import MultipleLocator, NullLocator  # noqa: E402
 
 from ipid_analysis.comparison import (  # noqa: E402
     BaseComparison,
@@ -69,6 +70,10 @@ FIXED_MODE = "Fixed-Interval"
 MODES = (RT_MODE, FIXED_MODE)
 MODE_COLORS = {RT_MODE: "#6BAED6", FIXED_MODE: "#E78B8E"}
 MODE_LINESTYLES = {RT_MODE: "--", FIXED_MODE: ":"}
+PERCENTAGE_CMAP = LinearSegmentedColormap.from_list(
+    "percentage_blues",
+    ("#FFFFFF", "#DEEBF7", "#9ECAE1", "#4292C6", "#08519C", "#08306B"),
+)
 
 INCREMENT_STRATEGIES = ("SINGLE", "PER_DESTINATION", "PER_CONNECTION", "PER_BUCKET")
 INCREMENT_LINEWIDTHS = {
@@ -491,6 +496,7 @@ def plot_probing_intervals_by_continent(aggregate_path: Path, output_path: Path)
     ax.grid(axis="y", which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
     ax.grid(axis="y", which="minor", color="#D9D9D9", linestyle=":", linewidth=0.35, alpha=0.7)
     ax.minorticks_on()
+    ax.xaxis.set_minor_locator(NullLocator())
     ax.legend(
         handles=[
             Patch(facecolor=MODE_COLORS[RT_MODE], edgecolor="#666666", label=RT_MODE),
@@ -750,7 +756,7 @@ def plot_strategy_intersection(aggregate_path: Path, output_path: Path) -> Path:
 
     configure_paper_style()
     fig, ax = plt.subplots(figsize=(7.16, 3.15))
-    image = ax.imshow(matrix, cmap="Blues", vmin=0, vmax=100, aspect="auto")
+    image = ax.imshow(matrix, cmap=PERCENTAGE_CMAP, vmin=0, vmax=100, aspect="auto")
     labels = [STRATEGY_PRETTY[strategy] for strategy in INTERSECTION_STRATEGIES]
     ax.set_xticks(np.arange(len(labels)), labels, rotation=34, ha="right", rotation_mode="anchor")
     ax.set_yticks(np.arange(len(labels)), labels)

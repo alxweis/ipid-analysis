@@ -448,7 +448,7 @@ def plot_measurement_type_by_strategy(
             edgecolor="none",
             label=STRATEGY_PRETTY.get(strategy, strategy),
         )
-        for strategy in represented
+        for strategy in PLOT_STRATEGY_ORDER
     ]
     ax.legend(
         handles=handles,
