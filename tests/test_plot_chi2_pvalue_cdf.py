@@ -11,6 +11,7 @@ from ipid_analysis.classifier_validation import REQUEST_IP_IDS
 from ipid_analysis.plot_chi2_pvalue_cdf import (
     CONNECTION_COUNT,
     IDEAL_SEQUENCE_LENGTH,
+    INCREMENT_SUBSEQUENCES,
     LOSSY_DATASET,
     LOSSY_REORDERED_DATASET,
     PLOT_STRATEGIES,
@@ -86,11 +87,13 @@ class Chi2PvalueCDFTest(unittest.TestCase):
         )
         lossy_pvalues = calculate_strategy_pvalues(lossy_sequences, loss_masks)
         reordered_pvalues = calculate_strategy_pvalues(reordered_sequences, loss_masks)
+        changed_by_reordering = []
         for strategy, values in lossy_pvalues.items():
             self.assertTrue(np.all(loss_masks[strategy].sum(axis=1) == 20), strategy)
             self.assertTrue(np.all(np.isfinite(values)), strategy)
             self.assertTrue(np.all((values >= 0) & (values <= 1)), strategy)
-            np.testing.assert_array_equal(values, reordered_pvalues[strategy])
+            changed_by_reordering.append(np.any(values != reordered_pvalues[strategy]))
+        self.assertTrue(any(changed_by_reordering))
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -126,6 +129,15 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 set(table.column("IPID_SELECTION_STRATEGY").to_pylist()),
                 set(PLOT_STRATEGIES),
             )
+            self.assertEqual(
+                table.column_names,
+                [
+                    "DATASET",
+                    "IPID_SELECTION_STRATEGY",
+                    "SAMPLE_INDEX",
+                    "MINIMUM_CHI2_P_VALUE",
+                ],
+            )
 
             metadata = json.loads(lossy_json_path.read_text())
             reordered_metadata = json.loads(reordered_json_path.read_text())
@@ -136,14 +148,23 @@ class Chi2PvalueCDFTest(unittest.TestCase):
             )
             self.assertEqual(metadata["lost_ipids_per_sequence"], 20)
             self.assertEqual(metadata["reordered_ipids_per_sequence"], 16)
-            self.assertTrue(metadata["lossy_and_reordered_pvalues_identical"])
             self.assertEqual(reordered_metadata["dataset"], LOSSY_REORDERED_DATASET)
             self.assertEqual(
                 metadata["chi2_uniformity_test"]["scope"],
-                "all present IP-ID values in one sequence",
+                (
+                    "modulo-2^16 increments between consecutive present values "
+                    "within each subsequence"
+                ),
             )
-            self.assertTrue(metadata["chi2_uniformity_test"]["order_invariant"])
-            self.assertIsNone(metadata["chi2_uniformity_test"]["subsequence_aggregation"])
+            self.assertFalse(metadata["chi2_uniformity_test"]["order_invariant"])
+            self.assertEqual(
+                metadata["chi2_uniformity_test"]["subsequence_aggregation"],
+                "minimum",
+            )
+            self.assertEqual(
+                metadata["chi2_uniformity_test"]["subsequences"],
+                list(INCREMENT_SUBSEQUENCES),
+            )
             self.assertEqual(
                 metadata["samples_by_strategy"]["REFLECTION"],
                 TRIVIAL_SAMPLES_PER_STRATEGY,

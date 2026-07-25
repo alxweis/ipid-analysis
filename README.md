@@ -119,8 +119,8 @@ Three confusion-matrix PDFs and their metric JSON sidecars are written below
 balanced accuracy, per-class precision/recall/F1, macro and weighted averages,
 Cohen's kappa, and multiclass Matthews correlation coefficient.
 
-Plot the empirical CDF of the classifier's global Chi-square uniformity
-p-value after impairing ideal synthetic 4 x 25 sequences:
+Plot the empirical CDF of the minimum increment-subsequence Chi-square
+uniformity p-value after impairing ideal synthetic 4 x 25 sequences:
 
 ```bash
 make validate-classifier
@@ -134,10 +134,12 @@ The plot uses 10,000 sequences for every nontrivial strategy and 100 each for
 `REFLECTION` and `CONSTANT`. The lossy dataset removes exactly 20 random values
 from each 100-value sequence. The paired lossy+reordered dataset uses the same
 loss mask and additionally permutes 16 of the remaining 80 values. One p-value
-is calculated from all 80 present IP-ID values; no per-connection p-values or
-subsequence minimum are used. Because this histogram-based test is
-order-invariant, the two CDFs are mathematically identical. Their separate PDFs
-and JSON metadata are written below
+is calculated for the modular increments of each of seven subsequences: the
+full sequence, two destination subsequences, and four connection subsequences.
+The minimum of these seven p-values is plotted. Missing values are removed
+within each subsequence before its differences are formed, so reordering can
+change the resulting increment distributions. The separate PDFs and JSON
+metadata are written below
 `reports/figures/classifier-validation/`, and the underlying p-values are
 stored in `data/processed/classifier-validation/chi2-pvalue-cdf.pq`.
 

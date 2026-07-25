@@ -1,4 +1,4 @@
-"""Plot global Chi-square uniformity p-value CDFs for synthetic IP-ID strategies."""
+"""Plot minimum increment-subsequence Chi-square p-value CDFs."""
 
 from __future__ import annotations
 
@@ -59,13 +59,22 @@ PLOT_STRATEGIES = (
     "RANDOM",
 )
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
+INCREMENT_SUBSEQUENCES = (
+    "full",
+    "destination-0",
+    "destination-1",
+    "connection-0",
+    "connection-1",
+    "connection-2",
+    "connection-3",
+)
 
 P_VALUE_SCHEMA = pa.schema(
     [
         ("DATASET", pa.string()),
         ("IPID_SELECTION_STRATEGY", pa.string()),
         ("SAMPLE_INDEX", pa.int32()),
-        ("CHI2_P_VALUE", pa.float64()),
+        ("MINIMUM_CHI2_P_VALUE", pa.float64()),
     ]
 )
 
@@ -237,17 +246,65 @@ def apply_strategy_impairments(
     return loss_masks, lossy_sequences, reordered_sequences
 
 
+def _increment_pvalues(
+    values: np.ndarray,
+    present: np.ndarray,
+) -> np.ndarray:
+    """Chi-square p-values of modular increments between consecutive present values."""
+    sample_count, subsequence_length = values.shape
+    compacted = np.zeros((sample_count, subsequence_length), dtype=np.int64)
+    compacted_indices = np.cumsum(present, axis=1) - 1
+    row_indices = np.broadcast_to(np.arange(sample_count)[:, None], values.shape)
+    compacted[row_indices[present], compacted_indices[present]] = values[present]
+    present_lengths = present.sum(axis=1)
+    increments = (compacted[:, 1:] - compacted[:, :-1]) & 0xFFFF
+    increment_present = np.arange(subsequence_length - 1)[None, :] < (present_lengths[:, None] - 1)
+    return chi2_uniformity_pvalues(increments, increment_present)
+
+
+def calculate_minimum_increment_pvalues(
+    values: np.ndarray,
+    loss_mask: np.ndarray,
+) -> np.ndarray:
+    """Minimum p-value over full, destination, and connection increments."""
+    present = ~loss_mask
+    component_pvalues = [
+        _increment_pvalues(values, present),
+        _increment_pvalues(values[:, 0::2], present[:, 0::2]),
+        _increment_pvalues(values[:, 1::2], present[:, 1::2]),
+    ]
+    value_connections = values.reshape(
+        len(values),
+        REQUESTS_PER_CONNECTION,
+        CONNECTION_COUNT,
+    ).transpose(0, 2, 1)
+    present_connections = present.reshape(
+        len(values),
+        REQUESTS_PER_CONNECTION,
+        CONNECTION_COUNT,
+    ).transpose(0, 2, 1)
+    component_pvalues.extend(
+        _increment_pvalues(
+            value_connections[:, connection_index, :],
+            present_connections[:, connection_index, :],
+        )
+        for connection_index in range(CONNECTION_COUNT)
+    )
+    return np.min(np.stack(component_pvalues, axis=1), axis=1)
+
+
 def calculate_strategy_pvalues(
     sequences: dict[str, np.ndarray],
     loss_masks: dict[str, np.ndarray],
 ) -> dict[str, np.ndarray]:
-    """Calculate the classifier's one global Chi-square p-value per sequence."""
-    result = {}
-    for strategy in PLOT_STRATEGIES:
-        values = sequences[strategy].astype(np.int64, copy=False)
-        present = ~loss_masks[strategy]
-        result[strategy] = chi2_uniformity_pvalues(values, present)
-    return result
+    """Calculate the minimum increment-subsequence p-value per sequence."""
+    return {
+        strategy: calculate_minimum_increment_pvalues(
+            sequences[strategy].astype(np.int64, copy=False),
+            loss_masks[strategy],
+        )
+        for strategy in PLOT_STRATEGIES
+    }
 
 
 def _ecdf_coordinates(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -295,7 +352,7 @@ def plot_chi2_pvalue_cdf(
     ax.set_ylim(0, 103)
     ax.yaxis.set_major_locator(MultipleLocator(20))
     ax.yaxis.set_minor_locator(MultipleLocator(10))
-    ax.set_xlabel(r"Chi$^2$ p-value")
+    ax.set_xlabel(r"Chi$^2$ p-value [Minimum of all Subsequences]")
     ax.set_ylabel("Cumulative Percentage [%]")
     ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
     ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
@@ -327,9 +384,10 @@ def plot_chi2_pvalue_cdf(
         bbox_inches="tight",
         metadata={
             "Title": (
-                f"Chi-square p-value distributions by IP-ID selection strategy ({dataset_label})"
+                "Minimum increment-subsequence Chi-square p-value distributions "
+                f"by IP-ID selection strategy ({dataset_label})"
             ),
-            "Subject": "Synthetic lossy 4x25 IP-ID sequence empirical CDFs",
+            "Subject": "Synthetic lossy 4x25 IP-ID increment-subsequence empirical CDFs",
             "Creator": "ipid-analysis",
         },
     )
@@ -346,7 +404,7 @@ def _write_pvalues(
             "DATASET": dataset,
             "IPID_SELECTION_STRATEGY": strategy,
             "SAMPLE_INDEX": sample_index,
-            "CHI2_P_VALUE": float(pvalue),
+            "MINIMUM_CHI2_P_VALUE": float(pvalue),
         }
         for dataset, pvalues in datasets.items()
         for strategy in PLOT_STRATEGIES
@@ -392,11 +450,6 @@ def render(
     )
     lossy_pvalues = calculate_strategy_pvalues(lossy_sequences, loss_masks)
     reordered_pvalues = calculate_strategy_pvalues(reordered_sequences, loss_masks)
-    for strategy in PLOT_STRATEGIES:
-        if not np.array_equal(lossy_pvalues[strategy], reordered_pvalues[strategy]):
-            raise RuntimeError(
-                f"{strategy}: order-invariant Chi-square p-values unexpectedly differ"
-            )
 
     processed_dir = processed_root / "classifier-validation"
     figure_dir = figures_root / "classifier-validation"
@@ -455,15 +508,21 @@ def render(
         "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
         "samples_by_strategy": samples_by_strategy,
         "chi2_uniformity_test": {
-            "scope": "all present IP-ID values in one sequence",
-            "subsequence_aggregation": None,
+            "scope": (
+                "modulo-2^16 increments between consecutive present values within each subsequence"
+            ),
+            "loss_handling": (
+                "drop missing values within each subsequence before taking differences"
+            ),
+            "subsequences": list(INCREMENT_SUBSEQUENCES),
+            "subsequence_aggregation": "minimum",
+            "increment_modulus": MODULUS,
             "bins": CHI2_BINS,
             "degrees_of_freedom": CHI2_BINS - 1,
             "random_min_p_value": RANDOM_MIN_P_VALUE,
-            "order_invariant": True,
+            "order_invariant": False,
         },
         "aggregate": str(aggregate_path),
-        "lossy_and_reordered_pvalues_identical": True,
     }
     lossy_json_path = _write_json(
         {
