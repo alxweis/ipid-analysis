@@ -64,7 +64,7 @@ def plot_strategy_distribution(
     ax.set_ylim(0, max(values) * 1.15 if any(values) else 1)
     for xi, v in zip(x, values):
         if v > 0:
-            ax.text(xi, v, f"{v:.1f}%", ha="center", va="bottom", fontsize=8)
+            ax.text(xi, v, f"{v:.1f}%", ha="center", va="bottom", fontsize=10)
     ax.set_xticks(x)
     ax.set_xticklabels([STRATEGY_PRETTY.get(k, k) for k in labels], rotation=45, ha="right")
     ax.spines[["top", "right"]].set_visible(False)
@@ -215,7 +215,7 @@ def plot_increment_cdf(cdf: dict, output_pdf: Path, title: str | None = None) ->
     ax.set_title(title or "IP-ID increment CDF")
     ax.grid(True, which="both", ls=":", alpha=0.4)
     if cdf:
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=10)
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_pdf, bbox_inches="tight")

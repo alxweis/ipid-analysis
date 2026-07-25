@@ -192,11 +192,11 @@ def configure_paper_style() -> None:
         {
             "font.family": libertine_family,
             "font.serif": [libertine_family],
-            "font.size": 8,
-            "axes.labelsize": 8,
-            "legend.fontsize": 7,
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 7,
+            "font.size": 10,
+            "axes.labelsize": 10,
+            "legend.fontsize": 9,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
             "mathtext.fontset": "custom",
             "mathtext.rm": libertine_family,
             "mathtext.it": f"{libertine_family}:italic",
@@ -767,7 +767,7 @@ def plot_strategy_intersection(aggregate_path: Path, output_path: Path) -> Path:
                 ha="center",
                 va="center",
                 color="white" if value >= 50 else "#222222",
-                fontsize=7,
+                fontsize=9,
             )
     colorbar = fig.colorbar(image, ax=ax, pad=0.04, fraction=0.045, ticks=np.arange(0, 101, 20))
     colorbar.set_label("Percentage [%]")

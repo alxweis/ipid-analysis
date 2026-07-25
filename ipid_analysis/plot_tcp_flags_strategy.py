@@ -291,7 +291,7 @@ def plot_tcp_flags_by_strategy(aggregate_path: Path, output_path: Path) -> Path:
                     _label_percentage(value),
                     ha="center",
                     va="center",
-                    fontsize=7,
+                    fontsize=9,
                     color="#111111",
                     zorder=3,
                 )
