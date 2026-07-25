@@ -17,6 +17,7 @@ matplotlib.use("Agg")  # headless: safe for CLI/servers
 
 import matplotlib.pyplot as plt  # noqa: E402
 
+from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.strategies import STRATEGY_COLORS, STRATEGY_NAMES, STRATEGY_PRETTY  # noqa: E402
 
 BAR_COLOR = "#4C72B0"
@@ -49,6 +50,7 @@ def plot_strategy_distribution(
     percentages: dict[str, float], output_pdf: Path, title: str | None = None
 ) -> Path:
     """Bar chart: x = IPID strategy (pretty names), y = share of IP addresses (%)."""
+    configure_paper_style()
     labels = list(percentages)
     values = [percentages[k] for k in labels]
     x = np.arange(len(labels))
@@ -130,6 +132,7 @@ def interval_stats(intervals_path: Path, n_bins: int = 50, clip_quantile: float 
 
 def plot_probing_intervals(stats: dict, output_pdf: Path, title: str | None = None) -> Path:
     """Histogram of probing intervals (x = interval in µs, y = count)."""
+    configure_paper_style()
     hist = stats.get("histogram", {})
     edges = hist.get("bin_edges", [])
     counts = hist.get("counts", [])
@@ -190,6 +193,7 @@ def plot_increment_cdf(cdf: dict, output_pdf: Path, title: str | None = None) ->
     """CDF line per strategy: x = IP-ID increment (log, powers of 10),
     y = cumulative percentage [%]. Zero increments are clipped to 1 for the log
     axis."""
+    configure_paper_style()
     fig, ax = plt.subplots(figsize=(9, 5.5))
     for name in STRATEGY_NAMES:  # stable legend order
         d = cdf.get(name)
