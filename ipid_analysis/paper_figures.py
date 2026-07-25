@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timezone
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -29,9 +30,11 @@ import typer
 
 matplotlib.use("Agg")
 
+from matplotlib import font_manager  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.ticker import MultipleLocator  # noqa: E402
 
 from ipid_analysis.comparison import (  # noqa: E402
     BaseComparison,
@@ -56,6 +59,11 @@ CONTINENT_MAP_KIND = "ip-continents"
 INCREMENT_KIND = "increment-distributions"
 INTERSECTION_KIND = "strategy-intersection"
 
+LINUX_LIBERTINE_FONT_DIR_ENV = "IPID_LINUX_LIBERTINE_DIR"
+LINUX_LIBERTINE_FONT_PREFIX = "LinLibertine_"
+LINUX_LIBERTINE_FONT_SUFFIXES = {".otf", ".ttf"}
+LINUX_LIBERTINE_REGULAR_STEM = "LinLibertine_R"
+
 RT_MODE = "RT-based"
 FIXED_MODE = "Fixed-Interval"
 MODES = (RT_MODE, FIXED_MODE)
@@ -63,6 +71,12 @@ MODE_COLORS = {RT_MODE: "#6BAED6", FIXED_MODE: "#E78B8E"}
 MODE_LINESTYLES = {RT_MODE: "--", FIXED_MODE: ":"}
 
 INCREMENT_STRATEGIES = ("SINGLE", "PER_DESTINATION", "PER_CONNECTION", "PER_BUCKET")
+INCREMENT_LINEWIDTHS = {
+    "SINGLE": 1.45,
+    "PER_DESTINATION": 2.2,
+    "PER_CONNECTION": 1.15,
+    "PER_BUCKET": 1.45,
+}
 INTERSECTION_STRATEGIES = (
     "REFLECTION",
     "CONSTANT",
@@ -121,17 +135,75 @@ INTERSECTION_SCHEMA = pa.schema(
 )
 
 
+@lru_cache(maxsize=1)
+def _register_linux_libertine_fonts() -> tuple[str, tuple[Path, ...]]:
+    """Register the installed Linux Libertine OpenType family."""
+    configured_dir = os.getenv(LINUX_LIBERTINE_FONT_DIR_ENV)
+    if configured_dir:
+        font_dir = Path(configured_dir).expanduser()
+        if not font_dir.is_dir():
+            raise RuntimeError(
+                f"{LINUX_LIBERTINE_FONT_DIR_ENV} is not a directory: {font_dir}"
+            )
+        discovered = font_manager.findSystemFonts([str(font_dir)], fontext="ttf")
+    else:
+        discovered = font_manager.findSystemFonts(fontext="ttf")
+    font_paths = tuple(
+        sorted(
+            Path(path).resolve()
+            for path in discovered
+            if Path(path).name.startswith(LINUX_LIBERTINE_FONT_PREFIX)
+            and Path(path).suffix.lower() in LINUX_LIBERTINE_FONT_SUFFIXES
+        )
+    )
+
+    regular = next(
+        (path for path in font_paths if path.stem == LINUX_LIBERTINE_REGULAR_STEM),
+        None,
+    )
+    if regular is None:
+        raise RuntimeError(
+            f"{LINUX_LIBERTINE_REGULAR_STEM}.otf/.ttf and matching "
+            f"{LINUX_LIBERTINE_FONT_PREFIX}* OpenType files were not found; "
+            "install Debian/Ubuntu package "
+            "'fonts-linuxlibertine' or set IPID_LINUX_LIBERTINE_DIR"
+        )
+
+    for path in font_paths:
+        font_manager.fontManager.addfont(path)
+    family = font_manager.FontProperties(fname=regular).get_name()
+    return family, font_paths
+
+
+def linux_libertine_font_properties(stem: str, *, size: float) -> font_manager.FontProperties:
+    """Return one explicitly selected Linux Libertine face."""
+    _, font_paths = _register_linux_libertine_fonts()
+    filename_stem = f"{LINUX_LIBERTINE_FONT_PREFIX}{stem}"
+    path = next((candidate for candidate in font_paths if candidate.stem == filename_stem), None)
+    if path is None:
+        raise RuntimeError(f"required Linux Libertine face is missing: {filename_stem}.otf/.ttf")
+    return font_manager.FontProperties(fname=path, size=size)
+
+
 def configure_paper_style() -> None:
-    """Apply one compact, serif style to all paper figures."""
+    """Apply one compact style backed by the actual Linux Libertine font files."""
+    libertine_family, _ = _register_linux_libertine_fonts()
     plt.rcParams.update(
         {
-            "font.family": "serif",
-            "font.serif": ["Linux Libertine O", "Libertinus Serif", "DejaVu Serif"],
+            "font.family": libertine_family,
+            "font.serif": [libertine_family],
             "font.size": 8,
             "axes.labelsize": 8,
             "legend.fontsize": 7,
             "xtick.labelsize": 7,
             "ytick.labelsize": 7,
+            "mathtext.fontset": "custom",
+            "mathtext.rm": libertine_family,
+            "mathtext.it": f"{libertine_family}:italic",
+            "mathtext.bf": f"{libertine_family}:bold",
+            "mathtext.bfit": f"{libertine_family}:italic:bold",
+            "mathtext.sf": libertine_family,
+            "mathtext.tt": libertine_family,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
         }
@@ -534,18 +606,21 @@ def plot_increment_distributions(aggregate_path: Path, output_path: Path) -> Pat
             series = grouped.get((mode, strategy), [])
             if not series:
                 continue
+            increments, cumulative_percentages = _ecdf_step_coordinates(series)
             ax.step(
-                [row["INCREMENT"] for row in series],
-                [row["CUMULATIVE_PERCENTAGE"] for row in series],
+                increments,
+                cumulative_percentages,
                 where="post",
                 color=STRATEGY_COLORS[strategy],
                 linestyle=MODE_LINESTYLES[mode],
-                linewidth=1.45,
+                linewidth=INCREMENT_LINEWIDTHS[strategy],
             )
     ax.set_xscale("log")
     ax.set_xlabel("IP-ID Increment")
     ax.set_ylabel("Cumulative Percentage [%]")
     ax.set_ylim(0, 103)
+    ax.yaxis.set_major_locator(MultipleLocator(20))
+    ax.yaxis.set_minor_locator(MultipleLocator(10))
     ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
     ax.grid(which="minor", color="#D9D9D9", linestyle=":", linewidth=0.35, alpha=0.75)
     strategy_handles = [
@@ -585,6 +660,13 @@ def plot_increment_distributions(aggregate_path: Path, output_path: Path) -> Pat
         title="IP-ID increment distributions",
         subject="Empirical CDFs comparing RT-based and fixed-interval probing",
     )
+
+
+def _ecdf_step_coordinates(series: list[dict]) -> tuple[list[int], list[float]]:
+    """Prepend the zero baseline so a one-value ECDF renders its vertical jump."""
+    increments = [int(row["INCREMENT"]) for row in series]
+    cumulative_percentages = [float(row["CUMULATIVE_PERCENTAGE"]) for row in series]
+    return [increments[0], *increments], [0.0, *cumulative_percentages]
 
 
 def aggregate_strategy_intersection(

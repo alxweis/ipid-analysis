@@ -6,6 +6,21 @@
 
 A short description of the project.
 
+## Paper plot font
+
+All figures use the actual Linux Libertine OpenType family, including its
+bold/italic variants and Matplotlib math text. Install it on Debian/Ubuntu
+before running the analysis:
+
+```bash
+sudo apt install fonts-linuxlibertine
+```
+
+The renderer loads `LinLibertine_*.otf` or `LinLibertine_*.ttf` files directly
+and fails with a clear message instead of silently substituting another family.
+For a non-standard installation, set `IPID_LINUX_LIBERTINE_DIR` to the
+directory containing `LinLibertine_R.otf`/`.ttf` and the other variants.
+
 ## S3 measurement handoff worker
 
 The analysis VM can process stateless ICMP, TCP, and UDP-DNS RT measurements

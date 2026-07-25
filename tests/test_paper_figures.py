@@ -10,6 +10,7 @@ from ipid_analysis.comparison import BaseComparison, iter_base_comparisons
 from ipid_analysis.manifest import IpidMeasurement
 from ipid_analysis.paper_figures import (
     INTERSECTION_KIND,
+    _ecdf_step_coordinates,
     aggregate_increment_distributions,
     aggregate_strategy_intersection,
     render_increment_comparison,
@@ -219,6 +220,13 @@ class PaperFiguresTest(unittest.TestCase):
                 aggregate_increment_distributions(root / "a", root / "b", root / "out")
             with self.assertRaises(FileNotFoundError):
                 aggregate_strategy_intersection(root / "a", root / "b", root / "out")
+
+    def test_single_increment_ecdf_includes_vertical_jump(self):
+        x, y = _ecdf_step_coordinates(
+            [{"INCREMENT": 1, "CUMULATIVE_PERCENTAGE": 100.0}]
+        )
+        self.assertEqual(x, [1, 1])
+        self.assertEqual(y, [0.0, 100.0])
 
     def test_only_base_measurements_are_comparable(self):
         mass = IpidMeasurement(

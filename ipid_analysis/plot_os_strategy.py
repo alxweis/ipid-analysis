@@ -24,7 +24,10 @@ from ipid_analysis.config import (  # noqa: E402
     PROCESSED_DATA_DIR,
     RAW_DATA_DIR,
 )
-from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
+from ipid_analysis.paper_figures import (  # noqa: E402
+    configure_paper_style,
+    linux_libertine_font_properties,
+)
 from ipid_analysis.strategies import (  # noqa: E402
     DEFAULT_MANIFEST,
     STRATEGY_NAMES,
@@ -416,6 +419,7 @@ def plot_os_by_strategy(aggregate_path: Path, output_path: Path) -> Path:
     total_os_rows = sum(len(os_names) for os_names in group_rows.values())
     figure_height = max(3.8, 0.30 * total_os_rows + 1.9)
     configure_paper_style()
+    group_title_font = linux_libertine_font_properties("DR", size=9)
     fig, axes = plt.subplots(
         nrows=2,
         sharex=True,
@@ -448,7 +452,7 @@ def plot_os_by_strategy(aggregate_path: Path, output_path: Path) -> Path:
             f"{OS_INFO[os_name][1]} ({_format_ip_count(totals[os_name])})" for os_name in os_names
         ]
         ax.set_yticks(np.arange(len(os_names)), labels)
-        ax.set_title(group, pad=6)
+        ax.set_title(group, pad=6, fontproperties=group_title_font)
         ax.tick_params(axis="x", bottom=axis_index == 1, labelbottom=axis_index == 1)
         for row_index in range(matrix.shape[0]):
             for column_index in range(matrix.shape[1]):
