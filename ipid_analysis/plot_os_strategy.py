@@ -419,7 +419,7 @@ def plot_os_by_strategy(aggregate_path: Path, output_path: Path) -> Path:
     total_os_rows = sum(len(os_names) for os_names in group_rows.values())
     figure_height = max(3.8, 0.30 * total_os_rows + 1.9)
     configure_paper_style()
-    group_title_font = linux_libertine_font_properties("DR", size=11)
+    group_title_font = linux_libertine_font_properties("RZ", size=11)
     fig, axes = plt.subplots(
         nrows=2,
         sharex=True,
