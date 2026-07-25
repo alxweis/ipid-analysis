@@ -19,6 +19,7 @@ from ipid_analysis.classifier_validation import (
     RT_OUT_OF_SCOPE_STRATEGIES,
     RT_STRATEGIES,
     TRIVIAL_SAMPLES_PER_STRATEGY,
+    _generate_multi_sequences,
     apply_fixed_interval_impairments,
     generate_fixed_out_of_scope_sequences,
     generate_fixed_sequences,
@@ -26,7 +27,16 @@ from ipid_analysis.classifier_validation import (
     generate_rt_sequences,
     validate_classifier,
 )
-from ipid_analysis.strategies import IPIDStrategy, classify_batch, classify_batch_mass
+from ipid_analysis.strategies import (
+    MAX_INC,
+    MULTI_MAX_CLUSTERS,
+    IPIDStrategy,
+    MeasurementConfig,
+    _cluster_counts_mass,
+    _mass_padded,
+    classify_batch,
+    classify_batch_mass,
+)
 
 
 class ClassifierValidationTest(unittest.TestCase):
@@ -45,6 +55,15 @@ class ClassifierValidationTest(unittest.TestCase):
                 np.all(tcp_detected == int(IPIDStrategy[strategy])),
                 f"{strategy} after TCP first-round skip",
             )
+        single_increments = np.diff(rt_sequences["SINGLE"], axis=1)
+        self.assertGreaterEqual(int(single_increments.min()), 1)
+        self.assertLessEqual(int(single_increments.max()), MAX_INC)
+        self.assertGreater(int(single_increments.max()), 2_000)
+        bucket_connections = rt_sequences["PER_BUCKET"].reshape(16, 4, 4).transpose(0, 2, 1)
+        bucket_increments = np.diff(bucket_connections, axis=2)
+        self.assertGreaterEqual(int(bucket_increments.min()), 1)
+        self.assertLessEqual(int(bucket_increments.max()), MAX_INC)
+        self.assertGreater(int(bucket_increments.max()), 2_000)
         rt_out_of_scope = generate_rt_out_of_scope_sequences(
             16,
             np.random.default_rng(2),
@@ -61,6 +80,13 @@ class ClassifierValidationTest(unittest.TestCase):
             self.assertTrue(
                 np.all(tcp_detected == int(IPIDStrategy.UNCLASSIFIED)),
                 f"{strategy} after TCP first-round skip",
+            )
+            mass_detected = classify_batch_mass(
+                pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64()))
+            )
+            self.assertTrue(
+                np.all(mass_detected == int(IPIDStrategy.MULTI)),
+                strategy,
             )
 
         fixed_sequences = generate_fixed_sequences(16, np.random.default_rng(3))
@@ -79,13 +105,16 @@ class ClassifierValidationTest(unittest.TestCase):
             np.random.default_rng(4),
         )
         self.assertEqual(tuple(fixed_out_of_scope), FIXED_OUT_OF_SCOPE_STRATEGIES)
+        fixed_config = MeasurementConfig(
+            connection_count=4,
+            requests_per_connection=25,
+            request_ip_ids=np.asarray([18933, 18932, 3717, 3718, 3719]),
+        )
         for strategy, values in fixed_out_of_scope.items():
             self.assertEqual(values.shape, (16, 100))
-            detected = classify_batch_mass(
-                pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64()))
-            )
+            detected = classify_batch(values, fixed_config)
             self.assertTrue(
-                np.all(detected == int(IPIDStrategy.UNCLASSIFIED)),
+                np.all(detected == int(IPIDStrategy.SINGLE)),
                 strategy,
             )
 
@@ -105,6 +134,17 @@ class ClassifierValidationTest(unittest.TestCase):
                 sorted(ideal[row_index, present].tolist()),
             )
             self.assertTrue(np.any(reordered[row_index, present] != ideal[row_index, present]))
+
+    def test_multi_generator_uses_complete_cluster_count_range(self):
+        values = _generate_multi_sequences(2_048, 100, np.random.default_rng(5))
+        lengths, present, padded = _mass_padded(
+            pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64()))
+        )
+        cluster_counts = _cluster_counts_mass(padded, present, lengths)
+        self.assertEqual(
+            set(cluster_counts.tolist()),
+            set(range(2, MULTI_MAX_CLUSTERS + 1)),
+        )
 
     def test_validation_writes_sequences_metrics_and_figures(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -196,6 +236,10 @@ class ClassifierValidationTest(unittest.TestCase):
                 rt_report["metrics"]["confusion_matrix"]["detected_class_order"][-1],
                 "UNCLASSIFIED",
             )
+            self.assertEqual(
+                rt_report["synthetic_generator_parameters"]["SINGLE"]["increment_range_inclusive"],
+                [1, MAX_INC],
+            )
             self.assertEqual(rt_report["metrics"]["accuracy"], 1.0)
             self.assertEqual(fixed_report["metrics"]["macro"]["f1"], 1.0)
             self.assertEqual(
@@ -210,9 +254,12 @@ class ClassifierValidationTest(unittest.TestCase):
                 out_of_scope_report["tests"]["rt_based"]["metrics"]["rejection_rate"],
                 1.0,
             )
+            fixed_rejection = out_of_scope_report["tests"]["fixed_interval"]["metrics"]
+            self.assertEqual(fixed_rejection["sample_count"], 8)
+            self.assertEqual(fixed_rejection["expected_output"], "UNCLASSIFIED")
             self.assertEqual(
-                out_of_scope_report["tests"]["fixed_interval"]["metrics"]["rejection_rate"],
-                1.0,
+                sum(fixed_rejection["by_generator"]["SINGLE"]["detected_output_counts"].values()),
+                8,
             )
 
 

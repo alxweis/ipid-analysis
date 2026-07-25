@@ -21,12 +21,15 @@ from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullLocator
 
 from ipid_analysis.classifier_validation import (  # noqa: E402
     REQUEST_IP_IDS,
+    SYNTHETIC_GENERATOR_PARAMETERS,
+    _generate_multi_sequences,
     apply_fixed_interval_impairments,
 )
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
 from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
     CHI2_BINS,
+    MAX_INC,
     MODULUS,
     RANDOM_MIN_P_VALUE,
     STRATEGY_COLORS,
@@ -90,40 +93,6 @@ def _cumulative_sequences(starts: np.ndarray, increments: np.ndarray) -> np.ndar
     return (values % MODULUS).astype(np.uint16)
 
 
-def _separated_connection_starts(
-    sample_count: int,
-    rng: np.random.Generator,
-    *,
-    minimum_circular_gap: int = 1_200,
-) -> np.ndarray:
-    """Draw four starts whose circular gaps keep their short counters separate."""
-    accepted: list[np.ndarray] = []
-    accepted_count = 0
-    while accepted_count < sample_count:
-        candidate_count = max(256, 2 * (sample_count - accepted_count))
-        candidates = np.sort(
-            rng.integers(
-                0,
-                MODULUS,
-                size=(candidate_count, CONNECTION_COUNT),
-                dtype=np.int64,
-            ),
-            axis=1,
-        )
-        circular_gaps = np.concatenate(
-            [
-                np.diff(candidates, axis=1),
-                (MODULUS - candidates[:, -1] + candidates[:, 0])[:, None],
-            ],
-            axis=1,
-        )
-        valid = candidates[(circular_gaps >= minimum_circular_gap).all(axis=1)]
-        if len(valid):
-            accepted.append(valid)
-            accepted_count += len(valid)
-    return np.concatenate(accepted, axis=0)[:sample_count]
-
-
 def generate_chi2_sequences(
     samples_per_strategy: int,
     rng: np.random.Generator,
@@ -146,34 +115,45 @@ def generate_chi2_sequences(
 
     single_starts = rng.integers(0, MODULUS, size=n, dtype=np.int64)
     single_increments = rng.integers(
-        2,
-        2_001,
+        1,
+        MAX_INC + 1,
         size=(n, IDEAL_SEQUENCE_LENGTH - 1),
         dtype=np.int64,
     )
     single = _cumulative_sequences(single_starts, single_increments)
 
-    destination_base = rng.integers(0, 20_000, size=n, dtype=np.int64)
+    destination_starts = rng.integers(
+        0,
+        MODULUS,
+        size=(n, 2),
+        dtype=np.int64,
+    )
     per_destination = np.empty((n, IDEAL_SEQUENCE_LENGTH), dtype=np.uint16)
-    per_destination[:, 0::2] = (
-        destination_base[:, None] + np.arange(IDEAL_SEQUENCE_LENGTH // 2)
-    ) % MODULUS
-    per_destination[:, 1::2] = (
-        destination_base[:, None] + 30_000 + np.arange(IDEAL_SEQUENCE_LENGTH // 2)
-    ) % MODULUS
+    destination_steps = np.arange(IDEAL_SEQUENCE_LENGTH // 2, dtype=np.int64)
+    per_destination[:, 0::2] = (destination_starts[:, 0, None] + destination_steps) % MODULUS
+    per_destination[:, 1::2] = (destination_starts[:, 1, None] + destination_steps) % MODULUS
 
-    connection_starts = _separated_connection_starts(n, rng)
+    connection_starts = rng.integers(
+        0,
+        MODULUS,
+        size=(n, CONNECTION_COUNT),
+        dtype=np.int64,
+    )
     per_connection_cube = (
         connection_starts[:, None, :]
         + np.arange(REQUESTS_PER_CONNECTION, dtype=np.int64)[None, :, None]
     ) % MODULUS
     per_connection = _round_connection_flatten(per_connection_cube)
 
-    bucket_base = rng.integers(0, 3_000, size=n, dtype=np.int64)
-    bucket_starts = (bucket_base[:, None] + np.asarray([0, 30_000, 1_000, 31_000])) % MODULUS
+    bucket_starts = rng.integers(
+        0,
+        MODULUS,
+        size=(n, CONNECTION_COUNT),
+        dtype=np.int64,
+    )
     bucket_increments = rng.integers(
-        2,
-        2_001,
+        1,
+        MAX_INC + 1,
         size=(n, CONNECTION_COUNT, REQUESTS_PER_CONNECTION - 1),
         dtype=np.int64,
     )
@@ -186,21 +166,7 @@ def generate_chi2_sequences(
     )
     per_bucket = _round_connection_flatten(bucket_connections.transpose(0, 2, 1) % MODULUS)
 
-    multi_starts = _separated_connection_starts(n, rng)
-    multi_increments = rng.integers(
-        1,
-        17,
-        size=(n, CONNECTION_COUNT, REQUESTS_PER_CONNECTION - 1),
-        dtype=np.int64,
-    )
-    multi_connections = np.concatenate(
-        [
-            multi_starts[:, :, None],
-            multi_starts[:, :, None] + np.cumsum(multi_increments, axis=2, dtype=np.int64),
-        ],
-        axis=2,
-    )
-    multi = _round_connection_flatten(multi_connections.transpose(0, 2, 1) % MODULUS)
+    multi = _generate_multi_sequences(n, IDEAL_SEQUENCE_LENGTH, rng)
 
     random = rng.integers(
         0,
@@ -506,6 +472,7 @@ def render(
         "samples_per_nontrivial_strategy": samples_per_strategy,
         "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
         "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
+        "synthetic_generator_parameters": SYNTHETIC_GENERATOR_PARAMETERS,
         "samples_by_strategy": samples_by_strategy,
         "chi2_uniformity_test": {
             "scope": (

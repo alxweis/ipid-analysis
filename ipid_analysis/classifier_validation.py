@@ -31,6 +31,9 @@ from ipid_analysis.paper_figures import (  # noqa: E402
 )
 from ipid_analysis.strategies import (  # noqa: E402
     CLASSIFIER_VERSION,
+    MAX_INC,
+    MULTI_MAX_CLUSTERS,
+    MULTI_MAX_INC,
     STRATEGY_PRETTY,
     IPIDStrategy,
     MeasurementConfig,
@@ -69,6 +72,35 @@ FIXED_DETECTED_STRATEGIES = (*FIXED_STRATEGIES, "UNCLASSIFIED")
 RT_OUT_OF_SCOPE_STRATEGIES = ("MULTI",)
 FIXED_OUT_OF_SCOPE_STRATEGIES = ("SINGLE",)
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
+SYNTHETIC_GENERATOR_PARAMETERS = {
+    "sampling": "independent discrete uniform unless fixed by the strategy",
+    "ip_id_range_inclusive": [0, MODULUS - 1],
+    "wraparound": f"modulo {MODULUS}",
+    "REFLECTION": {"offset_range_inclusive": [0, MODULUS - 1]},
+    "CONSTANT": {"value_range_inclusive": [0, MODULUS - 1]},
+    "SINGLE": {
+        "start_range_inclusive": [0, MODULUS - 1],
+        "increment_range_inclusive": [1, MAX_INC],
+    },
+    "PER_DESTINATION": {
+        "start_range_inclusive": [0, MODULUS - 1],
+        "increment": 1,
+    },
+    "PER_CONNECTION": {
+        "start_range_inclusive": [0, MODULUS - 1],
+        "increment": 1,
+    },
+    "PER_BUCKET": {
+        "start_range_inclusive": [0, MODULUS - 1],
+        "increment_range_inclusive": [1, MAX_INC],
+    },
+    "MULTI": {
+        "cluster_count_range_inclusive": [2, MULTI_MAX_CLUSTERS],
+        "cluster_start_range_inclusive": [0, MODULUS - 1],
+        "within_cluster_offset_range_inclusive": [0, MULTI_MAX_INC],
+    },
+    "RANDOM": {"value_range_inclusive": [0, MODULUS - 1]},
+}
 
 VALIDATION_SCHEMA = pa.schema(
     [
@@ -104,6 +136,72 @@ def _cumulative_sequences(
     return (values % MODULUS).astype(np.uint16)
 
 
+def _generate_multi_sequences(
+    sample_count: int,
+    sequence_length: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Draw 2..MULTI_MAX_CLUSTERS circular clusters over the full IP-ID space."""
+    cluster_counts = rng.integers(
+        2,
+        MULTI_MAX_CLUSTERS + 1,
+        size=sample_count,
+    )
+    sequences = np.empty((sample_count, sequence_length), dtype=np.uint16)
+    minimum_start_gap = 2 * MULTI_MAX_INC + 1
+
+    for cluster_count in range(2, MULTI_MAX_CLUSTERS + 1):
+        rows = np.flatnonzero(cluster_counts == cluster_count)
+        if not len(rows):
+            continue
+
+        extra_gap = MODULUS - cluster_count * minimum_start_gap
+        weights = rng.exponential(size=(len(rows), cluster_count))
+        scaled = weights / weights.sum(axis=1, keepdims=True) * extra_gap
+        extras = np.floor(scaled).astype(np.int64)
+        remainder = extra_gap - extras.sum(axis=1)
+        fractional_order = np.argsort(scaled - extras, axis=1)[:, ::-1]
+        extras[
+            np.arange(len(rows))[:, None],
+            fractional_order,
+        ] += np.arange(cluster_count)[None, :] < remainder[:, None]
+        gaps = minimum_start_gap + extras
+
+        phases = rng.integers(0, MODULUS, size=len(rows), dtype=np.int64)
+        starts = (
+            np.concatenate(
+                [
+                    phases[:, None],
+                    phases[:, None] + np.cumsum(gaps[:, :-1], axis=1, dtype=np.int64),
+                ],
+                axis=1,
+            )
+            % MODULUS
+        )
+
+        labels = rng.integers(
+            0,
+            cluster_count,
+            size=(len(rows), sequence_length),
+        )
+        labels[:, :cluster_count] = np.arange(cluster_count)
+        labels = np.take_along_axis(
+            labels,
+            np.argsort(rng.random(labels.shape), axis=1),
+            axis=1,
+        )
+        offsets = rng.integers(
+            0,
+            MULTI_MAX_INC + 1,
+            size=(len(rows), sequence_length),
+            dtype=np.int64,
+        )
+        values = starts[np.arange(len(rows))[:, None], labels] + offsets
+        sequences[rows] = (values % MODULUS).astype(np.uint16)
+
+    return sequences
+
+
 def generate_rt_sequences(
     samples_per_strategy: int,
     rng: np.random.Generator,
@@ -129,17 +227,23 @@ def generate_rt_sequences(
     constant_values = rng.integers(0, MODULUS, size=n, dtype=np.uint16)
     constant = np.repeat(constant_values[:, None], length, axis=1)
 
-    destination_base = rng.integers(0, 20_000, size=n, dtype=np.int64)
+    destination_starts = rng.integers(
+        0,
+        MODULUS,
+        size=(n, 2),
+        dtype=np.int64,
+    )
     per_destination = np.empty((n, length), dtype=np.uint16)
-    per_destination[:, 0::2] = (destination_base[:, None] + np.arange(length // 2)) % MODULUS
-    per_destination[:, 1::2] = (
-        destination_base[:, None] + 30_000 + np.arange(length // 2)
-    ) % MODULUS
+    destination_steps = np.arange(length // 2, dtype=np.int64)
+    per_destination[:, 0::2] = (destination_starts[:, 0, None] + destination_steps) % MODULUS
+    per_destination[:, 1::2] = (destination_starts[:, 1, None] + destination_steps) % MODULUS
 
-    connection_base = rng.integers(0, 4_000, size=n, dtype=np.int64)
-    connection_starts = (
-        connection_base[:, None] + np.asarray([0, 10_000, 30_000, 50_000])
-    ) % MODULUS
+    connection_starts = rng.integers(
+        0,
+        MODULUS,
+        size=(n, CONNECTION_COUNT),
+        dtype=np.int64,
+    )
     per_connection_cube = (
         connection_starts[:, None, :]
         + np.arange(RT_REQUESTS_PER_CONNECTION, dtype=np.int64)[None, :, None]
@@ -147,14 +251,23 @@ def generate_rt_sequences(
     per_connection = _round_connection_flatten(per_connection_cube)
 
     single_starts = rng.integers(0, MODULUS, size=n, dtype=np.int64)
-    single_increments = rng.integers(2, 2_001, size=(n, length - 1), dtype=np.int64)
+    single_increments = rng.integers(
+        1,
+        MAX_INC + 1,
+        size=(n, length - 1),
+        dtype=np.int64,
+    )
     single = _cumulative_sequences(single_starts, single_increments)
 
-    bucket_base = rng.integers(0, 3_000, size=n, dtype=np.int64)
-    bucket_starts = (bucket_base[:, None] + np.asarray([0, 30_000, 1_000, 31_000])) % MODULUS
+    bucket_starts = rng.integers(
+        0,
+        MODULUS,
+        size=(n, CONNECTION_COUNT),
+        dtype=np.int64,
+    )
     bucket_increments = rng.integers(
-        2,
-        2_001,
+        1,
+        MAX_INC + 1,
         size=(n, CONNECTION_COUNT, RT_REQUESTS_PER_CONNECTION - 1),
         dtype=np.int64,
     )
@@ -186,18 +299,8 @@ def generate_rt_out_of_scope_sequences(
         raise ValueError("samples_per_strategy must be positive")
 
     n = samples_per_strategy
-    multi_base = rng.integers(0, 4_000, size=n, dtype=np.int64)
-    multi_cube = np.empty(
-        (n, RT_REQUESTS_PER_CONNECTION, CONNECTION_COUNT),
-        dtype=np.int64,
-    )
-    for request_index in range(RT_REQUESTS_PER_CONNECTION):
-        for connection_index in range(CONNECTION_COUNT):
-            cluster = (request_index + connection_index) % 2
-            multi_cube[:, request_index, connection_index] = (
-                multi_base + 30_000 * cluster + request_index * CONNECTION_COUNT + connection_index
-            )
-    return {"MULTI": _round_connection_flatten(multi_cube % MODULUS)}
+    length = CONNECTION_COUNT * RT_REQUESTS_PER_CONNECTION
+    return {"MULTI": _generate_multi_sequences(n, length, rng)}
 
 
 def generate_fixed_sequences(
@@ -214,36 +317,13 @@ def generate_fixed_sequences(
     constant_values = rng.integers(0, MODULUS, size=n, dtype=np.uint16)
     constant = np.repeat(constant_values[:, None], length, axis=1)
 
-    multi_base = rng.integers(0, 2_000, size=n, dtype=np.int64)
-    multi_starts = (multi_base[:, None] + np.asarray([0, 16_000, 32_000, 48_000])) % MODULUS
-    multi_increments = rng.integers(
-        1,
-        17,
-        size=(n, CONNECTION_COUNT, FIXED_REQUESTS_PER_CONNECTION - 1),
-        dtype=np.int64,
+    multi = _generate_multi_sequences(n, length, rng)
+    random = rng.integers(
+        0,
+        MODULUS,
+        size=(n, length),
+        dtype=np.uint16,
     )
-    multi_connections = np.concatenate(
-        [
-            multi_starts[:, :, None],
-            multi_starts[:, :, None] + np.cumsum(multi_increments, axis=2, dtype=np.int64),
-        ],
-        axis=2,
-    )
-    multi = _round_connection_flatten(multi_connections.transpose(0, 2, 1) % MODULUS)
-
-    random = np.empty((n, length), dtype=np.uint16)
-    values_per_quartile = length // 4
-    for row_index in range(n):
-        quartiles = [
-            rng.integers(
-                quartile * (MODULUS // 4),
-                (quartile + 1) * (MODULUS // 4),
-                size=values_per_quartile,
-                dtype=np.uint16,
-            )
-            for quartile in range(4)
-        ]
-        random[row_index] = rng.permutation(np.concatenate(quartiles))
 
     return {
         "CONSTANT": constant,
@@ -262,8 +342,13 @@ def generate_fixed_out_of_scope_sequences(
 
     n = samples_per_strategy
     length = CONNECTION_COUNT * FIXED_REQUESTS_PER_CONNECTION
-    single_starts = rng.integers(1_000, 50_000, size=n, dtype=np.int64)
-    single_increments = rng.integers(1, 5, size=(n, length - 1), dtype=np.int64)
+    single_starts = rng.integers(0, MODULUS, size=n, dtype=np.int64)
+    single_increments = rng.integers(
+        1,
+        MAX_INC + 1,
+        size=(n, length - 1),
+        dtype=np.int64,
+    )
     return {"SINGLE": _cumulative_sequences(single_starts, single_increments)}
 
 
@@ -915,6 +1000,7 @@ def validate_classifier(
         "samples_per_strategy": samples_per_strategy,
         "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
         "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
+        "synthetic_generator_parameters": SYNTHETIC_GENERATOR_PARAMETERS,
         "samples_by_dataset_and_strategy": {
             RT_DATASET: {strategy: len(rt_sequences[strategy]) for strategy in RT_STRATEGIES},
             FIXED_IDEAL_DATASET: {
