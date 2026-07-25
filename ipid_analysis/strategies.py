@@ -304,7 +304,7 @@ def _cluster_counts_mass(
     return np.where(lengths >= 1, np.where(k == 0, 1, k), 0)
 
 
-def _chi2_pvalue_mass(values: np.ndarray, present: np.ndarray) -> np.ndarray:
+def chi2_uniformity_pvalues(values: np.ndarray, present: np.ndarray) -> np.ndarray:
     """Per-row uniformity p-value of the present IPID values.
 
     Operating on values instead of consecutive increments makes RANDOM
@@ -348,7 +348,7 @@ def classify_batch_mass(ipid_list: pa.ListArray) -> np.ndarray:
 
     residual = np.flatnonzero(codes == -1)
     if residual.size:
-        p = _chi2_pvalue_mass(values[residual], present[residual])
+        p = chi2_uniformity_pvalues(values[residual], present[residual])
         is_random = (p >= RANDOM_MIN_P_VALUE) & (lengths[residual] >= 2)
         codes[residual] = np.where(
             is_random,

@@ -119,6 +119,24 @@ Three confusion-matrix PDFs and their metric JSON sidecars are written below
 balanced accuracy, per-class precision/recall/F1, macro and weighted averages,
 Cohen's kappa, and multiclass Matthews correlation coefficient.
 
+Plot the empirical CDF of the classifier's global Chi-square uniformity
+p-value for ideal synthetic sequences of length 80:
+
+```bash
+make validate-classifier
+# Or render only this plot:
+make plot-chi2-pvalue-cdf
+# Optional:
+make plot-chi2-pvalue-cdf ARGS="--samples-per-strategy 10000 --seed 42"
+```
+
+The plot uses 10,000 sequences for every nontrivial strategy and 100 each for
+`REFLECTION` and `CONSTANT`. One p-value is calculated from all 80 IP-ID values
+in a sequence; no per-connection p-values or subsequence minimum are used. The
+PDF and JSON metadata are written below
+`reports/figures/classifier-validation/`, and the underlying p-values are
+stored in `data/processed/classifier-validation/chi2-pvalue-cdf.pq`.
+
 ## Merging base and mass strategies
 
 The canonical no-connection RT-base and fixed-interval-mass results can be
