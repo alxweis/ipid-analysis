@@ -44,6 +44,8 @@ MODULUS = 1 << 16
 CONNECTION_COUNT = 4
 RT_REQUESTS_PER_CONNECTION = 4
 FIXED_REQUESTS_PER_CONNECTION = 25
+DEFAULT_SAMPLES_PER_STRATEGY = 10_000
+TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
 REQUEST_IP_IDS = np.asarray([18933, 18932, 3717, 3718, 3719], dtype=np.int64)
 
 RT_DATASET = "rt-based-4x4-ideal"
@@ -61,6 +63,7 @@ RT_STRATEGIES = (
     "UNCLASSIFIED",
 )
 FIXED_STRATEGIES = ("CONSTANT", "MULTI", "RANDOM", "UNCLASSIFIED")
+TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 
 VALIDATION_SCHEMA = pa.schema(
     [
@@ -615,7 +618,7 @@ def _write_json(value: dict, output_path: Path) -> Path:
 
 def validate_classifier(
     *,
-    samples_per_strategy: int = 1_000,
+    samples_per_strategy: int = DEFAULT_SAMPLES_PER_STRATEGY,
     seed: int = 42,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
@@ -629,13 +632,34 @@ def validate_classifier(
         np.random.default_rng(child) for child in seed_sequence.spawn(3)
     ]
 
-    rt_config, rt_sequences = generate_rt_sequences(samples_per_strategy, rt_rng)
+    generated_sample_count = max(samples_per_strategy, TRIVIAL_SAMPLES_PER_STRATEGY)
+    rt_config, rt_sequences = generate_rt_sequences(generated_sample_count, rt_rng)
+    rt_sequences = {
+        strategy: values[
+            : (
+                TRIVIAL_SAMPLES_PER_STRATEGY
+                if strategy in TRIVIAL_STRATEGIES
+                else samples_per_strategy
+            )
+        ]
+        for strategy, values in rt_sequences.items()
+    }
     rt_detections = {
         strategy: _strategy_names(classify_batch(values, rt_config))
         for strategy, values in rt_sequences.items()
     }
 
-    fixed_sequences = generate_fixed_sequences(samples_per_strategy, fixed_rng)
+    fixed_sequences = generate_fixed_sequences(generated_sample_count, fixed_rng)
+    fixed_sequences = {
+        strategy: values[
+            : (
+                TRIVIAL_SAMPLES_PER_STRATEGY
+                if strategy in TRIVIAL_STRATEGIES
+                else samples_per_strategy
+            )
+        ]
+        for strategy, values in fixed_sequences.items()
+    }
     fixed_detections = {
         strategy: _strategy_names(_classify_mass(values))
         for strategy, values in fixed_sequences.items()
@@ -649,13 +673,12 @@ def validate_classifier(
         fixed_matrix,
         impairment_rng,
     )
-    class_slices = {
-        strategy: slice(
-            index * samples_per_strategy,
-            (index + 1) * samples_per_strategy,
-        )
-        for index, strategy in enumerate(FIXED_STRATEGIES)
-    }
+    class_slices = {}
+    class_offset = 0
+    for strategy in FIXED_STRATEGIES:
+        next_offset = class_offset + len(fixed_sequences[strategy])
+        class_slices[strategy] = slice(class_offset, next_offset)
+        class_offset = next_offset
     lossy_sequences = {
         strategy: lossy_matrix[class_slices[strategy]] for strategy in FIXED_STRATEGIES
     }
@@ -748,6 +771,14 @@ def validate_classifier(
         "synthetic_generator_version": "1",
         "seed": seed,
         "samples_per_strategy": samples_per_strategy,
+        "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
+        "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
+        "samples_by_dataset_and_strategy": {
+            RT_DATASET: {strategy: len(rt_sequences[strategy]) for strategy in RT_STRATEGIES},
+            FIXED_IDEAL_DATASET: {
+                strategy: len(fixed_sequences[strategy]) for strategy in FIXED_STRATEGIES
+            },
+        },
         "connection_count": CONNECTION_COUNT,
         "request_ip_ids": REQUEST_IP_IDS.tolist(),
         "sequence_order": (
@@ -828,9 +859,12 @@ def validate_classifier(
 @app.command()
 def main(
     samples_per_strategy: int = typer.Option(
-        1_000,
+        DEFAULT_SAMPLES_PER_STRATEGY,
         min=1,
-        help="synthetic sequences generated for every evaluated strategy",
+        help=(
+            "synthetic sequences generated for each nontrivial strategy; "
+            "REFLECTION and CONSTANT always use 1000"
+        ),
     ),
     seed: int = typer.Option(42, help="deterministic random seed"),
 ) -> None:

@@ -97,8 +97,13 @@ classifier independently of a campaign:
 ```bash
 make validate-classifier
 # Optional:
-make validate-classifier ARGS="--samples-per-strategy 1000 --seed 42"
+make validate-classifier ARGS="--samples-per-strategy 10000 --seed 42"
 ```
+
+By default, 10,000 sequences are generated per evaluated strategy.
+`REFLECTION` and `CONSTANT` are deterministic, trivial cases and are fixed at
+1,000 sequences each. `--samples-per-strategy` therefore controls the
+nontrivial strategies.
 
 The RT-based dataset uses the real 4 x 4 round/connection interleaving and
 evaluates `REFLECTION`, `CONSTANT`, `SINGLE`, `PER_CONNECTION`,

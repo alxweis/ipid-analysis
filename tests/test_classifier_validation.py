@@ -14,6 +14,7 @@ from ipid_analysis.classifier_validation import (
     FIXED_STRATEGIES,
     RT_DATASET,
     RT_STRATEGIES,
+    TRIVIAL_SAMPLES_PER_STRATEGY,
     apply_fixed_interval_impairments,
     generate_fixed_sequences,
     generate_rt_sequences,
@@ -82,7 +83,9 @@ class ClassifierValidationTest(unittest.TestCase):
                 self.assertTrue(path.is_file(), path)
 
             table = pq.read_table(outputs["dataset"])
-            self.assertEqual(table.num_rows, (7 + 4 + 4 + 4) * 8)
+            rt_row_count = 2 * TRIVIAL_SAMPLES_PER_STRATEGY + 5 * 8
+            fixed_row_count = TRIVIAL_SAMPLES_PER_STRATEGY + 3 * 8
+            self.assertEqual(table.num_rows, rt_row_count + 3 * fixed_row_count)
             rows = table.to_pylist()
             datasets = {row["DATASET"] for row in rows}
             self.assertEqual(
@@ -107,6 +110,27 @@ class ClassifierValidationTest(unittest.TestCase):
             rt_report = json.loads(outputs["rt_based_json"].read_text())
             fixed_report = json.loads(outputs["fixed_interval_json"].read_text())
             impaired_report = json.loads(outputs["impaired_json"].read_text())
+            self.assertEqual(
+                rt_report["samples_by_dataset_and_strategy"][RT_DATASET],
+                {
+                    "REFLECTION": TRIVIAL_SAMPLES_PER_STRATEGY,
+                    "CONSTANT": TRIVIAL_SAMPLES_PER_STRATEGY,
+                    "SINGLE": 8,
+                    "PER_CONNECTION": 8,
+                    "PER_DESTINATION": 8,
+                    "PER_BUCKET": 8,
+                    "UNCLASSIFIED": 8,
+                },
+            )
+            self.assertEqual(
+                fixed_report["samples_by_dataset_and_strategy"][FIXED_IDEAL_DATASET],
+                {
+                    "CONSTANT": TRIVIAL_SAMPLES_PER_STRATEGY,
+                    "MULTI": 8,
+                    "RANDOM": 8,
+                    "UNCLASSIFIED": 8,
+                },
+            )
             self.assertEqual(rt_report["metrics"]["accuracy"], 1.0)
             self.assertEqual(fixed_report["metrics"]["macro"]["f1"], 1.0)
             self.assertEqual(
