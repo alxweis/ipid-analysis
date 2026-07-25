@@ -45,7 +45,7 @@ from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
-CLASSIFIER_VERSION = "1"
+CLASSIFIER_VERSION = "2"
 
 # --- classifier thresholds (tuning, measurement-independent) ---------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3
@@ -53,7 +53,7 @@ MAX_INC = math.ceil(MODULUS / MIN_STEPS_BEFORE_WRAPAROUND) - 1  # 21845
 MULTI_MAX_INC = 800
 MULTI_MAX_CLUSTERS = 16
 RANDOM_MIN_P_VALUE = 1e-9  # reject "random" if the value-uniformity p-value is below this
-CHI2_BINS = 4  # bins for the IPID-value uniformity test
+CHI2_BINS = 10  # equal-width bins for the IPID-value uniformity test
 
 INPUT_NAME = "ipid.pq"
 SNAPSHOT_NAME = "ipid.snapshot.yaml"

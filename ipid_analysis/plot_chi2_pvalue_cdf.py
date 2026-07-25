@@ -48,6 +48,7 @@ REORDER_FRACTION = 0.20
 DEFAULT_SAMPLES_PER_STRATEGY = 10_000
 TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
 DEFAULT_SEED = 42
+X_AXIS_MAXIMUM = 1.05
 LOSSY_DATASET = "lossy"
 LOSSY_REORDERED_DATASET = "lossy-reordered"
 
@@ -311,7 +312,7 @@ def plot_chi2_pvalue_cdf(
 
     axis_minimum, major_ticks = _log_axis_parameters(pvalues)
     ax.set_xscale("log")
-    ax.set_xlim(axis_minimum, 1.0)
+    ax.set_xlim(axis_minimum, X_AXIS_MAXIMUM)
     ax.set_xticks(major_ticks)
     ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10))
     ax.xaxis.set_minor_locator(NullLocator())
@@ -489,6 +490,7 @@ def render(
             "random_min_p_value": RANDOM_MIN_P_VALUE,
             "order_invariant": False,
         },
+        "x_axis_maximum": X_AXIS_MAXIMUM,
         "aggregate": str(aggregate_path),
     }
     lossy_json_path = _write_json(
