@@ -202,6 +202,7 @@ def configure_paper_style() -> None:
             "mathtext.it": f"{libertine_family}:italic",
             "mathtext.bf": f"{libertine_family}:bold",
             "mathtext.bfit": f"{libertine_family}:italic:bold",
+            "mathtext.cal": libertine_family,
             "mathtext.sf": libertine_family,
             "mathtext.tt": libertine_family,
             "pdf.fonttype": 42,
