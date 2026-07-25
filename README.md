@@ -105,12 +105,31 @@ By default, 10,000 sequences are generated per evaluated strategy.
 1,000 sequences each. `--samples-per-strategy` therefore controls the
 nontrivial strategies.
 
+Every synthetic generator samples uniformly across its complete valid
+classifier domain: 16-bit starts and values use `0..65535`, `SINGLE` and
+`PER_BUCKET` increments use `1..21845`, and `MULTI` uses a uniformly selected
+cluster count from 2 through 16 with randomized cluster positions and offsets
+through the inclusive 800 threshold. All cumulative counters wrap naturally
+modulo 2^16. The validation generates only values within the strategy
+definitions; it does not inject invalid boundary cases. The exact generator
+parameters are also recorded in every validation JSON sidecar.
+
 The RT-based dataset uses the real 4 x 4 round/connection interleaving and
 evaluates `REFLECTION`, `CONSTANT`, `SINGLE`, `PER_CONNECTION`,
-`PER_DESTINATION`, `PER_BUCKET`, and `UNCLASSIFIED`. The fixed-interval dataset
-uses 4 x 25 sequences and evaluates `CONSTANT`, `MULTI`, `RANDOM`, and
-`UNCLASSIFIED`. Its robustness variants apply exactly 20 missing replies and
+`PER_DESTINATION`, and `PER_BUCKET`. The fixed-interval dataset uses 4 x 25
+sequences and evaluates `CONSTANT`, `MULTI`, and `RANDOM`. `UNCLASSIFIED`
+remains a possible detected output, but is not shown as a generating strategy
+because it is a classifier result rather than an IP-ID generation mechanism.
+The fixed-interval robustness variants apply exactly 20 missing replies and
 then additionally permute 16 of the remaining 80 IP-ID values per sequence.
+
+Out-of-scope rejection is evaluated separately: MULTI-like sequences are
+expected to remain `UNCLASSIFIED` in RT-based analysis, while SINGLE-like
+sequences are expected to remain `UNCLASSIFIED` in fixed-interval analysis.
+Their rejection rates and detected-output counts are written to
+`reports/figures/classifier-validation/out-of-scope-classifier-rejection.json`
+and are not mixed into the supported-strategy accuracy, precision, recall, or
+F1 scores.
 
 The raw-format synthetic sequences and detected labels are written to
 `data/processed/classifier-validation/synthetic-classifier-validation.pq`.

@@ -24,6 +24,7 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     render,
 )
 from ipid_analysis.strategies import (
+    MAX_INC,
     IPIDStrategy,
     MeasurementConfig,
     classify_batch,
@@ -172,6 +173,12 @@ class Chi2PvalueCDFTest(unittest.TestCase):
             self.assertEqual(
                 metadata["samples_by_strategy"]["RANDOM"],
                 sample_count,
+            )
+            self.assertEqual(
+                metadata["synthetic_generator_parameters"]["PER_BUCKET"][
+                    "increment_range_inclusive"
+                ],
+                [1, MAX_INC],
             )
 
 
