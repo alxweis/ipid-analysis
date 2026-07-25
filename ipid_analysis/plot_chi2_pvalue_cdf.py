@@ -19,7 +19,10 @@ from matplotlib.lines import Line2D  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullLocator  # noqa: E402
 
-from ipid_analysis.classifier_validation import REQUEST_IP_IDS  # noqa: E402
+from ipid_analysis.classifier_validation import (  # noqa: E402
+    REQUEST_IP_IDS,
+    apply_fixed_interval_impairments,
+)
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
 from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
@@ -34,11 +37,16 @@ from ipid_analysis.strategies import (  # noqa: E402
 app = typer.Typer()
 
 CONNECTION_COUNT = 4
-REQUESTS_PER_CONNECTION = 20
-SEQUENCE_LENGTH = CONNECTION_COUNT * REQUESTS_PER_CONNECTION
+REQUESTS_PER_CONNECTION = 25
+IDEAL_SEQUENCE_LENGTH = CONNECTION_COUNT * REQUESTS_PER_CONNECTION
+PRESENT_SEQUENCE_LENGTH = 80
+LOSS_FRACTION = 0.20
+REORDER_FRACTION = 0.20
 DEFAULT_SAMPLES_PER_STRATEGY = 10_000
 TRIVIAL_SAMPLES_PER_STRATEGY = 100
 DEFAULT_SEED = 42
+LOSSY_DATASET = "lossy"
+LOSSY_REORDERED_DATASET = "lossy-reordered"
 
 PLOT_STRATEGIES = (
     "REFLECTION",
@@ -54,6 +62,7 @@ TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 
 P_VALUE_SCHEMA = pa.schema(
     [
+        ("DATASET", pa.string()),
         ("IPID_SELECTION_STRATEGY", pa.string()),
         ("SAMPLE_INDEX", pa.int32()),
         ("CHI2_P_VALUE", pa.float64()),
@@ -110,13 +119,13 @@ def generate_chi2_sequences(
     samples_per_strategy: int,
     rng: np.random.Generator,
 ) -> dict[str, np.ndarray]:
-    """Generate ideal, measurement-shaped 4x20 sequences for all plot strategies."""
+    """Generate ideal, measurement-shaped 4x25 sequences for all plot strategies."""
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
 
     n = samples_per_strategy
     trivial_n = TRIVIAL_SAMPLES_PER_STRATEGY
-    request_pattern = REQUEST_IP_IDS[np.arange(SEQUENCE_LENGTH) % len(REQUEST_IP_IDS)]
+    request_pattern = REQUEST_IP_IDS[np.arange(IDEAL_SEQUENCE_LENGTH) % len(REQUEST_IP_IDS)]
 
     reflection_offsets = rng.integers(0, MODULUS, size=trivial_n, dtype=np.int64)
     reflection = ((request_pattern[None, :] + reflection_offsets[:, None]) % MODULUS).astype(
@@ -124,24 +133,24 @@ def generate_chi2_sequences(
     )
 
     constant_values = rng.integers(0, MODULUS, size=trivial_n, dtype=np.uint16)
-    constant = np.repeat(constant_values[:, None], SEQUENCE_LENGTH, axis=1)
+    constant = np.repeat(constant_values[:, None], IDEAL_SEQUENCE_LENGTH, axis=1)
 
     single_starts = rng.integers(0, MODULUS, size=n, dtype=np.int64)
     single_increments = rng.integers(
         2,
         2_001,
-        size=(n, SEQUENCE_LENGTH - 1),
+        size=(n, IDEAL_SEQUENCE_LENGTH - 1),
         dtype=np.int64,
     )
     single = _cumulative_sequences(single_starts, single_increments)
 
     destination_base = rng.integers(0, 20_000, size=n, dtype=np.int64)
-    per_destination = np.empty((n, SEQUENCE_LENGTH), dtype=np.uint16)
+    per_destination = np.empty((n, IDEAL_SEQUENCE_LENGTH), dtype=np.uint16)
     per_destination[:, 0::2] = (
-        destination_base[:, None] + np.arange(SEQUENCE_LENGTH // 2)
+        destination_base[:, None] + np.arange(IDEAL_SEQUENCE_LENGTH // 2)
     ) % MODULUS
     per_destination[:, 1::2] = (
-        destination_base[:, None] + 30_000 + np.arange(SEQUENCE_LENGTH // 2)
+        destination_base[:, None] + 30_000 + np.arange(IDEAL_SEQUENCE_LENGTH // 2)
     ) % MODULUS
 
     connection_starts = _separated_connection_starts(n, rng)
@@ -187,7 +196,7 @@ def generate_chi2_sequences(
     random = rng.integers(
         0,
         MODULUS,
-        size=(n, SEQUENCE_LENGTH),
+        size=(n, IDEAL_SEQUENCE_LENGTH),
         dtype=np.uint16,
     )
 
@@ -203,14 +212,40 @@ def generate_chi2_sequences(
     }
 
 
+def apply_strategy_impairments(
+    sequences: dict[str, np.ndarray],
+    rng: np.random.Generator,
+) -> tuple[
+    dict[str, np.ndarray],
+    dict[str, np.ndarray],
+    dict[str, np.ndarray],
+]:
+    """Apply paired 20% loss and loss+reordering to every strategy."""
+    loss_masks = {}
+    lossy_sequences = {}
+    reordered_sequences = {}
+    for strategy in PLOT_STRATEGIES:
+        loss_mask, lossy, reordered = apply_fixed_interval_impairments(
+            sequences[strategy],
+            rng,
+            loss_fraction=LOSS_FRACTION,
+            reorder_fraction=REORDER_FRACTION,
+        )
+        loss_masks[strategy] = loss_mask
+        lossy_sequences[strategy] = lossy
+        reordered_sequences[strategy] = reordered
+    return loss_masks, lossy_sequences, reordered_sequences
+
+
 def calculate_strategy_pvalues(
     sequences: dict[str, np.ndarray],
+    loss_masks: dict[str, np.ndarray],
 ) -> dict[str, np.ndarray]:
     """Calculate the classifier's one global Chi-square p-value per sequence."""
     result = {}
     for strategy in PLOT_STRATEGIES:
         values = sequences[strategy].astype(np.int64, copy=False)
-        present = np.ones(values.shape, dtype=bool)
+        present = ~loss_masks[strategy]
         result[strategy] = chi2_uniformity_pvalues(values, present)
     return result
 
@@ -236,6 +271,8 @@ def _log_axis_parameters(pvalues: dict[str, np.ndarray]) -> tuple[float, np.ndar
 def plot_chi2_pvalue_cdf(
     pvalues: dict[str, np.ndarray],
     output_path: Path,
+    *,
+    dataset_label: str,
 ) -> Path:
     configure_paper_style()
     fig, ax = plt.subplots(figsize=(7.16, 3.15))
@@ -289,8 +326,10 @@ def plot_chi2_pvalue_cdf(
         format="pdf",
         bbox_inches="tight",
         metadata={
-            "Title": "Chi-square p-value distributions by IP-ID selection strategy",
-            "Subject": "Synthetic 4x20 IP-ID sequence empirical CDFs",
+            "Title": (
+                f"Chi-square p-value distributions by IP-ID selection strategy ({dataset_label})"
+            ),
+            "Subject": "Synthetic lossy 4x25 IP-ID sequence empirical CDFs",
             "Creator": "ipid-analysis",
         },
     )
@@ -298,13 +337,18 @@ def plot_chi2_pvalue_cdf(
     return output_path
 
 
-def _write_pvalues(pvalues: dict[str, np.ndarray], output_path: Path) -> Path:
+def _write_pvalues(
+    datasets: dict[str, dict[str, np.ndarray]],
+    output_path: Path,
+) -> Path:
     rows = [
         {
+            "DATASET": dataset,
             "IPID_SELECTION_STRATEGY": strategy,
             "SAMPLE_INDEX": sample_index,
             "CHI2_P_VALUE": float(pvalue),
         }
+        for dataset, pvalues in datasets.items()
         for strategy in PLOT_STRATEGIES
         for sample_index, pvalue in enumerate(pvalues[strategy])
     ]
@@ -333,63 +377,119 @@ def render(
     seed: int = DEFAULT_SEED,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path]:
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
 
-    sequences = generate_chi2_sequences(samples_per_strategy, np.random.default_rng(seed))
-    pvalues = calculate_strategy_pvalues(sequences)
+    seed_sequence = np.random.SeedSequence(seed)
+    sequence_rng, impairment_rng = [
+        np.random.default_rng(child) for child in seed_sequence.spawn(2)
+    ]
+    ideal_sequences = generate_chi2_sequences(samples_per_strategy, sequence_rng)
+    loss_masks, lossy_sequences, reordered_sequences = apply_strategy_impairments(
+        ideal_sequences,
+        impairment_rng,
+    )
+    lossy_pvalues = calculate_strategy_pvalues(lossy_sequences, loss_masks)
+    reordered_pvalues = calculate_strategy_pvalues(reordered_sequences, loss_masks)
+    for strategy in PLOT_STRATEGIES:
+        if not np.array_equal(lossy_pvalues[strategy], reordered_pvalues[strategy]):
+            raise RuntimeError(
+                f"{strategy}: order-invariant Chi-square p-values unexpectedly differ"
+            )
 
     processed_dir = processed_root / "classifier-validation"
     figure_dir = figures_root / "classifier-validation"
     aggregate_path = _write_pvalues(
-        pvalues,
+        {
+            LOSSY_DATASET: lossy_pvalues,
+            LOSSY_REORDERED_DATASET: reordered_pvalues,
+        },
         processed_dir / "chi2-pvalue-cdf.pq",
     )
-    pdf_path = plot_chi2_pvalue_cdf(
-        pvalues,
-        figure_dir / "chi2-pvalue-cdf.pdf",
+    lossy_pdf_path = plot_chi2_pvalue_cdf(
+        lossy_pvalues,
+        figure_dir / "chi2-pvalue-cdf-lossy.pdf",
+        dataset_label="Lossy Dataset",
     )
-    samples_by_strategy = {strategy: int(len(pvalues[strategy])) for strategy in PLOT_STRATEGIES}
-    summaries = {}
-    for strategy in PLOT_STRATEGIES:
-        values = pvalues[strategy]
-        summaries[strategy] = {
-            "minimum": float(values.min()),
-            "q25": float(np.quantile(values, 0.25)),
-            "median": float(np.median(values)),
-            "q75": float(np.quantile(values, 0.75)),
-            "maximum": float(values.max()),
-            "below_random_threshold_count": int((values < RANDOM_MIN_P_VALUE).sum()),
-            "below_random_threshold_percentage": float(
-                100.0 * (values < RANDOM_MIN_P_VALUE).mean()
-            ),
-        }
-    json_path = _write_json(
-        {
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "seed": seed,
-            "connection_count": CONNECTION_COUNT,
-            "requests_per_connection": REQUESTS_PER_CONNECTION,
-            "sequence_length": SEQUENCE_LENGTH,
-            "samples_per_nontrivial_strategy": samples_per_strategy,
-            "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
-            "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
-            "samples_by_strategy": samples_by_strategy,
-            "chi2_uniformity_test": {
-                "scope": "all IP-ID values in one sequence",
-                "subsequence_aggregation": None,
-                "bins": CHI2_BINS,
-                "degrees_of_freedom": CHI2_BINS - 1,
-                "random_min_p_value": RANDOM_MIN_P_VALUE,
-            },
-            "aggregate": str(aggregate_path),
-            "figure": str(pdf_path),
-            "summary_by_strategy": summaries,
+    reordered_pdf_path = plot_chi2_pvalue_cdf(
+        reordered_pvalues,
+        figure_dir / "chi2-pvalue-cdf-lossy-reordered.pdf",
+        dataset_label="Lossy+Reordered Dataset",
+    )
+    samples_by_strategy = {
+        strategy: int(len(lossy_pvalues[strategy])) for strategy in PLOT_STRATEGIES
+    }
+
+    def summarize(pvalues: dict[str, np.ndarray]) -> dict:
+        summaries = {}
+        for strategy in PLOT_STRATEGIES:
+            values = pvalues[strategy]
+            summaries[strategy] = {
+                "minimum": float(values.min()),
+                "q25": float(np.quantile(values, 0.25)),
+                "median": float(np.median(values)),
+                "q75": float(np.quantile(values, 0.75)),
+                "maximum": float(values.max()),
+                "below_random_threshold_count": int((values < RANDOM_MIN_P_VALUE).sum()),
+                "below_random_threshold_percentage": float(
+                    100.0 * (values < RANDOM_MIN_P_VALUE).mean()
+                ),
+            }
+        return summaries
+
+    common_metadata = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "seed": seed,
+        "connection_count": CONNECTION_COUNT,
+        "requests_per_connection": REQUESTS_PER_CONNECTION,
+        "ideal_sequence_length": IDEAL_SEQUENCE_LENGTH,
+        "present_ipids_per_sequence": PRESENT_SEQUENCE_LENGTH,
+        "loss_fraction": LOSS_FRACTION,
+        "lost_ipids_per_sequence": IDEAL_SEQUENCE_LENGTH - PRESENT_SEQUENCE_LENGTH,
+        "reorder_fraction_of_present": REORDER_FRACTION,
+        "reordered_ipids_per_sequence": round(PRESENT_SEQUENCE_LENGTH * REORDER_FRACTION),
+        "paired_loss_masks": True,
+        "samples_per_nontrivial_strategy": samples_per_strategy,
+        "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
+        "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
+        "samples_by_strategy": samples_by_strategy,
+        "chi2_uniformity_test": {
+            "scope": "all present IP-ID values in one sequence",
+            "subsequence_aggregation": None,
+            "bins": CHI2_BINS,
+            "degrees_of_freedom": CHI2_BINS - 1,
+            "random_min_p_value": RANDOM_MIN_P_VALUE,
+            "order_invariant": True,
         },
-        figure_dir / "chi2-pvalue-cdf.json",
+        "aggregate": str(aggregate_path),
+        "lossy_and_reordered_pvalues_identical": True,
+    }
+    lossy_json_path = _write_json(
+        {
+            **common_metadata,
+            "dataset": LOSSY_DATASET,
+            "figure": str(lossy_pdf_path),
+            "summary_by_strategy": summarize(lossy_pvalues),
+        },
+        figure_dir / "chi2-pvalue-cdf-lossy.json",
     )
-    return pdf_path, json_path, aggregate_path
+    reordered_json_path = _write_json(
+        {
+            **common_metadata,
+            "dataset": LOSSY_REORDERED_DATASET,
+            "figure": str(reordered_pdf_path),
+            "summary_by_strategy": summarize(reordered_pvalues),
+        },
+        figure_dir / "chi2-pvalue-cdf-lossy-reordered.json",
+    )
+    return (
+        lossy_pdf_path,
+        lossy_json_path,
+        reordered_pdf_path,
+        reordered_json_path,
+        aggregate_path,
+    )
 
 
 @app.command()
@@ -403,12 +503,20 @@ def main(
     ),
     seed: int = typer.Option(DEFAULT_SEED, help="deterministic random seed"),
 ) -> None:
-    pdf_path, json_path, aggregate_path = render(
+    (
+        lossy_pdf_path,
+        lossy_json_path,
+        reordered_pdf_path,
+        reordered_json_path,
+        aggregate_path,
+    ) = render(
         samples_per_strategy=samples_per_strategy,
         seed=seed,
     )
-    typer.echo(f"pdf: {pdf_path}")
-    typer.echo(f"json: {json_path}")
+    typer.echo(f"lossy_pdf: {lossy_pdf_path}")
+    typer.echo(f"lossy_json: {lossy_json_path}")
+    typer.echo(f"lossy_reordered_pdf: {reordered_pdf_path}")
+    typer.echo(f"lossy_reordered_json: {reordered_json_path}")
     typer.echo(f"aggregate: {aggregate_path}")
 
 
