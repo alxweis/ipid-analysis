@@ -421,7 +421,7 @@ def plot_measurement_type_by_strategy(
                     _label_percentage(value),
                     ha="center",
                     va="center",
-                    fontsize=7,
+                    fontsize=9,
                     color="#111111",
                     zorder=3,
                 )
