@@ -49,7 +49,9 @@ TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
 REQUEST_IP_IDS = np.asarray([18933, 18932, 3717, 3718, 3719], dtype=np.int64)
 
 RT_DATASET = "rt-based-4x4-ideal"
+RT_OUT_OF_SCOPE_DATASET = "rt-based-4x4-out-of-scope"
 FIXED_IDEAL_DATASET = "fixed-interval-4x25-ideal"
+FIXED_OUT_OF_SCOPE_DATASET = "fixed-interval-4x25-out-of-scope"
 FIXED_LOSSY_DATASET = "fixed-interval-4x25-lossy"
 FIXED_REORDERED_DATASET = "fixed-interval-4x25-lossy-reordered"
 
@@ -60,9 +62,12 @@ RT_STRATEGIES = (
     "PER_CONNECTION",
     "PER_DESTINATION",
     "PER_BUCKET",
-    "UNCLASSIFIED",
 )
-FIXED_STRATEGIES = ("CONSTANT", "MULTI", "RANDOM", "UNCLASSIFIED")
+RT_DETECTED_STRATEGIES = (*RT_STRATEGIES, "UNCLASSIFIED")
+FIXED_STRATEGIES = ("CONSTANT", "MULTI", "RANDOM")
+FIXED_DETECTED_STRATEGIES = (*FIXED_STRATEGIES, "UNCLASSIFIED")
+RT_OUT_OF_SCOPE_STRATEGIES = ("MULTI",)
+FIXED_OUT_OF_SCOPE_STRATEGIES = ("SINGLE",)
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 
 VALIDATION_SCHEMA = pa.schema(
@@ -162,22 +167,6 @@ def generate_rt_sequences(
     )
     per_bucket = _round_connection_flatten(bucket_connections.transpose(0, 2, 1) % MODULUS)
 
-    unknown_base = rng.integers(0, 4_000, size=n, dtype=np.int64)
-    unknown_cube = np.empty(
-        (n, RT_REQUESTS_PER_CONNECTION, CONNECTION_COUNT),
-        dtype=np.int64,
-    )
-    for request_index in range(RT_REQUESTS_PER_CONNECTION):
-        for connection_index in range(CONNECTION_COUNT):
-            cluster = (request_index + connection_index) % 2
-            unknown_cube[:, request_index, connection_index] = (
-                unknown_base
-                + 30_000 * cluster
-                + request_index * CONNECTION_COUNT
-                + connection_index
-            )
-    unclassified = _round_connection_flatten(unknown_cube % MODULUS)
-
     return config, {
         "REFLECTION": reflection,
         "CONSTANT": constant,
@@ -185,8 +174,30 @@ def generate_rt_sequences(
         "PER_CONNECTION": per_connection,
         "PER_DESTINATION": per_destination,
         "PER_BUCKET": per_bucket,
-        "UNCLASSIFIED": unclassified,
     }
+
+
+def generate_rt_out_of_scope_sequences(
+    samples_per_strategy: int,
+    rng: np.random.Generator,
+) -> dict[str, np.ndarray]:
+    """Generate MULTI-like sequences that RT-based analysis must reject."""
+    if samples_per_strategy < 1:
+        raise ValueError("samples_per_strategy must be positive")
+
+    n = samples_per_strategy
+    multi_base = rng.integers(0, 4_000, size=n, dtype=np.int64)
+    multi_cube = np.empty(
+        (n, RT_REQUESTS_PER_CONNECTION, CONNECTION_COUNT),
+        dtype=np.int64,
+    )
+    for request_index in range(RT_REQUESTS_PER_CONNECTION):
+        for connection_index in range(CONNECTION_COUNT):
+            cluster = (request_index + connection_index) % 2
+            multi_cube[:, request_index, connection_index] = (
+                multi_base + 30_000 * cluster + request_index * CONNECTION_COUNT + connection_index
+            )
+    return {"MULTI": _round_connection_flatten(multi_cube % MODULUS)}
 
 
 def generate_fixed_sequences(
@@ -234,16 +245,26 @@ def generate_fixed_sequences(
         ]
         random[row_index] = rng.permutation(np.concatenate(quartiles))
 
-    unknown_starts = rng.integers(1_000, 50_000, size=n, dtype=np.int64)
-    unknown_increments = rng.integers(1, 5, size=(n, length - 1), dtype=np.int64)
-    unclassified = _cumulative_sequences(unknown_starts, unknown_increments)
-
     return {
         "CONSTANT": constant,
         "MULTI": multi,
         "RANDOM": random,
-        "UNCLASSIFIED": unclassified,
     }
+
+
+def generate_fixed_out_of_scope_sequences(
+    samples_per_strategy: int,
+    rng: np.random.Generator,
+) -> dict[str, np.ndarray]:
+    """Generate SINGLE-like sequences that fixed-interval analysis must reject."""
+    if samples_per_strategy < 1:
+        raise ValueError("samples_per_strategy must be positive")
+
+    n = samples_per_strategy
+    length = CONNECTION_COUNT * FIXED_REQUESTS_PER_CONNECTION
+    single_starts = rng.integers(1_000, 50_000, size=n, dtype=np.int64)
+    single_increments = rng.integers(1, 5, size=(n, length - 1), dtype=np.int64)
+    return {"SINGLE": _cumulative_sequences(single_starts, single_increments)}
 
 
 def apply_fixed_interval_impairments(
@@ -300,36 +321,55 @@ def _strategy_names(codes: np.ndarray) -> list[str]:
 def _confusion_metrics(
     expected: list[str],
     detected: list[str],
-    classes: tuple[str, ...],
+    generated_classes: tuple[str, ...],
+    detected_classes: tuple[str, ...],
 ) -> dict:
-    class_index = {name: index for index, name in enumerate(classes)}
-    unexpected = sorted((set(expected) | set(detected)) - set(classes))
-    if unexpected:
-        raise ValueError(f"strategies outside validation matrix: {unexpected}")
+    generated_index = {name: index for index, name in enumerate(generated_classes)}
+    detected_index = {name: index for index, name in enumerate(detected_classes)}
+    unexpected_expected = sorted(set(expected) - set(generated_classes))
+    unexpected_detected = sorted(set(detected) - set(detected_classes))
+    if unexpected_expected or unexpected_detected:
+        raise ValueError(
+            "strategies outside validation matrix: "
+            f"expected={unexpected_expected}, detected={unexpected_detected}"
+        )
 
-    counts = np.zeros((len(classes), len(classes)), dtype=np.int64)
+    counts = np.zeros(
+        (len(generated_classes), len(detected_classes)),
+        dtype=np.int64,
+    )
     for truth, prediction in zip(expected, detected, strict=True):
-        counts[class_index[truth], class_index[prediction]] += 1
+        counts[generated_index[truth], detected_index[prediction]] += 1
 
     support = counts.sum(axis=1)
     predicted_count = counts.sum(axis=0)
-    correct = np.diag(counts)
+    correct = np.asarray(
+        [
+            counts[row_index, detected_index[strategy]]
+            for row_index, strategy in enumerate(generated_classes)
+        ],
+        dtype=np.int64,
+    )
+    matching_predicted_count = np.asarray(
+        [predicted_count[detected_index[strategy]] for strategy in generated_classes],
+        dtype=np.int64,
+    )
     precision = np.divide(
         correct,
-        predicted_count,
-        out=np.zeros(len(classes), dtype=float),
-        where=predicted_count > 0,
+        matching_predicted_count,
+        out=np.zeros(len(generated_classes), dtype=float),
+        where=matching_predicted_count > 0,
     )
     recall = np.divide(
         correct,
         support,
-        out=np.zeros(len(classes), dtype=float),
+        out=np.zeros(len(generated_classes), dtype=float),
         where=support > 0,
     )
     f1 = np.divide(
         2 * precision * recall,
         precision + recall,
-        out=np.zeros(len(classes), dtype=float),
+        out=np.zeros(len(generated_classes), dtype=float),
         where=(precision + recall) > 0,
     )
     total = int(counts.sum())
@@ -340,21 +380,24 @@ def _confusion_metrics(
         out=np.zeros_like(counts, dtype=float),
         where=support[:, None] > 0,
     )
-    weights = support / total if total else np.zeros(len(classes), dtype=float)
+    weights = support / total if total else np.zeros(len(generated_classes), dtype=float)
 
+    truth_count = np.zeros(len(detected_classes), dtype=np.int64)
+    for row_index, strategy in enumerate(generated_classes):
+        truth_count[detected_index[strategy]] = support[row_index]
     expected_agreement = (
-        float(np.dot(support, predicted_count) / (total * total)) if total else 0.0
+        float(np.dot(truth_count, predicted_count) / (total * total)) if total else 0.0
     )
     cohen_kappa = (
         (accuracy - expected_agreement) / (1.0 - expected_agreement)
         if expected_agreement < 1.0
         else 1.0
     )
-    mcc_numerator = float(correct.sum() * total - np.dot(support, predicted_count))
+    mcc_numerator = float(correct.sum() * total - np.dot(truth_count, predicted_count))
     mcc_denominator = float(
         np.sqrt(
             (total**2 - np.dot(predicted_count, predicted_count))
-            * (total**2 - np.dot(support, support))
+            * (total**2 - np.dot(truth_count, truth_count))
         )
     )
     multiclass_mcc = mcc_numerator / mcc_denominator if mcc_denominator else 0.0
@@ -380,19 +423,52 @@ def _confusion_metrics(
         "classes": {
             strategy: {
                 "support": int(support[index]),
-                "predicted": int(predicted_count[index]),
+                "predicted": int(matching_predicted_count[index]),
                 "correct": int(correct[index]),
                 "precision": float(precision[index]),
                 "recall": float(recall[index]),
                 "f1": float(f1[index]),
             }
-            for index, strategy in enumerate(classes)
+            for index, strategy in enumerate(generated_classes)
+        },
+        "detected_output_counts": {
+            strategy: int(predicted_count[index])
+            for index, strategy in enumerate(detected_classes)
         },
         "confusion_matrix": {
-            "class_order": list(classes),
+            "generated_class_order": list(generated_classes),
+            "detected_class_order": list(detected_classes),
             "counts": counts.tolist(),
             "row_percentages": percentages.tolist(),
         },
+    }
+
+
+def _rejection_metrics(
+    detections: dict[str, list[str]],
+    *,
+    expected_output: str = "UNCLASSIFIED",
+) -> dict:
+    by_generator = {}
+    all_detections = []
+    for generator, values in detections.items():
+        counts = {strategy: values.count(strategy) for strategy in sorted(set(values))}
+        rejected = values.count(expected_output)
+        by_generator[generator] = {
+            "sample_count": len(values),
+            "expected_output": expected_output,
+            "rejected_count": rejected,
+            "rejection_rate": rejected / len(values) if values else 0.0,
+            "detected_output_counts": counts,
+        }
+        all_detections.extend(values)
+    rejected = all_detections.count(expected_output)
+    return {
+        "sample_count": len(all_detections),
+        "expected_output": expected_output,
+        "rejected_count": rejected,
+        "rejection_rate": rejected / len(all_detections) if all_detections else 0.0,
+        "by_generator": by_generator,
     }
 
 
@@ -403,7 +479,8 @@ def _matrix_percentages(metrics: dict) -> np.ndarray:
 def _draw_confusion_matrix(
     ax,
     metrics: dict,
-    classes: tuple[str, ...],
+    generated_classes: tuple[str, ...],
+    detected_classes: tuple[str, ...],
     *,
     title: str | None = None,
 ):
@@ -416,15 +493,16 @@ def _draw_confusion_matrix(
         aspect="auto",
         interpolation="nearest",
     )
-    labels = [STRATEGY_PRETTY[strategy] for strategy in classes]
+    xlabels = [STRATEGY_PRETTY[strategy] for strategy in detected_classes]
+    ylabels = [STRATEGY_PRETTY[strategy] for strategy in generated_classes]
     ax.set_xticks(
-        np.arange(len(labels)),
-        labels,
+        np.arange(len(xlabels)),
+        xlabels,
         rotation=35,
         ha="right",
         rotation_mode="anchor",
     )
-    ax.set_yticks(np.arange(len(labels)), labels)
+    ax.set_yticks(np.arange(len(ylabels)), ylabels)
     if title:
         title_font = linux_libertine_font_properties("DR", size=11)
         ax.set_title(title, pad=6, fontproperties=title_font)
@@ -458,21 +536,27 @@ def _save_figure(fig, output_path: Path, *, title: str, subject: str) -> Path:
 
 def plot_ideal_confusion_matrix(
     metrics: dict,
-    classes: tuple[str, ...],
+    generated_classes: tuple[str, ...],
+    detected_classes: tuple[str, ...],
     output_path: Path,
     *,
     title: str,
 ) -> Path:
     configure_paper_style()
-    figure_height = 3.75 if len(classes) > 4 else 3.25
+    figure_height = 3.75 if len(generated_classes) > 4 else 3.25
     fig, ax = plt.subplots(figsize=(7.16, figure_height))
-    image = _draw_confusion_matrix(ax, metrics, classes)
+    image = _draw_confusion_matrix(
+        ax,
+        metrics,
+        generated_classes,
+        detected_classes,
+    )
     ax.set_xlabel("Detected IP-ID Selection Strategy")
     ax.set_ylabel("Generating IP-ID\nSelection Strategy")
     colorbar = fig.colorbar(image, ax=ax, pad=0.04, fraction=0.045, ticks=np.arange(0, 101, 20))
     colorbar.set_label("Percentage [%]")
     fig.subplots_adjust(
-        left=0.22 if len(classes) > 4 else 0.19,
+        left=0.22 if len(generated_classes) > 4 else 0.19,
         right=0.88,
         bottom=0.32,
         top=0.98,
@@ -502,12 +586,14 @@ def plot_impaired_confusion_matrices(
         axes[0],
         lossy_metrics,
         FIXED_STRATEGIES,
+        FIXED_DETECTED_STRATEGIES,
         title="Lossy Dataset",
     )
     _draw_confusion_matrix(
         axes[1],
         reordered_metrics,
         FIXED_STRATEGIES,
+        FIXED_DETECTED_STRATEGIES,
         title="Lossy+Reordered Dataset",
     )
     axes[0].tick_params(axis="x", bottom=False, labelbottom=False)
@@ -565,6 +651,7 @@ def _append_dataset_rows(
     address_offset: int,
     loss_masks: dict[str, np.ndarray] | None = None,
     reordered_count: int = 0,
+    expected_strategies: dict[str, str] | None = None,
 ) -> int:
     sequence_length = CONNECTION_COUNT * requests_per_connection
     sent, received = _timestamps(
@@ -583,7 +670,9 @@ def _append_dataset_rows(
             columns["CONNECTION_COUNT"].append(CONNECTION_COUNT)
             columns["REQUESTS_PER_CONNECTION"].append(requests_per_connection)
             columns["GENERATOR_STRATEGY"].append(strategy)
-            columns["EXPECTED_STRATEGY"].append(strategy)
+            columns["EXPECTED_STRATEGY"].append(
+                strategy if expected_strategies is None else expected_strategies[strategy]
+            )
             columns["DETECTED_STRATEGY"].append(detections[strategy][sample_index])
             columns["IPID_SEQUENCE"].append(_serialize(values, missing))
             columns["SEND_TIMESTAMP_SEQUENCE"].append(_serialize(sent, missing))
@@ -628,8 +717,8 @@ def validate_classifier(
         raise ValueError("samples_per_strategy must be positive")
 
     seed_sequence = np.random.SeedSequence(seed)
-    rt_rng, fixed_rng, impairment_rng = [
-        np.random.default_rng(child) for child in seed_sequence.spawn(3)
+    rt_rng, rt_out_of_scope_rng, fixed_rng, fixed_out_of_scope_rng, impairment_rng = [
+        np.random.default_rng(child) for child in seed_sequence.spawn(5)
     ]
 
     generated_sample_count = max(samples_per_strategy, TRIVIAL_SAMPLES_PER_STRATEGY)
@@ -648,6 +737,14 @@ def validate_classifier(
         strategy: _strategy_names(classify_batch(values, rt_config))
         for strategy, values in rt_sequences.items()
     }
+    rt_out_of_scope_sequences = generate_rt_out_of_scope_sequences(
+        samples_per_strategy,
+        rt_out_of_scope_rng,
+    )
+    rt_out_of_scope_detections = {
+        strategy: _strategy_names(classify_batch(values, rt_config))
+        for strategy, values in rt_out_of_scope_sequences.items()
+    }
 
     fixed_sequences = generate_fixed_sequences(generated_sample_count, fixed_rng)
     fixed_sequences = {
@@ -663,6 +760,14 @@ def validate_classifier(
     fixed_detections = {
         strategy: _strategy_names(_classify_mass(values))
         for strategy, values in fixed_sequences.items()
+    }
+    fixed_out_of_scope_sequences = generate_fixed_out_of_scope_sequences(
+        samples_per_strategy,
+        fixed_out_of_scope_rng,
+    )
+    fixed_out_of_scope_detections = {
+        strategy: _strategy_names(_classify_mass(values))
+        for strategy, values in fixed_out_of_scope_sequences.items()
     }
 
     fixed_matrix = np.concatenate(
@@ -712,14 +817,34 @@ def validate_classifier(
         reordered_detections,
         FIXED_STRATEGIES,
     )
-    rt_metrics = _confusion_metrics(rt_expected, rt_detected, RT_STRATEGIES)
-    fixed_metrics = _confusion_metrics(fixed_expected, fixed_detected, FIXED_STRATEGIES)
-    lossy_metrics = _confusion_metrics(lossy_expected, lossy_detected, FIXED_STRATEGIES)
+    rt_metrics = _confusion_metrics(
+        rt_expected,
+        rt_detected,
+        RT_STRATEGIES,
+        RT_DETECTED_STRATEGIES,
+    )
+    fixed_metrics = _confusion_metrics(
+        fixed_expected,
+        fixed_detected,
+        FIXED_STRATEGIES,
+        FIXED_DETECTED_STRATEGIES,
+    )
+    lossy_metrics = _confusion_metrics(
+        lossy_expected,
+        lossy_detected,
+        FIXED_STRATEGIES,
+        FIXED_DETECTED_STRATEGIES,
+    )
     reordered_metrics = _confusion_metrics(
         reordered_expected,
         reordered_detected,
         FIXED_STRATEGIES,
+        FIXED_DETECTED_STRATEGIES,
     )
+    out_of_scope_metrics = {
+        "rt_based": _rejection_metrics(rt_out_of_scope_detections),
+        "fixed_interval": _rejection_metrics(fixed_out_of_scope_detections),
+    }
 
     columns = _empty_validation_columns()
     next_address = _append_dataset_rows(
@@ -730,14 +855,31 @@ def validate_classifier(
         requests_per_connection=RT_REQUESTS_PER_CONNECTION,
         address_offset=0,
     )
-    fixed_address_offset = next_address
+    next_address = _append_dataset_rows(
+        columns,
+        dataset=RT_OUT_OF_SCOPE_DATASET,
+        sequences=rt_out_of_scope_sequences,
+        detections=rt_out_of_scope_detections,
+        requests_per_connection=RT_REQUESTS_PER_CONNECTION,
+        address_offset=next_address,
+        expected_strategies={"MULTI": "UNCLASSIFIED"},
+    )
     next_address = _append_dataset_rows(
         columns,
         dataset=FIXED_IDEAL_DATASET,
         sequences=fixed_sequences,
         detections=fixed_detections,
         requests_per_connection=FIXED_REQUESTS_PER_CONNECTION,
-        address_offset=fixed_address_offset,
+        address_offset=next_address,
+    )
+    next_address = _append_dataset_rows(
+        columns,
+        dataset=FIXED_OUT_OF_SCOPE_DATASET,
+        sequences=fixed_out_of_scope_sequences,
+        detections=fixed_out_of_scope_detections,
+        requests_per_connection=FIXED_REQUESTS_PER_CONNECTION,
+        address_offset=next_address,
+        expected_strategies={"SINGLE": "UNCLASSIFIED"},
     )
     next_address = _append_dataset_rows(
         columns,
@@ -768,7 +910,7 @@ def validate_classifier(
     common_metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "classifier_version": CLASSIFIER_VERSION,
-        "synthetic_generator_version": "1",
+        "synthetic_generator_version": "2",
         "seed": seed,
         "samples_per_strategy": samples_per_strategy,
         "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
@@ -777,6 +919,14 @@ def validate_classifier(
             RT_DATASET: {strategy: len(rt_sequences[strategy]) for strategy in RT_STRATEGIES},
             FIXED_IDEAL_DATASET: {
                 strategy: len(fixed_sequences[strategy]) for strategy in FIXED_STRATEGIES
+            },
+            RT_OUT_OF_SCOPE_DATASET: {
+                strategy: len(rt_out_of_scope_sequences[strategy])
+                for strategy in RT_OUT_OF_SCOPE_STRATEGIES
+            },
+            FIXED_OUT_OF_SCOPE_DATASET: {
+                strategy: len(fixed_out_of_scope_sequences[strategy])
+                for strategy in FIXED_OUT_OF_SCOPE_STRATEGIES
             },
         },
         "connection_count": CONNECTION_COUNT,
@@ -790,6 +940,7 @@ def validate_classifier(
     rt_json = figure_dir / "rt-based-4x4-classifier-confusion.json"
     fixed_json = figure_dir / "fixed-interval-4x25-classifier-confusion.json"
     impaired_json = figure_dir / "fixed-interval-4x25-impaired-classifier-confusion.json"
+    out_of_scope_json = figure_dir / "out-of-scope-classifier-rejection.json"
     _write_json(
         {
             **common_metadata,
@@ -827,6 +978,28 @@ def validate_classifier(
         },
         impaired_json,
     )
+    _write_json(
+        {
+            **common_metadata,
+            "purpose": (
+                "Validate that real generating strategies outside each measurement "
+                "classifier's supported label space are rejected as UNCLASSIFIED."
+            ),
+            "tests": {
+                "rt_based": {
+                    "dataset": RT_OUT_OF_SCOPE_DATASET,
+                    "generating_strategies": list(RT_OUT_OF_SCOPE_STRATEGIES),
+                    "metrics": out_of_scope_metrics["rt_based"],
+                },
+                "fixed_interval": {
+                    "dataset": FIXED_OUT_OF_SCOPE_DATASET,
+                    "generating_strategies": list(FIXED_OUT_OF_SCOPE_STRATEGIES),
+                    "metrics": out_of_scope_metrics["fixed_interval"],
+                },
+            },
+        },
+        out_of_scope_json,
+    )
 
     rt_pdf = figure_dir / "rt-based-4x4-classifier-confusion.pdf"
     fixed_pdf = figure_dir / "fixed-interval-4x25-classifier-confusion.pdf"
@@ -834,12 +1007,14 @@ def validate_classifier(
     plot_ideal_confusion_matrix(
         rt_metrics,
         RT_STRATEGIES,
+        RT_DETECTED_STRATEGIES,
         rt_pdf,
         title="RT-based 4x4 classifier validation",
     )
     plot_ideal_confusion_matrix(
         fixed_metrics,
         FIXED_STRATEGIES,
+        FIXED_DETECTED_STRATEGIES,
         fixed_pdf,
         title="Fixed-interval 4x25 classifier validation",
     )
@@ -853,6 +1028,7 @@ def validate_classifier(
         "fixed_interval_json": fixed_json,
         "impaired_pdf": impaired_pdf,
         "impaired_json": impaired_json,
+        "out_of_scope_json": out_of_scope_json,
     }
 
 
