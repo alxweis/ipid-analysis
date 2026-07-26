@@ -20,6 +20,10 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     REQUESTS_PER_CONNECTION,
     TRIVIAL_SAMPLES_PER_STRATEGY,
     X_AXIS_MAXIMUM,
+    X_MAJOR_EXPONENT_STEP,
+    X_MINOR_EXPONENT_OFFSET,
+    _increment_pvalues,
+    _log_axis_parameters,
     apply_strategy_impairments,
     calculate_strategy_pvalues,
     generate_chi2_sequences,
@@ -79,6 +83,50 @@ class Chi2PvalueCDFTest(unittest.TestCase):
         np.testing.assert_array_equal(
             mass_detected[sample_count:],
             np.full(sample_count, int(IPIDStrategy.RANDOM)),
+        )
+
+    def test_ideal_per_connection_subsequences_have_constant_pvalue(self):
+        sequences = generate_chi2_sequences(32, np.random.default_rng(9))[
+            "PER_CONNECTION"
+        ].astype(np.int64)
+        connections = sequences.reshape(
+            len(sequences),
+            REQUESTS_PER_CONNECTION,
+            CONNECTION_COUNT,
+        ).transpose(0, 2, 1)
+        present = np.ones(
+            (len(sequences), REQUESTS_PER_CONNECTION),
+            dtype=bool,
+        )
+
+        for connection_index in range(CONNECTION_COUNT):
+            increments = (
+                np.diff(connections[:, connection_index, :], axis=1) & 0xFFFF
+            )
+            np.testing.assert_array_equal(increments, np.ones_like(increments))
+            pvalues = _increment_pvalues(
+                connections[:, connection_index, :],
+                present,
+            )
+            self.assertEqual(len(np.unique(pvalues)), 1)
+
+    def test_log_axis_has_one_minor_tick_between_twenty_decade_major_ticks(self):
+        axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(
+            {"strategy": np.asarray([1e-185, 1.0])}
+        )
+
+        self.assertEqual(axis_minimum, 1e-200)
+        np.testing.assert_allclose(
+            np.log10(major_ticks),
+            np.arange(-200, 1, X_MAJOR_EXPONENT_STEP),
+        )
+        np.testing.assert_allclose(
+            np.log10(minor_ticks),
+            np.arange(
+                -200 + X_MINOR_EXPONENT_OFFSET,
+                1,
+                X_MAJOR_EXPONENT_STEP,
+            ),
         )
 
     def test_pvalues_and_rendered_artifacts(self):
@@ -181,10 +229,18 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 metadata["chi2_uniformity_test"]["subsequences"],
                 list(INCREMENT_SUBSEQUENCES),
             )
-            self.assertEqual(metadata["chi2_uniformity_test"]["bins"], 10)
-            self.assertEqual(metadata["chi2_uniformity_test"]["degrees_of_freedom"], 9)
+            self.assertEqual(metadata["chi2_uniformity_test"]["bins"], 4)
+            self.assertEqual(metadata["chi2_uniformity_test"]["degrees_of_freedom"], 3)
             self.assertGreater(metadata["x_axis_maximum"], 1.0)
             self.assertEqual(metadata["x_axis_maximum"], X_AXIS_MAXIMUM)
+            self.assertEqual(
+                metadata["x_axis_major_exponent_step"],
+                X_MAJOR_EXPONENT_STEP,
+            )
+            self.assertEqual(
+                metadata["x_axis_minor_exponent_offset"],
+                X_MINOR_EXPONENT_OFFSET,
+            )
             self.assertEqual(
                 metadata["samples_by_strategy"]["REFLECTION"],
                 TRIVIAL_SAMPLES_PER_STRATEGY,

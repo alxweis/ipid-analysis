@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 
 from matplotlib.lines import Line2D  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullLocator  # noqa: E402
+from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter  # noqa: E402
 
 from ipid_analysis.classifier_validation import (  # noqa: E402
     REQUEST_IP_IDS,
@@ -49,6 +49,8 @@ DEFAULT_SAMPLES_PER_STRATEGY = 10_000
 TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
 DEFAULT_SEED = 42
 X_AXIS_MAXIMUM = 1.05
+X_MAJOR_EXPONENT_STEP = 20
+X_MINOR_EXPONENT_OFFSET = 10
 IDEAL_DATASET = "ideal"
 LOSSY_DATASET = "lossy"
 LOSSY_REORDERED_DATASET = "lossy-reordered"
@@ -281,16 +283,28 @@ def _ecdf_coordinates(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.concatenate(([ordered[0]], ordered)), np.concatenate(([0.0], percentages))
 
 
-def _log_axis_parameters(pvalues: dict[str, np.ndarray]) -> tuple[float, np.ndarray]:
+def _log_axis_parameters(
+    pvalues: dict[str, np.ndarray],
+) -> tuple[float, np.ndarray, np.ndarray]:
     minimum = min(float(values[values > 0].min()) for values in pvalues.values())
     minimum_exponent = math.floor(math.log10(minimum))
-    tick_step = 10 if minimum_exponent <= -30 else 5
-    axis_minimum_exponent = tick_step * math.floor(minimum_exponent / tick_step)
-    ticks = np.power(
-        10.0,
-        np.arange(axis_minimum_exponent, 1, tick_step, dtype=float),
+    axis_minimum_exponent = X_MAJOR_EXPONENT_STEP * math.floor(
+        minimum_exponent / X_MAJOR_EXPONENT_STEP
     )
-    return 10.0**axis_minimum_exponent, ticks
+    major_ticks = np.power(
+        10.0,
+        np.arange(axis_minimum_exponent, 1, X_MAJOR_EXPONENT_STEP, dtype=float),
+    )
+    minor_ticks = np.power(
+        10.0,
+        np.arange(
+            axis_minimum_exponent + X_MINOR_EXPONENT_OFFSET,
+            1,
+            X_MAJOR_EXPONENT_STEP,
+            dtype=float,
+        ),
+    )
+    return 10.0**axis_minimum_exponent, major_ticks, minor_ticks
 
 
 def plot_chi2_pvalue_cdf(
@@ -311,12 +325,15 @@ def plot_chi2_pvalue_cdf(
             linewidth=1.7,
         )
 
-    axis_minimum, major_ticks = _log_axis_parameters(pvalues)
+    axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(pvalues)
     ax.set_xscale("log")
     ax.set_xlim(axis_minimum, X_AXIS_MAXIMUM)
     ax.set_xticks(major_ticks)
+    ax.set_xticks(minor_ticks, minor=True)
     ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10))
-    ax.xaxis.set_minor_locator(NullLocator())
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.tick_params(axis="x", which="major", length=5, width=0.8)
+    ax.tick_params(axis="x", which="minor", length=2.8, width=0.65)
     ax.set_ylim(0, 103)
     ax.yaxis.set_major_locator(MultipleLocator(20))
     ax.yaxis.set_minor_locator(MultipleLocator(10))
@@ -500,6 +517,8 @@ def render(
             "order_invariant": False,
         },
         "x_axis_maximum": X_AXIS_MAXIMUM,
+        "x_axis_major_exponent_step": X_MAJOR_EXPONENT_STEP,
+        "x_axis_minor_exponent_offset": X_MINOR_EXPONENT_OFFSET,
         "aggregate": str(aggregate_path),
     }
     ideal_json_path = _write_json(

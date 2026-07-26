@@ -240,6 +240,12 @@ class ClassifierValidationTest(unittest.TestCase):
                 rt_report["synthetic_generator_parameters"]["SINGLE"]["increment_range_inclusive"],
                 [1, MAX_INC],
             )
+            self.assertEqual(
+                rt_report["synthetic_generator_parameters"]["PER_BUCKET"][
+                    "increment_range_inclusive"
+                ],
+                [1, MAX_INC],
+            )
             self.assertEqual(rt_report["metrics"]["accuracy"], 1.0)
             self.assertEqual(fixed_report["metrics"]["macro"]["f1"], 1.0)
             self.assertEqual(
