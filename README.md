@@ -105,14 +105,15 @@ By default, 10,000 sequences are generated per evaluated strategy.
 1,000 sequences each. `--samples-per-strategy` therefore controls the
 nontrivial strategies.
 
-Every synthetic generator samples uniformly across its complete valid
-classifier domain: 16-bit starts and values use `0..65535`, `SINGLE` and
-`PER_BUCKET` increments use `1..21845`, and `MULTI` uses a uniformly selected
-cluster count from 2 through 16 with randomized cluster positions and offsets
-through the inclusive 800 threshold. All cumulative counters wrap naturally
-modulo 2^16. The validation generates only values within the strategy
-definitions; it does not inject invalid boundary cases. The exact generator
-parameters are also recorded in every validation JSON sidecar.
+The synthetic generators sample uniformly within their configured valid
+domains: 16-bit starts and values use `0..65535`, `SINGLE` increments use the
+full classifier range `1..21845`, and `PER_BUCKET` uses the more realistic
+range `1..8000`. `MULTI` uses a uniformly selected cluster count from 2 through
+16 with randomized cluster positions and offsets through the inclusive 800
+threshold. All cumulative counters wrap naturally modulo 2^16. The validation
+generates only values within the strategy definitions; it does not inject
+invalid boundary cases. The exact generator parameters are also recorded in
+every validation JSON sidecar.
 
 The RT-based dataset uses the real 4 x 4 round/connection interleaving and
 evaluates `REFLECTION`, `CONSTANT`, `SINGLE`, `PER_CONNECTION`,

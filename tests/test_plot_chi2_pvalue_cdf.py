@@ -7,7 +7,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ipid_analysis.classifier_validation import REQUEST_IP_IDS
+from ipid_analysis.classifier_validation import PER_BUCKET_MAX_INC, REQUEST_IP_IDS
 from ipid_analysis.plot_chi2_pvalue_cdf import (
     CONNECTION_COUNT,
     IDEAL_DATASET,
@@ -20,13 +20,13 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     REQUESTS_PER_CONNECTION,
     TRIVIAL_SAMPLES_PER_STRATEGY,
     X_AXIS_MAXIMUM,
+    _increment_pvalues,
     apply_strategy_impairments,
     calculate_strategy_pvalues,
     generate_chi2_sequences,
     render,
 )
 from ipid_analysis.strategies import (
-    MAX_INC,
     IPIDStrategy,
     MeasurementConfig,
     classify_batch,
@@ -80,6 +80,31 @@ class Chi2PvalueCDFTest(unittest.TestCase):
             mass_detected[sample_count:],
             np.full(sample_count, int(IPIDStrategy.RANDOM)),
         )
+
+    def test_ideal_per_connection_subsequences_have_constant_pvalue(self):
+        sequences = generate_chi2_sequences(32, np.random.default_rng(9))[
+            "PER_CONNECTION"
+        ].astype(np.int64)
+        connections = sequences.reshape(
+            len(sequences),
+            REQUESTS_PER_CONNECTION,
+            CONNECTION_COUNT,
+        ).transpose(0, 2, 1)
+        present = np.ones(
+            (len(sequences), REQUESTS_PER_CONNECTION),
+            dtype=bool,
+        )
+
+        for connection_index in range(CONNECTION_COUNT):
+            increments = (
+                np.diff(connections[:, connection_index, :], axis=1) & 0xFFFF
+            )
+            np.testing.assert_array_equal(increments, np.ones_like(increments))
+            pvalues = _increment_pvalues(
+                connections[:, connection_index, :],
+                present,
+            )
+            self.assertEqual(len(np.unique(pvalues)), 1)
 
     def test_pvalues_and_rendered_artifacts(self):
         sample_count = 8
@@ -197,7 +222,7 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 metadata["synthetic_generator_parameters"]["PER_BUCKET"][
                     "increment_range_inclusive"
                 ],
-                [1, MAX_INC],
+                [1, PER_BUCKET_MAX_INC],
             )
 
 
