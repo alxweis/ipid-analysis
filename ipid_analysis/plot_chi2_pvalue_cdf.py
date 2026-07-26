@@ -49,6 +49,7 @@ DEFAULT_SAMPLES_PER_STRATEGY = 10_000
 TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
 DEFAULT_SEED = 42
 X_AXIS_MAXIMUM = 1.05
+IDEAL_DATASET = "ideal"
 LOSSY_DATASET = "lossy"
 LOSSY_REORDERED_DATASET = "lossy-reordered"
 
@@ -354,7 +355,10 @@ def plot_chi2_pvalue_cdf(
                 "Minimum increment-subsequence Chi-square p-value distributions "
                 f"by IP-ID selection strategy ({dataset_label})"
             ),
-            "Subject": "Synthetic lossy 4x25 IP-ID increment-subsequence empirical CDFs",
+            "Subject": (
+                "Synthetic 4x25 IP-ID increment-subsequence empirical CDFs "
+                f"({dataset_label})"
+            ),
             "Creator": "ipid-analysis",
         },
     )
@@ -402,7 +406,7 @@ def render(
     seed: int = DEFAULT_SEED,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
-) -> tuple[Path, Path, Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
 
@@ -415,6 +419,11 @@ def render(
         ideal_sequences,
         impairment_rng,
     )
+    ideal_loss_masks = {
+        strategy: np.zeros_like(values, dtype=bool)
+        for strategy, values in ideal_sequences.items()
+    }
+    ideal_pvalues = calculate_strategy_pvalues(ideal_sequences, ideal_loss_masks)
     lossy_pvalues = calculate_strategy_pvalues(lossy_sequences, loss_masks)
     reordered_pvalues = calculate_strategy_pvalues(reordered_sequences, loss_masks)
 
@@ -422,10 +431,16 @@ def render(
     figure_dir = figures_root / "classifier-validation"
     aggregate_path = _write_pvalues(
         {
+            IDEAL_DATASET: ideal_pvalues,
             LOSSY_DATASET: lossy_pvalues,
             LOSSY_REORDERED_DATASET: reordered_pvalues,
         },
         processed_dir / "chi2-pvalue-cdf.pq",
+    )
+    ideal_pdf_path = plot_chi2_pvalue_cdf(
+        ideal_pvalues,
+        figure_dir / "chi2-pvalue-cdf-ideal.pdf",
+        dataset_label="Ideal Dataset",
     )
     lossy_pdf_path = plot_chi2_pvalue_cdf(
         lossy_pvalues,
@@ -438,7 +453,7 @@ def render(
         dataset_label="Lossy+Reordered Dataset",
     )
     samples_by_strategy = {
-        strategy: int(len(lossy_pvalues[strategy])) for strategy in PLOT_STRATEGIES
+        strategy: int(len(ideal_pvalues[strategy])) for strategy in PLOT_STRATEGIES
     }
 
     def summarize(pvalues: dict[str, np.ndarray]) -> dict:
@@ -464,12 +479,6 @@ def render(
         "connection_count": CONNECTION_COUNT,
         "requests_per_connection": REQUESTS_PER_CONNECTION,
         "ideal_sequence_length": IDEAL_SEQUENCE_LENGTH,
-        "present_ipids_per_sequence": PRESENT_SEQUENCE_LENGTH,
-        "loss_fraction": LOSS_FRACTION,
-        "lost_ipids_per_sequence": IDEAL_SEQUENCE_LENGTH - PRESENT_SEQUENCE_LENGTH,
-        "reorder_fraction_of_present": REORDER_FRACTION,
-        "reordered_ipids_per_sequence": round(PRESENT_SEQUENCE_LENGTH * REORDER_FRACTION),
-        "paired_loss_masks": True,
         "samples_per_nontrivial_strategy": samples_per_strategy,
         "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
         "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
@@ -493,10 +502,31 @@ def render(
         "x_axis_maximum": X_AXIS_MAXIMUM,
         "aggregate": str(aggregate_path),
     }
+    ideal_json_path = _write_json(
+        {
+            **common_metadata,
+            "dataset": IDEAL_DATASET,
+            "present_ipids_per_sequence": IDEAL_SEQUENCE_LENGTH,
+            "loss_fraction": 0.0,
+            "lost_ipids_per_sequence": 0,
+            "reorder_fraction_of_present": 0.0,
+            "reordered_ipids_per_sequence": 0,
+            "paired_loss_masks": False,
+            "figure": str(ideal_pdf_path),
+            "summary_by_strategy": summarize(ideal_pvalues),
+        },
+        figure_dir / "chi2-pvalue-cdf-ideal.json",
+    )
     lossy_json_path = _write_json(
         {
             **common_metadata,
             "dataset": LOSSY_DATASET,
+            "present_ipids_per_sequence": PRESENT_SEQUENCE_LENGTH,
+            "loss_fraction": LOSS_FRACTION,
+            "lost_ipids_per_sequence": IDEAL_SEQUENCE_LENGTH - PRESENT_SEQUENCE_LENGTH,
+            "reorder_fraction_of_present": 0.0,
+            "reordered_ipids_per_sequence": 0,
+            "paired_loss_masks": True,
             "figure": str(lossy_pdf_path),
             "summary_by_strategy": summarize(lossy_pvalues),
         },
@@ -506,12 +536,22 @@ def render(
         {
             **common_metadata,
             "dataset": LOSSY_REORDERED_DATASET,
+            "present_ipids_per_sequence": PRESENT_SEQUENCE_LENGTH,
+            "loss_fraction": LOSS_FRACTION,
+            "lost_ipids_per_sequence": IDEAL_SEQUENCE_LENGTH - PRESENT_SEQUENCE_LENGTH,
+            "reorder_fraction_of_present": REORDER_FRACTION,
+            "reordered_ipids_per_sequence": round(
+                PRESENT_SEQUENCE_LENGTH * REORDER_FRACTION
+            ),
+            "paired_loss_masks": True,
             "figure": str(reordered_pdf_path),
             "summary_by_strategy": summarize(reordered_pvalues),
         },
         figure_dir / "chi2-pvalue-cdf-lossy-reordered.json",
     )
     return (
+        ideal_pdf_path,
+        ideal_json_path,
         lossy_pdf_path,
         lossy_json_path,
         reordered_pdf_path,
@@ -532,6 +572,8 @@ def main(
     seed: int = typer.Option(DEFAULT_SEED, help="deterministic random seed"),
 ) -> None:
     (
+        ideal_pdf_path,
+        ideal_json_path,
         lossy_pdf_path,
         lossy_json_path,
         reordered_pdf_path,
@@ -541,6 +583,8 @@ def main(
         samples_per_strategy=samples_per_strategy,
         seed=seed,
     )
+    typer.echo(f"ideal_pdf: {ideal_pdf_path}")
+    typer.echo(f"ideal_json: {ideal_json_path}")
     typer.echo(f"lossy_pdf: {lossy_pdf_path}")
     typer.echo(f"lossy_json: {lossy_json_path}")
     typer.echo(f"lossy_reordered_pdf: {reordered_pdf_path}")

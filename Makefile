@@ -91,7 +91,7 @@ validate-classifier:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.classifier_validation $(ARGS)
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_chi2_pvalue_cdf $(ARGS)
 
-## Plot global Chi-square p-value CDFs for synthetic 4x20 strategy sequences
+## Plot global Chi-square p-value CDFs for synthetic 4x25 strategy sequences
 .PHONY: plot-chi2-pvalue-cdf
 plot-chi2-pvalue-cdf:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_chi2_pvalue_cdf $(ARGS)
