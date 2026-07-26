@@ -204,6 +204,10 @@ class Chi2PvalueCDFTest(unittest.TestCase):
             )
             self.assertEqual(ideal_metadata["lost_ipids_per_sequence"], 0)
             self.assertEqual(ideal_metadata["reordered_ipids_per_sequence"], 0)
+            self.assertEqual(
+                ideal_metadata["random_minimum_p_value_marker"],
+                ideal_metadata["summary_by_strategy"]["RANDOM"]["minimum"],
+            )
             self.assertEqual(metadata["ideal_sequence_length"], IDEAL_SEQUENCE_LENGTH)
             self.assertEqual(
                 metadata["present_ipids_per_sequence"],
@@ -211,8 +215,16 @@ class Chi2PvalueCDFTest(unittest.TestCase):
             )
             self.assertEqual(metadata["lost_ipids_per_sequence"], 20)
             self.assertEqual(metadata["reordered_ipids_per_sequence"], 0)
+            self.assertEqual(
+                metadata["random_minimum_p_value_marker"],
+                metadata["summary_by_strategy"]["RANDOM"]["minimum"],
+            )
             self.assertEqual(reordered_metadata["dataset"], LOSSY_REORDERED_DATASET)
             self.assertEqual(reordered_metadata["reordered_ipids_per_sequence"], 16)
+            self.assertEqual(
+                reordered_metadata["random_minimum_p_value_marker"],
+                reordered_metadata["summary_by_strategy"]["RANDOM"]["minimum"],
+            )
             self.assertEqual(
                 metadata["chi2_uniformity_test"]["scope"],
                 (
