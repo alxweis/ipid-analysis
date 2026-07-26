@@ -170,6 +170,28 @@ threshold. The three PDFs and their JSON metadata are written below
 `reports/figures/classifier-validation/`, and the underlying p-values are
 stored in `data/processed/classifier-validation/chi2-pvalue-cdf.pq`.
 
+The same synthetic datasets can be evaluated with the candidate
+RANDOM-compatibility structure score:
+
+```bash
+make plot-random-structure-score-cdf
+# Optional:
+make plot-random-structure-score-cdf ARGS="--samples-per-strategy 10000 --seed 42"
+```
+
+The score `S` is the minimum empirical p-value from discrete KS-D, two-sided
+circular Greenwood-spacing, and second-difference KS-D tests over the raw,
+full, destination, and connection views. Unlike the older Chi-square
+diagnostic, increments are formed only between logically adjacent present
+positions; missing replies are never bridged. Independent discrete-uniform
+null samples convert all statistics to comparable p-values. A separate RANDOM
+calibration set selects one global threshold `tau` shared by the ideal, lossy,
+and lossy+reordered plots: `S >= tau` is RANDOM-compatible. The PDFs and JSON
+metadata are written below `reports/figures/classifier-validation/`; the
+underlying scores and decisions are stored in
+`data/processed/classifier-validation/random-structure-score-cdf.pq`. This
+diagnostic does not yet change the production classifier.
+
 ## Merging base and mass strategies
 
 The canonical no-connection RT-base and fixed-interval-mass results can be
