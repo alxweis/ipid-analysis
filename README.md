@@ -160,9 +160,10 @@ minimum of these seven p-values is plotted. Missing values are removed within
 each subsequence before its differences are formed, so reordering can change
 the resulting increment distributions. Each Chi-square test uses four
 equal-width bins over the 16-bit IP-ID space (three degrees of freedom). The
-logarithmic x-axis extends only slightly beyond `10^0`, making the endpoint of
-the CDF lines at the maximum possible p-value visible. The three PDFs and their
-JSON metadata are written below
+logarithmic x-axis uses labeled major ticks every 20 decades and one unlabeled
+minor tick halfway between consecutive major ticks. It extends only slightly
+beyond `10^0`, making the endpoint of the CDF lines at the maximum possible
+p-value visible. The three PDFs and their JSON metadata are written below
 `reports/figures/classifier-validation/`, and the underlying p-values are
 stored in `data/processed/classifier-validation/chi2-pvalue-cdf.pq`.
 
