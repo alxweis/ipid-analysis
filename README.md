@@ -149,18 +149,19 @@ make plot-chi2-pvalue-cdf
 make plot-chi2-pvalue-cdf ARGS="--samples-per-strategy 10000 --seed 42"
 ```
 
-The plot uses 10,000 sequences for every nontrivial strategy and 1,000 each for
-`REFLECTION` and `CONSTANT`. The lossy dataset removes exactly 20 random values
-from each 100-value sequence. The paired lossy+reordered dataset uses the same
-loss mask and additionally permutes 16 of the remaining 80 values. One p-value
-is calculated for the modular increments of each of seven subsequences: the
-full sequence, two destination subsequences, and four connection subsequences.
-The minimum of these seven p-values is plotted. Missing values are removed
-within each subsequence before its differences are formed, so reordering can
-change the resulting increment distributions. Each Chi-square test uses ten
+The plots use 10,000 sequences for every nontrivial strategy and 1,000 each for
+`REFLECTION` and `CONSTANT`. The ideal dataset keeps all 100 values without
+reordering. The lossy dataset removes exactly 20 random values from each
+100-value sequence. The paired lossy+reordered dataset uses the same loss mask
+and additionally permutes 16 of the remaining 80 values. One p-value is
+calculated for the modular increments of each of seven subsequences: the full
+sequence, two destination subsequences, and four connection subsequences. The
+minimum of these seven p-values is plotted. Missing values are removed within
+each subsequence before its differences are formed, so reordering can change
+the resulting increment distributions. Each Chi-square test uses ten
 equal-width bins over the 16-bit IP-ID space (nine degrees of freedom). The
 logarithmic x-axis extends only slightly beyond `10^0`, making the endpoint of
-the CDF lines at the maximum possible p-value visible. The separate PDFs and
+the CDF lines at the maximum possible p-value visible. The three PDFs and their
 JSON metadata are written below
 `reports/figures/classifier-validation/`, and the underlying p-values are
 stored in `data/processed/classifier-validation/chi2-pvalue-cdf.pq`.

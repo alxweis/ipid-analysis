@@ -10,6 +10,7 @@ import pyarrow.parquet as pq
 from ipid_analysis.classifier_validation import REQUEST_IP_IDS
 from ipid_analysis.plot_chi2_pvalue_cdf import (
     CONNECTION_COUNT,
+    IDEAL_DATASET,
     IDEAL_SEQUENCE_LENGTH,
     INCREMENT_SUBSEQUENCES,
     LOSSY_DATASET,
@@ -100,6 +101,8 @@ class Chi2PvalueCDFTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (
+                ideal_pdf_path,
+                ideal_json_path,
                 lossy_pdf_path,
                 lossy_json_path,
                 reordered_pdf_path,
@@ -112,6 +115,8 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 figures_root=root / "figures",
             )
             for path in (
+                ideal_pdf_path,
+                ideal_json_path,
                 lossy_pdf_path,
                 lossy_json_path,
                 reordered_pdf_path,
@@ -121,11 +126,11 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 self.assertTrue(path.is_file(), path)
 
             table = pq.read_table(aggregate_path)
-            expected_rows = 2 * (2 * TRIVIAL_SAMPLES_PER_STRATEGY + 6 * sample_count)
+            expected_rows = 3 * (2 * TRIVIAL_SAMPLES_PER_STRATEGY + 6 * sample_count)
             self.assertEqual(table.num_rows, expected_rows)
             self.assertEqual(
                 set(table.column("DATASET").to_pylist()),
-                {LOSSY_DATASET, LOSSY_REORDERED_DATASET},
+                {IDEAL_DATASET, LOSSY_DATASET, LOSSY_REORDERED_DATASET},
             )
             self.assertEqual(
                 set(table.column("IPID_SELECTION_STRATEGY").to_pylist()),
@@ -141,16 +146,25 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 ],
             )
 
+            ideal_metadata = json.loads(ideal_json_path.read_text())
             metadata = json.loads(lossy_json_path.read_text())
             reordered_metadata = json.loads(reordered_json_path.read_text())
+            self.assertEqual(ideal_metadata["dataset"], IDEAL_DATASET)
+            self.assertEqual(
+                ideal_metadata["present_ipids_per_sequence"],
+                IDEAL_SEQUENCE_LENGTH,
+            )
+            self.assertEqual(ideal_metadata["lost_ipids_per_sequence"], 0)
+            self.assertEqual(ideal_metadata["reordered_ipids_per_sequence"], 0)
             self.assertEqual(metadata["ideal_sequence_length"], IDEAL_SEQUENCE_LENGTH)
             self.assertEqual(
                 metadata["present_ipids_per_sequence"],
                 PRESENT_SEQUENCE_LENGTH,
             )
             self.assertEqual(metadata["lost_ipids_per_sequence"], 20)
-            self.assertEqual(metadata["reordered_ipids_per_sequence"], 16)
+            self.assertEqual(metadata["reordered_ipids_per_sequence"], 0)
             self.assertEqual(reordered_metadata["dataset"], LOSSY_REORDERED_DATASET)
+            self.assertEqual(reordered_metadata["reordered_ipids_per_sequence"], 16)
             self.assertEqual(
                 metadata["chi2_uniformity_test"]["scope"],
                 (
