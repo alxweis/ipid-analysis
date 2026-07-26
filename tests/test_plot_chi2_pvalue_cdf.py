@@ -18,6 +18,7 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     PRESENT_SEQUENCE_LENGTH,
     REQUESTS_PER_CONNECTION,
     TRIVIAL_SAMPLES_PER_STRATEGY,
+    X_AXIS_MAXIMUM,
     apply_strategy_impairments,
     calculate_strategy_pvalues,
     generate_chi2_sequences,
@@ -166,6 +167,10 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 metadata["chi2_uniformity_test"]["subsequences"],
                 list(INCREMENT_SUBSEQUENCES),
             )
+            self.assertEqual(metadata["chi2_uniformity_test"]["bins"], 10)
+            self.assertEqual(metadata["chi2_uniformity_test"]["degrees_of_freedom"], 9)
+            self.assertGreater(metadata["x_axis_maximum"], 1.0)
+            self.assertEqual(metadata["x_axis_maximum"], X_AXIS_MAXIMUM)
             self.assertEqual(
                 metadata["samples_by_strategy"]["REFLECTION"],
                 TRIVIAL_SAMPLES_PER_STRATEGY,
