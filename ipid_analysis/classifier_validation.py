@@ -49,7 +49,6 @@ RT_REQUESTS_PER_CONNECTION = 4
 FIXED_REQUESTS_PER_CONNECTION = 25
 DEFAULT_SAMPLES_PER_STRATEGY = 10_000
 TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
-PER_BUCKET_MAX_INC = 8_000
 REQUEST_IP_IDS = np.asarray([18933, 18932, 3717, 3718, 3719], dtype=np.int64)
 
 RT_DATASET = "rt-based-4x4-ideal"
@@ -93,7 +92,7 @@ SYNTHETIC_GENERATOR_PARAMETERS = {
     },
     "PER_BUCKET": {
         "start_range_inclusive": [0, MODULUS - 1],
-        "increment_range_inclusive": [1, PER_BUCKET_MAX_INC],
+        "increment_range_inclusive": [1, MAX_INC],
     },
     "MULTI": {
         "cluster_count_range_inclusive": [2, MULTI_MAX_CLUSTERS],
@@ -268,7 +267,7 @@ def generate_rt_sequences(
     )
     bucket_increments = rng.integers(
         1,
-        PER_BUCKET_MAX_INC + 1,
+        MAX_INC + 1,
         size=(n, CONNECTION_COUNT, RT_REQUESTS_PER_CONNECTION - 1),
         dtype=np.int64,
     )

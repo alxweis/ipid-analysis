@@ -7,7 +7,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ipid_analysis.classifier_validation import PER_BUCKET_MAX_INC, REQUEST_IP_IDS
+from ipid_analysis.classifier_validation import REQUEST_IP_IDS
 from ipid_analysis.plot_chi2_pvalue_cdf import (
     CONNECTION_COUNT,
     IDEAL_DATASET,
@@ -27,6 +27,7 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     render,
 )
 from ipid_analysis.strategies import (
+    MAX_INC,
     IPIDStrategy,
     MeasurementConfig,
     classify_batch,
@@ -206,8 +207,8 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 metadata["chi2_uniformity_test"]["subsequences"],
                 list(INCREMENT_SUBSEQUENCES),
             )
-            self.assertEqual(metadata["chi2_uniformity_test"]["bins"], 10)
-            self.assertEqual(metadata["chi2_uniformity_test"]["degrees_of_freedom"], 9)
+            self.assertEqual(metadata["chi2_uniformity_test"]["bins"], 4)
+            self.assertEqual(metadata["chi2_uniformity_test"]["degrees_of_freedom"], 3)
             self.assertGreater(metadata["x_axis_maximum"], 1.0)
             self.assertEqual(metadata["x_axis_maximum"], X_AXIS_MAXIMUM)
             self.assertEqual(
@@ -222,7 +223,7 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 metadata["synthetic_generator_parameters"]["PER_BUCKET"][
                     "increment_range_inclusive"
                 ],
-                [1, PER_BUCKET_MAX_INC],
+                [1, MAX_INC],
             )
 
 

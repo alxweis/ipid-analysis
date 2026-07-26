@@ -105,15 +105,14 @@ By default, 10,000 sequences are generated per evaluated strategy.
 1,000 sequences each. `--samples-per-strategy` therefore controls the
 nontrivial strategies.
 
-The synthetic generators sample uniformly within their configured valid
-domains: 16-bit starts and values use `0..65535`, `SINGLE` increments use the
-full classifier range `1..21845`, and `PER_BUCKET` uses the more realistic
-range `1..8000`. `MULTI` uses a uniformly selected cluster count from 2 through
-16 with randomized cluster positions and offsets through the inclusive 800
-threshold. All cumulative counters wrap naturally modulo 2^16. The validation
-generates only values within the strategy definitions; it does not inject
-invalid boundary cases. The exact generator parameters are also recorded in
-every validation JSON sidecar.
+Every synthetic generator samples uniformly across its complete valid
+classifier domain: 16-bit starts and values use `0..65535`, `SINGLE` and
+`PER_BUCKET` increments use `1..21845`, and `MULTI` uses a uniformly selected
+cluster count from 2 through 16 with randomized cluster positions and offsets
+through the inclusive 800 threshold. All cumulative counters wrap naturally
+modulo 2^16. The validation generates only values within the strategy
+definitions; it does not inject invalid boundary cases. The exact generator
+parameters are also recorded in every validation JSON sidecar.
 
 The RT-based dataset uses the real 4 x 4 round/connection interleaving and
 evaluates `REFLECTION`, `CONSTANT`, `SINGLE`, `PER_CONNECTION`,
@@ -159,8 +158,8 @@ calculated for the modular increments of each of seven subsequences: the full
 sequence, two destination subsequences, and four connection subsequences. The
 minimum of these seven p-values is plotted. Missing values are removed within
 each subsequence before its differences are formed, so reordering can change
-the resulting increment distributions. Each Chi-square test uses ten
-equal-width bins over the 16-bit IP-ID space (nine degrees of freedom). The
+the resulting increment distributions. Each Chi-square test uses four
+equal-width bins over the 16-bit IP-ID space (three degrees of freedom). The
 logarithmic x-axis extends only slightly beyond `10^0`, making the endpoint of
 the CDF lines at the maximum possible p-value visible. The three PDFs and their
 JSON metadata are written below

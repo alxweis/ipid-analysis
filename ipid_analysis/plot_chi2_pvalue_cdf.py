@@ -20,7 +20,6 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullLocator  # noqa: E402
 
 from ipid_analysis.classifier_validation import (  # noqa: E402
-    PER_BUCKET_MAX_INC,
     REQUEST_IP_IDS,
     SYNTHETIC_GENERATOR_PARAMETERS,
     _generate_multi_sequences,
@@ -156,7 +155,7 @@ def generate_chi2_sequences(
     )
     bucket_increments = rng.integers(
         1,
-        PER_BUCKET_MAX_INC + 1,
+        MAX_INC + 1,
         size=(n, CONNECTION_COUNT, REQUESTS_PER_CONNECTION - 1),
         dtype=np.int64,
     )

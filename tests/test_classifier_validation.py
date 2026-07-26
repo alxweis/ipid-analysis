@@ -14,7 +14,6 @@ from ipid_analysis.classifier_validation import (
     FIXED_OUT_OF_SCOPE_STRATEGIES,
     FIXED_REORDERED_DATASET,
     FIXED_STRATEGIES,
-    PER_BUCKET_MAX_INC,
     RT_DATASET,
     RT_OUT_OF_SCOPE_DATASET,
     RT_OUT_OF_SCOPE_STRATEGIES,
@@ -63,7 +62,7 @@ class ClassifierValidationTest(unittest.TestCase):
         bucket_connections = rt_sequences["PER_BUCKET"].reshape(16, 4, 4).transpose(0, 2, 1)
         bucket_increments = np.diff(bucket_connections, axis=2)
         self.assertGreaterEqual(int(bucket_increments.min()), 1)
-        self.assertLessEqual(int(bucket_increments.max()), PER_BUCKET_MAX_INC)
+        self.assertLessEqual(int(bucket_increments.max()), MAX_INC)
         self.assertGreater(int(bucket_increments.max()), 2_000)
         rt_out_of_scope = generate_rt_out_of_scope_sequences(
             16,
@@ -245,7 +244,7 @@ class ClassifierValidationTest(unittest.TestCase):
                 rt_report["synthetic_generator_parameters"]["PER_BUCKET"][
                     "increment_range_inclusive"
                 ],
-                [1, PER_BUCKET_MAX_INC],
+                [1, MAX_INC],
             )
             self.assertEqual(rt_report["metrics"]["accuracy"], 1.0)
             self.assertEqual(fixed_report["metrics"]["macro"]["f1"], 1.0)
