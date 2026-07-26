@@ -85,16 +85,22 @@ workflow-worker:
 test:
 	$(PYTHON_INTERPRETER) -m unittest discover -s tests -v
 
-## Validate the classifier and plot synthetic strategy Chi-square p-value CDFs
+## Validate the classifier and plot synthetic strategy diagnostics
 .PHONY: validate-classifier
 validate-classifier:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.classifier_validation $(ARGS)
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_chi2_pvalue_cdf $(ARGS)
+	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_structure_score_cdf $(ARGS)
 
 ## Plot global Chi-square p-value CDFs for synthetic 4x25 strategy sequences
 .PHONY: plot-chi2-pvalue-cdf
 plot-chi2-pvalue-cdf:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_chi2_pvalue_cdf $(ARGS)
+
+## Plot calibrated RANDOM-compatibility score CDFs for synthetic 4x25 sequences
+.PHONY: plot-random-structure-score-cdf
+plot-random-structure-score-cdf:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_structure_score_cdf $(ARGS)
 
 #################################################################################
 # Self Documenting Commands                                                     #
