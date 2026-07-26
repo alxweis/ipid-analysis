@@ -51,6 +51,8 @@ DEFAULT_SEED = 42
 X_AXIS_MAXIMUM = 1.05
 X_MAJOR_EXPONENT_STEP = 20
 X_MINOR_EXPONENT_OFFSET = 10
+RANDOM_MINIMUM_MARKER_COLOR = "#C62828"
+RANDOM_MINIMUM_MARKER_LABEL = "Minimum Random p-value"
 IDEAL_DATASET = "ideal"
 LOSSY_DATASET = "lossy"
 LOSSY_REORDERED_DATASET = "lossy-reordered"
@@ -325,6 +327,15 @@ def plot_chi2_pvalue_cdf(
             linewidth=1.7,
         )
 
+    random_minimum_pvalue = float(pvalues["RANDOM"].min())
+    ax.axvline(
+        random_minimum_pvalue,
+        color=RANDOM_MINIMUM_MARKER_COLOR,
+        linestyle="--",
+        linewidth=1.2,
+        zorder=1.5,
+    )
+
     axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(pvalues)
     ax.set_xscale("log")
     ax.set_xlim(axis_minimum, X_AXIS_MAXIMUM)
@@ -352,13 +363,23 @@ def plot_chi2_pvalue_cdf(
         )
         for strategy in PLOT_STRATEGIES
     ]
+    handles.append(
+        Line2D(
+            [0],
+            [0],
+            color=RANDOM_MINIMUM_MARKER_COLOR,
+            linestyle="--",
+            linewidth=1.2,
+            label=RANDOM_MINIMUM_MARKER_LABEL,
+        )
+    )
     ax.legend(
         handles=handles,
-        ncol=4,
+        ncol=5,
         loc="lower center",
         bbox_to_anchor=(0.5, 1.015),
         frameon=False,
-        columnspacing=1.3,
+        columnspacing=1.0,
         handlelength=2.2,
     )
     fig.subplots_adjust(left=0.12, right=0.995, bottom=0.22, top=0.70)
@@ -531,6 +552,7 @@ def render(
             "reorder_fraction_of_present": 0.0,
             "reordered_ipids_per_sequence": 0,
             "paired_loss_masks": False,
+            "random_minimum_p_value_marker": float(ideal_pvalues["RANDOM"].min()),
             "figure": str(ideal_pdf_path),
             "summary_by_strategy": summarize(ideal_pvalues),
         },
@@ -546,6 +568,7 @@ def render(
             "reorder_fraction_of_present": 0.0,
             "reordered_ipids_per_sequence": 0,
             "paired_loss_masks": True,
+            "random_minimum_p_value_marker": float(lossy_pvalues["RANDOM"].min()),
             "figure": str(lossy_pdf_path),
             "summary_by_strategy": summarize(lossy_pvalues),
         },
@@ -563,6 +586,7 @@ def render(
                 PRESENT_SEQUENCE_LENGTH * REORDER_FRACTION
             ),
             "paired_loss_masks": True,
+            "random_minimum_p_value_marker": float(reordered_pvalues["RANDOM"].min()),
             "figure": str(reordered_pdf_path),
             "summary_by_strategy": summarize(reordered_pvalues),
         },
