@@ -201,7 +201,7 @@ false-rejection rate. Its versioned result is cached below
 `S >= tau` is RANDOM-compatible. By default, the plotted nontrivial strategies
 also use 100,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
 The standard calibration pins production `tau` to
-`0.000017383249828389302`. `CONSTANT` and `MULTI` keep their earlier precedence
+`0.000016313656391956604`. `CONSTANT` and `MULTI` keep their earlier precedence
 and definitions; this score replaces only the former RANDOM test. The PDFs and
 JSON metadata are written below `reports/figures/classifier-validation/`; the
 underlying scores and decisions are stored in
