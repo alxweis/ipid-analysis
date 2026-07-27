@@ -6,6 +6,8 @@ tests over the raw IP-IDs and the logical full/destination/connection views:
 
 * discrete KS-D for marginal non-uniformity,
 * two-sided circular Greenwood spacings for clustering or over-regularity,
+* raw-value occupancy deficit for repeated or low-cardinality patterns,
+* raw-value circular maximum gap for separated clusters,
 * discrete KS-D for second differences (serial structure),
 * exact Binomial support for counter increments in the bounded 1..21845 range.
 
@@ -41,7 +43,6 @@ from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
 from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.plot_chi2_pvalue_cdf import (  # noqa: E402
     CONNECTION_COUNT,
-    DEFAULT_SAMPLES_PER_STRATEGY,
     DEFAULT_SEED,
     IDEAL_DATASET,
     IDEAL_SEQUENCE_LENGTH,
@@ -66,11 +67,13 @@ from ipid_analysis.strategies import (  # noqa: E402
 
 app = typer.Typer()
 
-DEFAULT_NULL_SAMPLES_PER_LENGTH = 10_000
-DEFAULT_THRESHOLD_SAMPLES = 10_000
-DEFAULT_RANDOM_FALSE_REJECTION_RATE = 0.01
+DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY = 100_000
+DEFAULT_NULL_SAMPLES_PER_LENGTH = 100_000
+DEFAULT_THRESHOLD_SAMPLES = 100_000
+DEFAULT_RANDOM_FALSE_REJECTION_RATE = 0.001
 MIN_TEST_SAMPLES = 2
 BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
+NULL_CALIBRATION_BATCH_SIZE = 10_000
 X_AXIS_MAXIMUM = 1.05
 THRESHOLD_COLOR = "#C62828"
 
@@ -103,11 +106,18 @@ class Statistic:
     tail: str
 
 
-def _ks_d(values: np.ndarray, present: np.ndarray) -> Statistic:
-    """One-sample KS-D against the discrete uniform 16-bit distribution."""
+def _ordered_values(
+    values: np.ndarray,
+    present: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     sample_count = present.sum(axis=1).astype(np.int16)
     ordered = np.sort(np.where(present, values, MODULUS), axis=1)
-    width = values.shape[1]
+    return sample_count, ordered
+
+
+def _ks_d_from_ordered(sample_count: np.ndarray, ordered: np.ndarray) -> Statistic:
+    """One-sample KS-D against the discrete uniform 16-bit distribution."""
+    width = ordered.shape[1]
     ranks = np.arange(1, width + 1, dtype=float)[None, :]
     active = ranks <= sample_count[:, None]
     denominator = np.maximum(sample_count, 1)[:, None]
@@ -119,11 +129,9 @@ def _ks_d(values: np.ndarray, present: np.ndarray) -> Statistic:
     return Statistic(sample_count, statistic, "upper")
 
 
-def _greenwood(values: np.ndarray, present: np.ndarray) -> Statistic:
+def _greenwood_from_ordered(sample_count: np.ndarray, ordered: np.ndarray) -> Statistic:
     """Dimensionless circular Greenwood spacing statistic."""
-    sample_count = present.sum(axis=1).astype(np.int16)
-    ordered = np.sort(np.where(present, values, MODULUS), axis=1)
-    width = values.shape[1]
+    width = ordered.shape[1]
     interior = np.diff(ordered, axis=1).astype(float)
     interior_active = np.arange(width - 1)[None, :] < (sample_count[:, None] - 1)
     scaled = sample_count[:, None] * interior / MODULUS - 1.0
@@ -135,6 +143,75 @@ def _greenwood(values: np.ndarray, present: np.ndarray) -> Statistic:
     statistic += wrap_scaled * wrap_scaled
     statistic = np.where(sample_count >= MIN_TEST_SAMPLES, statistic, np.nan)
     return Statistic(sample_count, statistic, "two-sided")
+
+
+def _occupancy_deficit_from_ordered(
+    sample_count: np.ndarray,
+    ordered: np.ndarray,
+) -> Statistic:
+    """Number of observations beyond the distinct-value count."""
+    adjacent_active = np.arange(ordered.shape[1] - 1)[None, :] < (
+        sample_count[:, None] - 1
+    )
+    repeated = adjacent_active & (ordered[:, 1:] == ordered[:, :-1])
+    statistic = repeated.sum(axis=1).astype(float)
+    statistic = np.where(sample_count >= MIN_TEST_SAMPLES, statistic, np.nan)
+    return Statistic(sample_count, statistic, "upper")
+
+
+def _maximum_gap_from_ordered(
+    sample_count: np.ndarray,
+    ordered: np.ndarray,
+) -> Statistic:
+    """Largest circular spacing between occupied 16-bit values."""
+    width = ordered.shape[1]
+    interior = np.diff(ordered, axis=1).astype(float)
+    interior_active = np.arange(width - 1)[None, :] < (sample_count[:, None] - 1)
+    interior = np.where(interior_active, interior, -np.inf)
+    last_index = np.clip(sample_count - 1, 0, width - 1)
+    wrap = (
+        MODULUS
+        - ordered[np.arange(len(ordered)), last_index]
+        + ordered[:, 0]
+    ).astype(float)
+    statistic = np.maximum(interior.max(axis=1), wrap)
+    statistic = np.where(sample_count >= MIN_TEST_SAMPLES, statistic, np.nan)
+    return Statistic(sample_count, statistic, "upper")
+
+
+def _distribution_statistics(
+    values: np.ndarray,
+    present: np.ndarray,
+    *,
+    include_raw_structure: bool = False,
+) -> dict[str, Statistic]:
+    sample_count, ordered = _ordered_values(values, present)
+    statistics = {
+        "ks": _ks_d_from_ordered(sample_count, ordered),
+        "greenwood": _greenwood_from_ordered(sample_count, ordered),
+    }
+    if include_raw_structure:
+        statistics.update(
+            {
+                "occupancy-deficit": _occupancy_deficit_from_ordered(
+                    sample_count,
+                    ordered,
+                ),
+                "maximum-gap": _maximum_gap_from_ordered(
+                    sample_count,
+                    ordered,
+                ),
+            }
+        )
+    return statistics
+
+
+def _ks_d(values: np.ndarray, present: np.ndarray) -> Statistic:
+    return _distribution_statistics(values, present)["ks"]
+
+
+def _greenwood(values: np.ndarray, present: np.ndarray) -> Statistic:
+    return _distribution_statistics(values, present)["greenwood"]
 
 
 def _logical_views(
@@ -208,8 +285,12 @@ def calculate_statistics(
     values = values.astype(np.int64, copy=False)
     present = ~loss_mask
     statistics = {
-        f"{RAW_VIEW}.ks": _ks_d(values, present),
-        f"{RAW_VIEW}.greenwood": _greenwood(values, present),
+        f"{RAW_VIEW}.{name}": statistic
+        for name, statistic in _distribution_statistics(
+            values,
+            present,
+            include_raw_structure=True,
+        ).items()
     }
     increments_by_view = {}
     for view_name, (view_values, view_present) in _logical_views(values, present).items():
@@ -219,13 +300,15 @@ def calculate_statistics(
             view_values,
             view_present,
         )
-        statistics[f"{view_name}.increment.ks"] = _ks_d(
+        increment_statistics = _distribution_statistics(
             increments,
             increment_present,
         )
-        statistics[f"{view_name}.increment.greenwood"] = _greenwood(
-            increments,
-            increment_present,
+        statistics.update(
+            {
+                f"{view_name}.increment.{name}": statistic
+                for name, statistic in increment_statistics.items()
+            }
         )
         statistics[f"{view_name}.second-difference.ks"] = _ks_d(
             second_differences,
@@ -261,17 +344,38 @@ def build_null_tables(
     """Discrete-uniform reference distributions indexed by statistic and length."""
     if samples_per_length < 2:
         raise ValueError("samples_per_length must be at least 2")
-    tables: dict[str, dict[int, np.ndarray]] = {"ks": {}, "greenwood": {}}
+    tables: dict[str, dict[int, np.ndarray]] = {
+        "ks": {},
+        "greenwood": {},
+        "occupancy-deficit": {},
+        "maximum-gap": {},
+    }
     for sample_count in range(MIN_TEST_SAMPLES, IDEAL_SEQUENCE_LENGTH + 1):
-        values = rng.integers(
-            0,
-            MODULUS,
-            size=(samples_per_length, sample_count),
-            dtype=np.uint16,
-        ).astype(np.int64)
-        present = np.ones_like(values, dtype=bool)
-        tables["ks"][sample_count] = np.sort(_ks_d(values, present).value)
-        tables["greenwood"][sample_count] = np.sort(_greenwood(values, present).value)
+        names = ["ks", "greenwood"]
+        if sample_count in (PRESENT_SEQUENCE_LENGTH, IDEAL_SEQUENCE_LENGTH):
+            names.extend(["occupancy-deficit", "maximum-gap"])
+        samples = {
+            name: np.empty(samples_per_length, dtype=float)
+            for name in names
+        }
+        for start in range(0, samples_per_length, NULL_CALIBRATION_BATCH_SIZE):
+            stop = min(start + NULL_CALIBRATION_BATCH_SIZE, samples_per_length)
+            values = rng.integers(
+                0,
+                MODULUS,
+                size=(stop - start, sample_count),
+                dtype=np.uint16,
+            ).astype(np.int64)
+            present = np.ones_like(values, dtype=bool)
+            statistics = _distribution_statistics(
+                values,
+                present,
+                include_raw_structure=len(names) > 2,
+            )
+            for name in names:
+                samples[name][start:stop] = statistics[name].value
+        for name in names:
+            tables[name][sample_count] = np.sort(samples[name])
     return tables
 
 
@@ -323,7 +427,7 @@ def calculate_scores(
         if statistic.tail == "binomial-upper":
             component_pvalues.append(_bounded_support_pvalues(statistic))
         else:
-            table_name = "greenwood" if name.endswith(".greenwood") else "ks"
+            table_name = name.rsplit(".", maxsplit=1)[-1]
             component_pvalues.append(_empirical_pvalues(statistic, null_tables[table_name]))
     return np.min(np.stack(component_pvalues, axis=1), axis=1)
 
@@ -508,22 +612,26 @@ def _write_scores(
     threshold: float,
     output_path: Path,
 ) -> Path:
-    rows = [
-        {
-            "DATASET": dataset,
-            "IPID_SELECTION_STRATEGY": strategy,
-            "SAMPLE_INDEX": sample_index,
-            "RANDOM_COMPATIBILITY_SCORE": float(score),
-            "IS_RANDOM_COMPATIBLE": bool(score >= threshold),
-        }
-        for dataset, strategy_scores in datasets.items()
-        for strategy in PLOT_STRATEGIES
-        for sample_index, score in enumerate(strategy_scores[strategy])
-    ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_suffix(output_path.suffix + ".part")
     temporary.unlink(missing_ok=True)
-    pq.write_table(pa.Table.from_pylist(rows, schema=SCORE_SCHEMA), temporary, compression="zstd")
+    with pq.ParquetWriter(temporary, SCORE_SCHEMA, compression="zstd") as writer:
+        for dataset, strategy_scores in datasets.items():
+            for strategy in PLOT_STRATEGIES:
+                scores = strategy_scores[strategy]
+                row_count = len(scores)
+                writer.write_table(
+                    pa.Table.from_arrays(
+                        [
+                            pa.array([dataset] * row_count, type=pa.string()),
+                            pa.array([strategy] * row_count, type=pa.string()),
+                            pa.array(np.arange(row_count, dtype=np.int32)),
+                            pa.array(scores, type=pa.float64()),
+                            pa.array(scores >= threshold, type=pa.bool_()),
+                        ],
+                        schema=SCORE_SCHEMA,
+                    )
+                )
     temporary.replace(output_path)
     return output_path
 
@@ -539,7 +647,7 @@ def _write_json(value: dict, output_path: Path) -> Path:
 
 def render(
     *,
-    samples_per_strategy: int = DEFAULT_SAMPLES_PER_STRATEGY,
+    samples_per_strategy: int = DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
     null_samples_per_length: int = DEFAULT_NULL_SAMPLES_PER_LENGTH,
     threshold_samples: int = DEFAULT_THRESHOLD_SAMPLES,
     false_rejection_rate: float = DEFAULT_RANDOM_FALSE_REJECTION_RATE,
@@ -562,40 +670,34 @@ def render(
     )
 
     ideal_sequences = generate_chi2_sequences(samples_per_strategy, sequence_rng)
-    loss_masks = {}
-    lossy_sequences = {}
-    reordered_sequences = {}
+    datasets: dict[str, dict[str, np.ndarray]] = {
+        IDEAL_DATASET: {},
+        LOSSY_DATASET: {},
+        LOSSY_REORDERED_DATASET: {},
+    }
     for strategy in PLOT_STRATEGIES:
+        ideal = ideal_sequences.pop(strategy)
         loss_mask, lossy, reordered = apply_fixed_interval_impairments(
-            ideal_sequences[strategy],
+            ideal,
             impairment_rng,
             loss_fraction=LOSS_FRACTION,
             reorder_fraction=REORDER_FRACTION,
         )
-        loss_masks[strategy] = loss_mask
-        lossy_sequences[strategy] = lossy
-        reordered_sequences[strategy] = reordered
-    ideal_masks = {
-        strategy: np.zeros_like(values, dtype=bool) for strategy, values in ideal_sequences.items()
-    }
-
-    datasets = {
-        IDEAL_DATASET: calculate_strategy_scores(
-            ideal_sequences,
-            ideal_masks,
+        datasets[IDEAL_DATASET][strategy] = calculate_scores(
+            ideal,
+            np.zeros_like(ideal, dtype=bool),
             null_tables,
-        ),
-        LOSSY_DATASET: calculate_strategy_scores(
-            lossy_sequences,
-            loss_masks,
+        )
+        datasets[LOSSY_DATASET][strategy] = calculate_scores(
+            lossy,
+            loss_mask,
             null_tables,
-        ),
-        LOSSY_REORDERED_DATASET: calculate_strategy_scores(
-            reordered_sequences,
-            loss_masks,
+        )
+        datasets[LOSSY_REORDERED_DATASET][strategy] = calculate_scores(
+            reordered,
+            loss_mask,
             null_tables,
-        ),
-    }
+        )
 
     processed_dir = processed_root / "classifier-validation"
     figure_dir = figures_root / "classifier-validation"
@@ -650,7 +752,12 @@ def render(
             "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
             "score": {
                 "definition": "minimum empirical p-value over all valid components",
-                "raw_components": ["discrete KS-D", "two-sided circular Greenwood"],
+                "raw_components": [
+                    "discrete KS-D",
+                    "two-sided circular Greenwood",
+                    "occupancy deficit (sample count minus distinct-value count)",
+                    "circular maximum gap",
+                ],
                 "increment_view_components": [
                     "discrete KS-D",
                     "two-sided circular Greenwood",
@@ -708,7 +815,7 @@ def render(
 @app.command()
 def main(
     samples_per_strategy: int = typer.Option(
-        DEFAULT_SAMPLES_PER_STRATEGY,
+        DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
         min=1,
         help=(
             "synthetic sequences per nontrivial strategy; REFLECTION and CONSTANT always use 1000"

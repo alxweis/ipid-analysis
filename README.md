@@ -176,20 +176,27 @@ RANDOM-compatibility structure score:
 ```bash
 make plot-random-structure-score-cdf
 # Optional:
-make plot-random-structure-score-cdf ARGS="--samples-per-strategy 10000 --seed 42"
+make plot-random-structure-score-cdf ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
 The score `S` is the minimum p-value from discrete KS-D, two-sided circular
-Greenwood-spacing, second-difference KS-D, and an exact Binomial test for
-increments in the deterministic counter range `1..21845`. The tests cover the
-raw, full, destination, and connection views; the bounded-increment test pools
-the two destination and four connection views for power under reordering.
+Greenwood-spacing, raw-value occupancy-deficit and circular-maximum-gap tests,
+second-difference KS-D, and an exact Binomial test for increments in the
+deterministic counter range `1..21845`. Occupancy identifies repeated or
+low-cardinality patterns such as constant and reflection sequences, while the
+maximum gap identifies separated clusters such as multi-counter sequences.
+The tests cover the raw, full, destination, and connection views; the
+bounded-increment test pools the two destination and four connection views for
+power under reordering.
 Unlike the older Chi-square diagnostic, increments are formed only between
 logically adjacent present positions; missing replies are never bridged.
-Independent discrete-uniform null samples convert the nonparametric statistics
-to comparable p-values. A separate RANDOM calibration set selects one global
-threshold `tau` shared by the ideal, lossy, and lossy+reordered plots:
-`S >= tau` is RANDOM-compatible. The PDFs and JSON metadata are written below
+Independent sets of 100,000 discrete-uniform null samples convert the
+nonparametric statistics to comparable p-values. A separate 100,000-sequence
+RANDOM calibration set selects one global threshold `tau` at a target 0.1%
+false-rejection rate, shared by the ideal, lossy, and lossy+reordered plots:
+`S >= tau` is RANDOM-compatible. By default, the plotted nontrivial strategies
+also use 100,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
+The PDFs and JSON metadata are written below
 `reports/figures/classifier-validation/`; the underlying scores and decisions are stored in
 `data/processed/classifier-validation/random-structure-score-cdf.pq`. This
 diagnostic does not yet change the production classifier.
