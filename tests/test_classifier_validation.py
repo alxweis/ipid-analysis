@@ -9,6 +9,7 @@ import pyarrow.parquet as pq
 
 from ipid_analysis.classifier_validation import (
     FIXED_IDEAL_DATASET,
+    FIXED_CONFIG,
     FIXED_LOSSY_DATASET,
     FIXED_OUT_OF_SCOPE_DATASET,
     FIXED_OUT_OF_SCOPE_STRATEGIES,
@@ -30,6 +31,8 @@ from ipid_analysis.classifier_validation import (
 from ipid_analysis.strategies import (
     MAX_INC,
     MULTI_MAX_CLUSTERS,
+    RANDOM_STRUCTURE_MIN_SCORE,
+    RANDOM_STRUCTURE_SCORE_VERSION,
     IPIDStrategy,
     MeasurementConfig,
     _cluster_counts_mass,
@@ -82,7 +85,8 @@ class ClassifierValidationTest(unittest.TestCase):
                 f"{strategy} after TCP first-round skip",
             )
             mass_detected = classify_batch_mass(
-                pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64()))
+                pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64())),
+                FIXED_CONFIG,
             )
             self.assertTrue(
                 np.all(mass_detected == int(IPIDStrategy.MULTI)),
@@ -94,7 +98,8 @@ class ClassifierValidationTest(unittest.TestCase):
         for strategy, values in fixed_sequences.items():
             self.assertEqual(values.shape, (16, 100))
             detected = classify_batch_mass(
-                pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64()))
+                pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64())),
+                FIXED_CONFIG,
             )
             self.assertTrue(
                 np.all(detected == int(IPIDStrategy[strategy])),
@@ -218,6 +223,14 @@ class ClassifierValidationTest(unittest.TestCase):
                     "CONSTANT": TRIVIAL_SAMPLES_PER_STRATEGY,
                     "MULTI": 8,
                     "RANDOM": 8,
+                },
+            )
+            self.assertEqual(
+                fixed_report["random_structure_score"],
+                {
+                    "version": RANDOM_STRUCTURE_SCORE_VERSION,
+                    "threshold": RANDOM_STRUCTURE_MIN_SCORE,
+                    "applies_after": ["CONSTANT", "MULTI"],
                 },
             )
             self.assertEqual(

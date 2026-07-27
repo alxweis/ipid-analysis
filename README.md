@@ -68,9 +68,12 @@ strategies `REFLECTION`, `CONSTANT`, `PER_DESTINATION`, `PER_CONNECTION`,
 `SINGLE`, and `PER_BUCKET`. All other base sequences are `UNCLASSIFIED` and can
 be passed to a mass measurement.
 
-Mass measurements use only position-independent rules and classify `CONSTANT`,
-`MULTI`, and `RANDOM`. Any sequence not matching those rules remains
-`UNCLASSIFIED`. Minimum reply-rate filtering is performed by `ipid-measure`
+Mass measurements classify `CONSTANT` and `MULTI` first with their established
+position-independent rules. Only the remaining sequences are tested for
+`RANDOM` using the calibrated RANDOM-compatibility structure score described
+below; all other sequences remain `UNCLASSIFIED`. The 4 x 25 position layout
+and missing-reply markers are retained for the score's full, destination, and
+connection views. Minimum reply-rate filtering is performed by `ipid-measure`
 before fixed-interval rows are written, so analysis does not duplicate that
 measurement-stage decision as an IPID strategy.
 
@@ -170,8 +173,8 @@ threshold. The three PDFs and their JSON metadata are written below
 `reports/figures/classifier-validation/`, and the underlying p-values are
 stored in `data/processed/classifier-validation/chi2-pvalue-cdf.pq`.
 
-The same synthetic datasets can be evaluated with the candidate
-RANDOM-compatibility structure score:
+The same synthetic datasets evaluate the production RANDOM-compatibility
+structure score:
 
 ```bash
 make plot-random-structure-score-cdf
@@ -197,13 +200,17 @@ false-rejection rate. Its versioned result is cached below
 `data/processed/classifier-validation/` and reused by matching later runs:
 `S >= tau` is RANDOM-compatible. By default, the plotted nontrivial strategies
 also use 10,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
-The PDFs and JSON metadata are written below
-`reports/figures/classifier-validation/`; the underlying scores and decisions are stored in
-`data/processed/classifier-validation/random-structure-score-cdf.pq`. This
-diagnostic does not yet change the production classifier. The logarithmic
-x-axis reserves one decade of space below the smallest score. Strategies whose
-complete CDF coincides at the numerical score floor are additionally marked in
-their strategy colors on that shared vertical line.
+The standard calibration pins production `tau` to
+`0.002018328854246871`. `CONSTANT` and `MULTI` keep their earlier precedence
+and definitions; this score replaces only the former RANDOM test. The PDFs and
+JSON metadata are written below `reports/figures/classifier-validation/`; the
+underlying scores and decisions are stored in
+`data/processed/classifier-validation/random-structure-score-cdf.pq`. The
+logarithmic x-axis reserves one decade of space below the smallest score,
+labels every second power of ten as a major tick, and uses the intervening
+powers as minor ticks. Strategies whose complete CDF coincides at the numerical
+score floor are additionally marked in their strategy colors on that shared
+vertical line.
 
 ## Merging base and mass strategies
 

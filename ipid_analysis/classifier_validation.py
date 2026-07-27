@@ -34,6 +34,8 @@ from ipid_analysis.strategies import (  # noqa: E402
     MAX_INC,
     MULTI_MAX_CLUSTERS,
     MULTI_MAX_INC,
+    RANDOM_STRUCTURE_MIN_SCORE,
+    RANDOM_STRUCTURE_SCORE_VERSION,
     STRATEGY_PRETTY,
     IPIDStrategy,
     MeasurementConfig,
@@ -50,6 +52,11 @@ FIXED_REQUESTS_PER_CONNECTION = 25
 DEFAULT_SAMPLES_PER_STRATEGY = 10_000
 TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
 REQUEST_IP_IDS = np.asarray([18933, 18932, 3717, 3718, 3719], dtype=np.int64)
+FIXED_CONFIG = MeasurementConfig(
+    connection_count=CONNECTION_COUNT,
+    requests_per_connection=FIXED_REQUESTS_PER_CONNECTION,
+    request_ip_ids=REQUEST_IP_IDS,
+)
 
 RT_DATASET = "rt-based-4x4-ideal"
 RT_OUT_OF_SCOPE_DATASET = "rt-based-4x4-out-of-scope"
@@ -391,12 +398,14 @@ def _classify_mass(values: np.ndarray, loss_mask: np.ndarray | None = None) -> n
         else:
             rows.append(
                 [
-                    int(value)
+                    -1 if loss_mask[row_index, column_index] else int(value)
                     for column_index, value in enumerate(row)
-                    if not loss_mask[row_index, column_index]
                 ]
             )
-    return classify_batch_mass(pa.array(rows, type=pa.list_(pa.int64())))
+    return classify_batch_mass(
+        pa.array(rows, type=pa.list_(pa.int64())),
+        FIXED_CONFIG,
+    )
 
 
 def _strategy_names(codes: np.ndarray) -> list[str]:
@@ -995,6 +1004,11 @@ def validate_classifier(
     common_metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "classifier_version": CLASSIFIER_VERSION,
+        "random_structure_score": {
+            "version": RANDOM_STRUCTURE_SCORE_VERSION,
+            "threshold": RANDOM_STRUCTURE_MIN_SCORE,
+            "applies_after": ["CONSTANT", "MULTI"],
+        },
         "synthetic_generator_version": "2",
         "seed": seed,
         "samples_per_strategy": samples_per_strategy,

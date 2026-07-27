@@ -21,9 +21,9 @@ from ipid_analysis.plot_random_structure_score_cdf import (
     DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
     DEFAULT_THRESHOLD_SAMPLES,
     MIN_COMPATIBILITY_SCORE,
-    RawFeatures,
     SCORE_VERSION,
     UNIFORMITY_BINS,
+    X_MAJOR_EXPONENT_STEP,
     _floor_only_strategies,
     _log_axis_parameters,
     bounded_increment_pvalues,
@@ -46,10 +46,17 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             for strategy in PLOT_STRATEGIES
         }
 
-        axis_minimum, major_ticks, _ = _log_axis_parameters(scores, 1e-3)
+        axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(scores, 1e-3)
 
         self.assertEqual(axis_minimum, 1e-21)
-        self.assertEqual(major_ticks[0], 1e-21)
+        np.testing.assert_array_equal(
+            np.log10(major_ticks),
+            np.arange(-20, 1, X_MAJOR_EXPONENT_STEP),
+        )
+        np.testing.assert_array_equal(
+            np.log10(minor_ticks),
+            np.arange(-21, 0, X_MAJOR_EXPONENT_STEP),
+        )
 
     def test_fully_coincident_floor_strategies_are_identified(self):
         scores = {
@@ -111,24 +118,9 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         values = np.zeros((1, IDEAL_SEQUENCE_LENGTH), dtype=np.uint16)
         mask = np.ones_like(values, dtype=bool)
         mask[:, 0] = False
-        features = RawFeatures(
-            sample_count=np.array([1]),
-            unique_count=np.array([1]),
-            maximum_gap=np.array([0]),
-            uniformity_pvalue=np.array([0.4]),
-            occupancy_pvalue=np.array([0.3]),
-            maximum_gap_pvalue=np.array([0.2]),
-        )
-
-        with (
-            patch(
-                "ipid_analysis.plot_random_structure_score_cdf.calculate_raw_features",
-                return_value=features,
-            ),
-            patch(
-                "ipid_analysis.plot_random_structure_score_cdf.bounded_increment_pvalues",
-                return_value=np.array([0.5]),
-            ),
+        with patch(
+            "ipid_analysis.plot_random_structure_score_cdf.random_structure_scores",
+            return_value=np.array([0.2]),
         ):
             score = calculate_scores(values, mask)
 

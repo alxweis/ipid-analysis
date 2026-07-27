@@ -7,8 +7,8 @@ stored:
     PER_CONNECTION/PER_BUCKET -> increments of the connection subsequences
     everything else (fallback) -> increments of the whole sequence
 
-Mass measurements only have position-independent strategies, so their increments
-are always over the whole (present) sequence.
+Mass measurements store whole-sequence increments only where adjacent
+measurement positions both contain replies.
 
     python ipid_analysis/increments.py tcp.ipid.no-connection.fixed-interval.base
     -> data/processed/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.pq
@@ -93,16 +93,16 @@ def base_increments(matrix: np.ndarray, cfg, skip_first: bool, codes: np.ndarray
     return offsets, values
 
 
-def mass_increments(ipid_list: pa.ListArray):
-    """(offsets, values) of the whole-sequence increments over present values."""
-    lengths, _, vals = _mass_padded(ipid_list)
+def mass_increments(ipid_list: pa.ListArray, cfg):
+    """Whole-sequence increments between adjacent received measurement positions."""
+    _, present, vals = _mass_padded(ipid_list, cfg.sequence_length)
     if vals.shape[1] == 0:
-        return np.zeros(len(lengths) + 1, dtype=np.int64), np.empty(0, dtype=np.int32)
+        return np.zeros(len(present) + 1, dtype=np.int64), np.empty(0, dtype=np.int32)
     diff = (vals[:, 1:] - vals[:, :-1]) & 0xFFFF
-    inc_present = np.arange(vals.shape[1] - 1)[None, :] < (lengths[:, None] - 1)
+    inc_present = present[:, :-1] & present[:, 1:]
     values = diff[inc_present].astype(np.int32)  # present increments, row-major
-    widths = np.clip(lengths - 1, 0, None)
-    offsets = np.zeros(len(lengths) + 1, dtype=np.int64)
+    widths = inc_present.sum(axis=1)
+    offsets = np.zeros(len(present) + 1, dtype=np.int64)
     np.cumsum(widths, out=offsets[1:])
     return offsets, values
 
@@ -146,8 +146,8 @@ def extract_increments(
             n = len(ip_addr)
 
             if mass:
-                codes = classify_batch_mass(batch.column("ipid"))
-                offsets, values = mass_increments(batch.column("ipid"))
+                codes = classify_batch_mass(batch.column("ipid"), cfg)
+                offsets, values = mass_increments(batch.column("ipid"), cfg)
             else:
                 valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
                 codes = np.full(n, int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
