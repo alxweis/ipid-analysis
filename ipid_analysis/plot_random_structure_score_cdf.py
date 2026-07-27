@@ -360,7 +360,7 @@ def plot_score_cdf(
             color=THRESHOLD_COLOR,
             linestyle="--",
             linewidth=1.2,
-            label=rf"Threshold $\tau$",
+            label=r"Threshold $\tau$",
         )
     )
     ax.legend(
