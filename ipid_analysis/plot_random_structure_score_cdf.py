@@ -5,7 +5,6 @@ production strategy classifier.  Unlike the more expensive increment-view
 diagnostics, this score is designed to scale to large fixed-interval datasets:
 
 * one sort of the present 16-bit IP-ID values,
-* exact CONSTANT and MULTI gates from the sorted values,
 * an exact discrete occupancy/collision tail probability,
 * a conservative circular maximum-gap tail bound,
 * an analytic 16-bin Pearson uniformity p-value,
@@ -63,15 +62,13 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
     MAX_INC,
     MODULUS,
-    MULTI_MAX_CLUSTERS,
-    MULTI_MAX_INC,
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
 )
 
 app = typer.Typer()
 
-SCORE_VERSION = "raw-multiset-bounded-v1"
+SCORE_VERSION = "raw-multiset-bounded-v2"
 DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY = 10_000
 DEFAULT_THRESHOLD_SAMPLES = 10_000
 DEFAULT_RANDOM_FALSE_REJECTION_RATE = 0.01
@@ -98,13 +95,10 @@ SCORE_SCHEMA = pa.schema(
 class RawFeatures:
     sample_count: np.ndarray
     unique_count: np.ndarray
-    cluster_count: np.ndarray
     maximum_gap: np.ndarray
     uniformity_pvalue: np.ndarray
     occupancy_pvalue: np.ndarray
     maximum_gap_pvalue: np.ndarray
-    constant: np.ndarray
-    multi: np.ndarray
 
 
 @lru_cache(maxsize=1)
@@ -148,16 +142,6 @@ def calculate_raw_features(values: np.ndarray, loss_mask: np.ndarray) -> RawFeat
     active_gaps = np.where(adjacent_active, interior_gaps, 0)
     maximum_gap = np.maximum(active_gaps.max(axis=1), wrap_gap).astype(np.int64)
 
-    large_gap_count = (
-        (adjacent_active & (interior_gaps > MULTI_MAX_INC)).sum(axis=1)
-        + ((wrap_gap > MULTI_MAX_INC) & (sample_count >= 1))
-    )
-    cluster_count = np.where(
-        sample_count >= 1,
-        np.where(large_gap_count == 0, 1, large_gap_count),
-        0,
-    ).astype(np.int16)
-
     row_count = len(values)
     bins = (values_u32 * UNIFORMITY_BINS) // MODULUS
     rows = np.broadcast_to(np.arange(row_count)[:, None], values.shape)
@@ -182,22 +166,13 @@ def calculate_raw_features(values: np.ndarray, loss_mask: np.ndarray) -> RawFeat
         sample_count * np.power(1.0 - gap_fraction, np.maximum(sample_count - 1, 0)),
     )
 
-    constant = (sample_count >= 1) & (unique_count == 1)
-    multi = (
-        (cluster_count > 1)
-        & (cluster_count <= MULTI_MAX_CLUSTERS)
-        & ~constant
-    )
     return RawFeatures(
         sample_count=sample_count,
         unique_count=unique_count,
-        cluster_count=cluster_count,
         maximum_gap=maximum_gap,
         uniformity_pvalue=uniformity_pvalue,
         occupancy_pvalue=occupancy_pvalue,
         maximum_gap_pvalue=maximum_gap_pvalue,
-        constant=constant,
-        multi=multi,
     )
 
 
@@ -279,12 +254,6 @@ def calculate_scores(values: np.ndarray, loss_mask: np.ndarray) -> np.ndarray:
             bounded_increment_pvalues(values, loss_mask),
         ]
     )
-    hard_rejection = (
-        features.constant
-        | features.multi
-        | (features.sample_count < MIN_TEST_SAMPLES)
-    )
-    scores = np.where(hard_rejection, MIN_COMPATIBILITY_SCORE, scores)
     return np.clip(scores, MIN_COMPATIBILITY_SCORE, 1.0)
 
 
@@ -324,8 +293,6 @@ def _calibration_key(
         "false_rejection_rate": false_rejection_rate,
         "seed": seed,
         "uniformity_bins": UNIFORMITY_BINS,
-        "multi_max_increment": MULTI_MAX_INC,
-        "multi_max_clusters": MULTI_MAX_CLUSTERS,
         "bounded_increment_maximum": MAX_INC,
         "ideal_sequence_length": IDEAL_SEQUENCE_LENGTH,
         "loss_fraction": LOSS_FRACTION,
@@ -656,15 +623,6 @@ def render(
                         f"[1, {MAX_INC}] over pooled full/destination/connection families"
                     ),
                 ],
-                "hard_rejections": [
-                    "CONSTANT: one distinct present value",
-                    (
-                        f"MULTI: 2..{MULTI_MAX_CLUSTERS} circular single-link "
-                        f"clusters at gap threshold {MULTI_MAX_INC}"
-                    ),
-                    "fewer than two present values",
-                ],
-                "hard_rejection_score": MIN_COMPATIBILITY_SCORE,
                 "sorts_per_sequence": 1,
                 "uniformity_bins": UNIFORMITY_BINS,
                 "raw_components_reordering_invariant": True,

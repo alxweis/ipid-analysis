@@ -21,6 +21,7 @@ from ipid_analysis.plot_random_structure_score_cdf import (
     DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
     DEFAULT_THRESHOLD_SAMPLES,
     MIN_COMPATIBILITY_SCORE,
+    RawFeatures,
     SCORE_VERSION,
     UNIFORMITY_BINS,
     bounded_increment_pvalues,
@@ -37,7 +38,7 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 10_000)
         self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.01)
 
-    def test_features_reuse_one_sorted_multiset_for_constant_and_multi(self):
+    def test_features_reuse_one_sorted_multiset(self):
         values = np.zeros((2, IDEAL_SEQUENCE_LENGTH), dtype=np.uint16)
         values[0] = 7
         values[1, :40] = np.arange(40)
@@ -48,10 +49,8 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         features = calculate_raw_features(values, mask)
 
         self.assertEqual(features.unique_count.tolist(), [1, 80])
-        self.assertEqual(features.cluster_count.tolist(), [1, 2])
-        self.assertEqual(features.constant.tolist(), [True, False])
-        self.assertEqual(features.multi.tolist(), [False, True])
-        self.assertEqual(calculate_scores(values, mask).tolist(), [MIN_COMPATIBILITY_SCORE] * 2)
+        self.assertEqual(features.sample_count.tolist(), [100, 80])
+        self.assertEqual(features.maximum_gap.shape, (2,))
 
     def test_raw_features_are_invariant_to_reordering(self):
         rng = np.random.default_rng(17)
@@ -72,18 +71,42 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         for field in (
             "sample_count",
             "unique_count",
-            "cluster_count",
             "maximum_gap",
             "uniformity_pvalue",
             "occupancy_pvalue",
             "maximum_gap_pvalue",
-            "constant",
-            "multi",
         ):
             np.testing.assert_array_equal(
                 getattr(original, field),
                 getattr(shuffled, field),
             )
+
+    def test_score_has_no_strategy_or_sample_count_hard_gate(self):
+        values = np.zeros((1, IDEAL_SEQUENCE_LENGTH), dtype=np.uint16)
+        mask = np.ones_like(values, dtype=bool)
+        mask[:, 0] = False
+        features = RawFeatures(
+            sample_count=np.array([1]),
+            unique_count=np.array([1]),
+            maximum_gap=np.array([0]),
+            uniformity_pvalue=np.array([0.4]),
+            occupancy_pvalue=np.array([0.3]),
+            maximum_gap_pvalue=np.array([0.2]),
+        )
+
+        with (
+            patch(
+                "ipid_analysis.plot_random_structure_score_cdf.calculate_raw_features",
+                return_value=features,
+            ),
+            patch(
+                "ipid_analysis.plot_random_structure_score_cdf.bounded_increment_pvalues",
+                return_value=np.array([0.5]),
+            ),
+        ):
+            score = calculate_scores(values, mask)
+
+        np.testing.assert_array_equal(score, np.array([0.2]))
 
     def test_bounded_increment_component_detects_counter(self):
         values = np.arange(IDEAL_SEQUENCE_LENGTH, dtype=np.uint16)[None, :]
@@ -166,6 +189,8 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             self.assertEqual(metadata["score"]["sorts_per_sequence"], 1)
             self.assertTrue(metadata["score"]["raw_components_reordering_invariant"])
             self.assertEqual(metadata["score"]["random_compatible_when"], "S >= tau")
+            self.assertNotIn("hard_rejections", metadata["score"])
+            self.assertNotIn("hard_rejection_score", metadata["score"])
             self.assertTrue(Path(metadata["threshold"]["cache"]).is_file())
 
 
