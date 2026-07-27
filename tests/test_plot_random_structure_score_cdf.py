@@ -20,12 +20,12 @@ from ipid_analysis.plot_random_structure_score_cdf import (
     DEFAULT_RANDOM_FALSE_REJECTION_RATE,
     DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
     DEFAULT_THRESHOLD_SAMPLES,
-    MIN_COMPATIBILITY_SCORE,
     RawFeatures,
     SCORE_VERSION,
     UNIFORMITY_BINS,
-    _floor_only_strategies,
     _log_axis_parameters,
+    _positive_ecdf_coordinates,
+    _zero_percentages,
     bounded_increment_pvalues,
     calculate_raw_features,
     calculate_scores,
@@ -40,29 +40,29 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 10_000)
         self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.01)
 
-    def test_log_axis_keeps_floor_cdfs_inside_plot(self):
+    def test_log_axis_ignores_zero_scores(self):
         scores = {
-            strategy: np.array([MIN_COMPATIBILITY_SCORE])
+            strategy: np.array([0.0])
             for strategy in PLOT_STRATEGIES
         }
+        scores["RANDOM"] = np.array([0.0, 1e-5])
 
         axis_minimum, major_ticks, _ = _log_axis_parameters(scores, 1e-3)
 
-        self.assertEqual(axis_minimum, 1e-21)
-        self.assertEqual(major_ticks[0], 1e-21)
+        self.assertEqual(axis_minimum, 1e-6)
+        self.assertEqual(major_ticks[0], 1e-6)
 
-    def test_fully_coincident_floor_strategies_are_identified(self):
+    def test_zero_mass_and_positive_cdf_are_kept_separate(self):
         scores = {
             strategy: np.array([1e-10])
             for strategy in PLOT_STRATEGIES
         }
-        scores["CONSTANT"] = np.full(4, MIN_COMPATIBILITY_SCORE)
-        scores["PER_CONNECTION"] = np.full(4, MIN_COMPATIBILITY_SCORE)
+        scores["CONSTANT"] = np.array([0.0, 0.0, 1e-4, 1e-3])
 
-        self.assertEqual(
-            _floor_only_strategies(scores),
-            ["CONSTANT", "PER_CONNECTION"],
-        )
+        self.assertEqual(_zero_percentages(scores)["CONSTANT"], 50.0)
+        x_values, percentages = _positive_ecdf_coordinates(scores["CONSTANT"])
+        np.testing.assert_array_equal(x_values, np.array([1e-4, 1e-4, 1e-3]))
+        np.testing.assert_array_equal(percentages, np.array([50.0, 75.0, 100.0]))
 
     def test_features_reuse_one_sorted_multiset(self):
         values = np.zeros((2, IDEAL_SEQUENCE_LENGTH), dtype=np.uint16)
@@ -149,7 +149,7 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         scores = calculate_scores(values, np.zeros_like(values, dtype=bool))
 
         self.assertTrue(np.all(np.isfinite(scores)))
-        self.assertTrue(np.all((scores >= MIN_COMPATIBILITY_SCORE) & (scores <= 1.0)))
+        self.assertTrue(np.all((scores >= 0.0) & (scores <= 1.0)))
 
     def test_threshold_calibration_is_cached(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -215,6 +215,14 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             self.assertEqual(metadata["score"]["sorts_per_sequence"], 1)
             self.assertTrue(metadata["score"]["raw_components_reordering_invariant"])
             self.assertEqual(metadata["score"]["random_compatible_when"], "S >= tau")
+            self.assertEqual(
+                metadata["score"]["range"],
+                "[0, 1] without a positive score floor",
+            )
+            self.assertIn(
+                "zero_count",
+                metadata["summary_by_strategy"]["CONSTANT"],
+            )
             self.assertNotIn("hard_rejections", metadata["score"])
             self.assertNotIn("hard_rejection_score", metadata["score"])
             self.assertTrue(Path(metadata["threshold"]["cache"]).is_file())

@@ -56,7 +56,6 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (  # noqa: E402
     REQUESTS_PER_CONNECTION,
     TRIVIAL_SAMPLES_PER_STRATEGY,
     TRIVIAL_STRATEGIES,
-    _ecdf_coordinates,
     generate_chi2_sequences,
 )
 from ipid_analysis.strategies import (  # noqa: E402
@@ -68,16 +67,18 @@ from ipid_analysis.strategies import (  # noqa: E402
 
 app = typer.Typer()
 
-SCORE_VERSION = "raw-multiset-bounded-v2"
+SCORE_VERSION = "raw-multiset-bounded-v3"
 DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY = 10_000
 DEFAULT_THRESHOLD_SAMPLES = 10_000
 DEFAULT_RANDOM_FALSE_REJECTION_RATE = 0.01
 UNIFORMITY_BINS = 16
 MIN_TEST_SAMPLES = 2
-MIN_COMPATIBILITY_SCORE = 1e-20
 BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
 X_AXIS_MAXIMUM = 1.05
 X_AXIS_LEFT_PADDING_DECADES = 1
+MAX_DENSE_LOG_DECADES = 25
+ZERO_PANEL_WIDTH_RATIO = 0.55
+LOG_PANEL_WIDTH_RATIO = 6.61
 THRESHOLD_COLOR = "#C62828"
 CALIBRATION_FILENAME = f"random-score-calibration-{SCORE_VERSION}.json"
 
@@ -255,7 +256,7 @@ def calculate_scores(values: np.ndarray, loss_mask: np.ndarray) -> np.ndarray:
             bounded_increment_pvalues(values, loss_mask),
         ]
     )
-    return np.clip(scores, MIN_COMPATIBILITY_SCORE, 1.0)
+    return np.clip(scores, 0.0, 1.0)
 
 
 def _random_calibration_datasets(
@@ -374,35 +375,73 @@ def _log_axis_parameters(
     scores: dict[str, np.ndarray],
     threshold: float,
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    positive_minimum = min(
-        threshold,
-        *(float(values[values > 0].min()) for values in scores.values()),
-    )
+    positive_values = [
+        float(values[values > 0].min())
+        for values in scores.values()
+        if np.any(values > 0)
+    ]
+    positive_minimum = min(threshold, *positive_values)
     minimum_exponent = math.floor(math.log10(positive_minimum))
-    axis_minimum_exponent = min(
-        -1,
-        minimum_exponent - X_AXIS_LEFT_PADDING_DECADES,
+    padded_exponent = min(-1, minimum_exponent - X_AXIS_LEFT_PADDING_DECADES)
+    exponent_span = -padded_exponent
+    if exponent_span <= MAX_DENSE_LOG_DECADES:
+        exponent_step = 1
+    elif exponent_span <= 50:
+        exponent_step = 5
+    elif exponent_span <= 100:
+        exponent_step = 10
+    elif exponent_span <= 200:
+        exponent_step = 20
+    else:
+        exponent_step = 40
+    axis_minimum_exponent = exponent_step * math.floor(
+        padded_exponent / exponent_step
     )
     major_ticks = np.power(
         10.0,
-        np.arange(axis_minimum_exponent, 1, dtype=float),
+        np.arange(axis_minimum_exponent, 1, exponent_step, dtype=float),
     )
-    minor_ticks = np.concatenate(
-        [
-            np.arange(2, 10, dtype=float) * 10.0**exponent
-            for exponent in range(axis_minimum_exponent, 0)
-        ]
-    )
+    if exponent_step == 1:
+        minor_ticks = np.concatenate(
+            [
+                np.arange(2, 10, dtype=float) * 10.0**exponent
+                for exponent in range(axis_minimum_exponent, 0)
+            ]
+        )
+    else:
+        minor_ticks = np.power(
+            10.0,
+            np.arange(
+                axis_minimum_exponent + exponent_step / 2,
+                0,
+                exponent_step,
+                dtype=float,
+            ),
+        )
     return 10.0**axis_minimum_exponent, major_ticks, minor_ticks
 
 
-def _floor_only_strategies(scores: dict[str, np.ndarray]) -> list[str]:
-    """Return strategies whose complete CDF is censored at the plotting floor."""
-    return [
-        strategy
+def _zero_percentages(scores: dict[str, np.ndarray]) -> dict[str, float]:
+    """Return the exact S=0 probability mass of every strategy."""
+    return {
+        strategy: float(100.0 * np.mean(scores[strategy] == 0.0))
         for strategy in PLOT_STRATEGIES
-        if np.all(scores[strategy] <= MIN_COMPATIBILITY_SCORE)
-    ]
+    }
+
+
+def _positive_ecdf_coordinates(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """CDF coordinates for S>0, starting at the probability mass at S=0."""
+    positive = np.sort(values[values > 0])
+    if not len(positive):
+        return np.array([], dtype=float), np.array([], dtype=float)
+    zero_count = int((values == 0.0).sum())
+    percentages = 100.0 * (
+        zero_count + np.arange(1, len(positive) + 1)
+    ) / len(values)
+    return (
+        np.concatenate(([positive[0]], positive)),
+        np.concatenate(([100.0 * zero_count / len(values)], percentages)),
+    )
 
 
 def plot_score_cdf(
@@ -413,38 +452,61 @@ def plot_score_cdf(
     dataset_label: str,
 ) -> Path:
     configure_paper_style()
-    fig, ax = plt.subplots(figsize=(7.16, 3.15))
-    floor_only_strategies = _floor_only_strategies(scores)
+    fig, (zero_ax, log_ax) = plt.subplots(
+        1,
+        2,
+        figsize=(7.16, 3.15),
+        sharey=True,
+        gridspec_kw={
+            "width_ratios": [ZERO_PANEL_WIDTH_RATIO, LOG_PANEL_WIDTH_RATIO],
+            "wspace": 0.05,
+        },
+    )
+    zero_percentages = _zero_percentages(scores)
+    zero_strategies = [
+        strategy
+        for strategy in PLOT_STRATEGIES
+        if zero_percentages[strategy] > 0.0
+    ]
     for strategy in PLOT_STRATEGIES:
-        x_values, cumulative_percentages = _ecdf_coordinates(scores[strategy])
-        ax.step(
-            x_values,
-            cumulative_percentages,
-            where="post",
-            color=STRATEGY_COLORS[strategy],
-            linewidth=1.7,
-        )
-    if floor_only_strategies:
-        marker_percentages = np.linspace(
-            15.0,
-            85.0,
-            len(floor_only_strategies),
-        )
-        for strategy, percentage in zip(
-            floor_only_strategies,
-            marker_percentages,
-            strict=True,
-        ):
-            ax.scatter(
-                [MIN_COMPATIBILITY_SCORE],
-                [percentage],
-                color=STRATEGY_COLORS[strategy],
-                edgecolors="white",
-                linewidths=0.35,
-                s=18,
-                zorder=3,
+        color = STRATEGY_COLORS[strategy]
+        zero_percentage = zero_percentages[strategy]
+        if zero_percentage > 0.0:
+            zero_ax.vlines(
+                0.0,
+                0.0,
+                zero_percentage,
+                color=color,
+                linewidth=1.7,
             )
-    ax.axvline(
+        x_values, cumulative_percentages = _positive_ecdf_coordinates(
+            scores[strategy]
+        )
+        if len(x_values):
+            log_ax.step(
+                x_values,
+                cumulative_percentages,
+                where="post",
+                color=color,
+                linewidth=1.7,
+            )
+
+    for index, strategy in enumerate(zero_strategies, start=1):
+        zero_ax.scatter(
+            [0.0],
+            [
+                zero_percentages[strategy]
+                * index
+                / (len(zero_strategies) + 1)
+            ],
+            color=STRATEGY_COLORS[strategy],
+            edgecolors="white",
+            linewidths=0.35,
+            s=18,
+            zorder=3,
+        )
+
+    log_ax.axvline(
         threshold,
         color=THRESHOLD_COLOR,
         linestyle="--",
@@ -452,20 +514,72 @@ def plot_score_cdf(
         zorder=1.5,
     )
 
+    zero_ax.set_xlim(-0.5, 0.5)
+    zero_ax.set_xticks([0.0])
+    zero_ax.set_xticklabels(["0"])
+    zero_ax.spines["right"].set_visible(False)
+    zero_ax.tick_params(axis="x", which="minor", bottom=False)
+
     axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(scores, threshold)
-    ax.set_xscale("log")
-    ax.set_xlim(axis_minimum, X_AXIS_MAXIMUM)
-    ax.set_xticks(major_ticks)
-    ax.set_xticks(minor_ticks, minor=True)
-    ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10))
-    ax.xaxis.set_minor_formatter(NullFormatter())
-    ax.set_ylim(0, 103)
-    ax.yaxis.set_major_locator(MultipleLocator(20))
-    ax.yaxis.set_minor_locator(MultipleLocator(10))
-    ax.set_xlabel(r"RANDOM-Compatibility Score $S$")
-    ax.set_ylabel("Cumulative Percentage [%]")
-    ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
-    ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
+    log_ax.set_xscale("log")
+    log_ax.set_xlim(axis_minimum, X_AXIS_MAXIMUM)
+    log_ax.set_xticks(major_ticks)
+    log_ax.set_xticks(minor_ticks, minor=True)
+    log_ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10))
+    log_ax.xaxis.set_minor_formatter(NullFormatter())
+    log_ax.spines["left"].set_visible(False)
+    log_ax.tick_params(axis="y", which="both", left=False, labelleft=False)
+
+    break_size = 0.012
+    break_style = {
+        "color": "black",
+        "clip_on": False,
+        "linewidth": 0.8,
+    }
+    zero_ax.plot(
+        (1 - break_size, 1 + break_size),
+        (-break_size, +break_size),
+        transform=zero_ax.transAxes,
+        **break_style,
+    )
+    zero_ax.plot(
+        (1 - break_size, 1 + break_size),
+        (1 - break_size, 1 + break_size),
+        transform=zero_ax.transAxes,
+        **break_style,
+    )
+    log_ax.plot(
+        (-break_size, +break_size),
+        (-break_size, +break_size),
+        transform=log_ax.transAxes,
+        **break_style,
+    )
+    log_ax.plot(
+        (-break_size, +break_size),
+        (1 - break_size, 1 + break_size),
+        transform=log_ax.transAxes,
+        **break_style,
+    )
+
+    zero_ax.set_ylim(0, 103)
+    zero_ax.yaxis.set_major_locator(MultipleLocator(20))
+    zero_ax.yaxis.set_minor_locator(MultipleLocator(10))
+    zero_ax.set_ylabel("Cumulative Percentage [%]")
+    for axis in (zero_ax, log_ax):
+        axis.grid(
+            which="major",
+            color="#BDBDBD",
+            linestyle="--",
+            linewidth=0.5,
+            alpha=0.7,
+        )
+        axis.grid(
+            which="minor",
+            axis="y",
+            color="#D9D9D9",
+            linestyle=":",
+            linewidth=0.35,
+        )
 
     handles = [
         Line2D(
@@ -473,7 +587,7 @@ def plot_score_cdf(
             [0],
             color=STRATEGY_COLORS[strategy],
             linewidth=1.7,
-            marker="o" if strategy in floor_only_strategies else None,
+            marker="o" if strategy in zero_strategies else None,
             markersize=4,
             label=STRATEGY_PRETTY[strategy],
         )
@@ -489,14 +603,19 @@ def plot_score_cdf(
             label=rf"Threshold $\tau={threshold:.1e}$",
         )
     )
-    ax.legend(
+    fig.legend(
         handles=handles,
         ncol=5,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 1.015),
+        loc="upper center",
+        bbox_to_anchor=(0.56, 0.995),
         frameon=False,
         columnspacing=1.0,
         handlelength=2.2,
+    )
+    fig.supxlabel(
+        r"RANDOM-Compatibility Score $S$",
+        x=0.56,
+        y=0.055,
     )
     fig.subplots_adjust(left=0.12, right=0.995, bottom=0.22, top=0.70)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -625,6 +744,8 @@ def render(
                 "median": float(np.median(values)),
                 "q75": float(np.quantile(values, 0.75)),
                 "maximum": float(values.max()),
+                "zero_count": int((values == 0.0).sum()),
+                "zero_percentage": float(100.0 * (values == 0.0).mean()),
                 "below_threshold_count": int((values < threshold).sum()),
                 "below_threshold_percentage": float(100.0 * (values < threshold).mean()),
                 "random_compatible_count": int((values >= threshold).sum()),
@@ -664,6 +785,10 @@ def render(
                 "raw_components_reordering_invariant": True,
                 "bounded_increment_null_probability": (
                     BOUNDED_INCREMENT_NULL_PROBABILITY
+                ),
+                "range": "[0, 1] without a positive score floor",
+                "zero_score_representation": (
+                    "separate linear S=0 panel; logarithmic S>0 panel"
                 ),
                 "random_compatible_when": "S >= tau",
             },
