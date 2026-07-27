@@ -74,6 +74,12 @@ analyse:
 %.json:
 	@:
 
+## Interactively inspect sampled raw sequences for one classified strategy
+##   usage: make inspect-sequences ARGS="<target> --manifest data.json"
+.PHONY: inspect-sequences
+inspect-sequences:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.inspect_sequences $(ARGS)
+
 ## Poll S3 for RT handoff and complete postprocessing jobs
 ##   usage: make workflow-worker ARGS="--s3-prefix s3://bucket/prefix"
 .PHONY: workflow-worker
