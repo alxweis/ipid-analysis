@@ -100,10 +100,10 @@ classifier independently of a campaign:
 ```bash
 make validate-classifier
 # Optional:
-make validate-classifier ARGS="--samples-per-strategy 10000 --seed 42"
+make validate-classifier ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-By default, 10,000 sequences are generated per evaluated strategy.
+By default, 100,000 sequences are generated per evaluated strategy.
 `REFLECTION` and `CONSTANT` are deterministic, trivial cases and are fixed at
 1,000 sequences each. `--samples-per-strategy` therefore controls the
 nontrivial strategies.
@@ -149,10 +149,10 @@ make validate-classifier
 # Or render only this plot:
 make plot-chi2-pvalue-cdf
 # Optional:
-make plot-chi2-pvalue-cdf ARGS="--samples-per-strategy 10000 --seed 42"
+make plot-chi2-pvalue-cdf ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-The plots use 10,000 sequences for every nontrivial strategy and 1,000 each for
+The plots use 100,000 sequences for every nontrivial strategy and 1,000 each for
 `REFLECTION` and `CONSTANT`. The ideal dataset keeps all 100 values without
 reordering. The lossy dataset removes exactly 20 random values from each
 100-value sequence. The paired lossy+reordered dataset uses the same loss mask
@@ -179,7 +179,7 @@ structure score:
 ```bash
 make plot-random-structure-score-cdf
 # Optional:
-make plot-random-structure-score-cdf ARGS="--samples-per-strategy 10000 --seed 42"
+make plot-random-structure-score-cdf ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
 The production-oriented score `S` uses the unordered multiset of present IP-ID
@@ -194,14 +194,14 @@ the score. No strategy-specific hard gate, per-sequence Monte Carlo simulation,
 or KS/Greenwood calculation is used.
 
 The raw components are order-independent; only the inexpensive bounded-
-increment component can change after reordering. A separate 100,000-sequence
+increment component can change after reordering. A separate 1,000,000-sequence
 RANDOM calibration set selects one global threshold `tau` at a target 0.01%
 false-rejection rate. Its versioned result is cached below
 `data/processed/classifier-validation/` and reused by matching later runs:
 `S >= tau` is RANDOM-compatible. By default, the plotted nontrivial strategies
-also use 10,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
+also use 100,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
 The standard calibration pins production `tau` to
-`0.002018328854246871`. `CONSTANT` and `MULTI` keep their earlier precedence
+`0.000017383249828389302`. `CONSTANT` and `MULTI` keep their earlier precedence
 and definitions; this score replaces only the former RANDOM test. The PDFs and
 JSON metadata are written below `reports/figures/classifier-validation/`; the
 underlying scores and decisions are stored in

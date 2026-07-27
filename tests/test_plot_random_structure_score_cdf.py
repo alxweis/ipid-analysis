@@ -37,7 +37,7 @@ from ipid_analysis.plot_random_structure_score_cdf import (
 class RandomStructureScoreCDFTest(unittest.TestCase):
     def test_default_sample_budget(self):
         self.assertEqual(DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY, 100_000)
-        self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 100_000)
+        self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 1_000_000)
         self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.0001)
 
     def test_log_axis_keeps_floor_cdfs_inside_plot(self):
