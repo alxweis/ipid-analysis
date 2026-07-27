@@ -18,9 +18,14 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
 )
 from ipid_analysis.plot_random_structure_score_cdf import (
     BOUNDED_INCREMENT_NULL_PROBABILITY,
+    DEFAULT_NULL_SAMPLES_PER_LENGTH,
+    DEFAULT_RANDOM_FALSE_REJECTION_RATE,
+    DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
+    DEFAULT_THRESHOLD_SAMPLES,
     INCREMENT_VIEWS,
     Statistic,
     _bounded_support_pvalues,
+    _distribution_statistics,
     build_null_tables,
     calculate_scores,
     calculate_statistics,
@@ -29,6 +34,35 @@ from ipid_analysis.plot_random_structure_score_cdf import (
 
 
 class RandomStructureScoreCDFTest(unittest.TestCase):
+    def test_high_resolution_defaults(self):
+        self.assertEqual(DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY, 100_000)
+        self.assertEqual(DEFAULT_NULL_SAMPLES_PER_LENGTH, 100_000)
+        self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 100_000)
+        self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.001)
+
+    def test_raw_structure_statistics_detect_repetition_and_large_gap(self):
+        values = np.asarray(
+            [
+                [7, 7, 7, 7],
+                [100, 101, 50_000, 50_001],
+            ],
+            dtype=np.int64,
+        )
+        statistics = _distribution_statistics(
+            values,
+            np.ones_like(values, dtype=bool),
+            include_raw_structure=True,
+        )
+
+        self.assertEqual(
+            statistics["occupancy-deficit"].value.tolist(),
+            [3.0, 0.0],
+        )
+        self.assertEqual(
+            statistics["maximum-gap"].value.tolist(),
+            [65_536.0, 49_899.0],
+        )
+
     def test_loss_positions_are_not_bridged(self):
         values = np.zeros((1, IDEAL_SEQUENCE_LENGTH), dtype=np.int64)
         values[0, :4] = [10, 11, 999, 13]
@@ -129,6 +163,14 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             self.assertEqual(
                 metadata["score"]["random_compatible_when"],
                 "S >= tau",
+            )
+            self.assertIn(
+                "occupancy deficit (sample count minus distinct-value count)",
+                metadata["score"]["raw_components"],
+            )
+            self.assertIn(
+                "circular maximum gap",
+                metadata["score"]["raw_components"],
             )
             self.assertEqual(
                 metadata["score"]["bounded_increment_null_probability"],
