@@ -17,18 +17,16 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     generate_chi2_sequences,
 )
 from ipid_analysis.plot_random_structure_score_cdf import (
-    BOUNDED_INCREMENT_NULL_PROBABILITY,
-    DEFAULT_NULL_SAMPLES_PER_LENGTH,
     DEFAULT_RANDOM_FALSE_REJECTION_RATE,
     DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
     DEFAULT_THRESHOLD_SAMPLES,
-    INCREMENT_VIEWS,
-    Statistic,
-    _bounded_support_pvalues,
-    _distribution_statistics,
-    build_null_tables,
+    MIN_COMPATIBILITY_SCORE,
+    SCORE_VERSION,
+    UNIFORMITY_BINS,
+    bounded_increment_pvalues,
+    calculate_raw_features,
     calculate_scores,
-    calculate_statistics,
+    load_or_calibrate_threshold,
     render,
 )
 
@@ -36,72 +34,93 @@ from ipid_analysis.plot_random_structure_score_cdf import (
 class RandomStructureScoreCDFTest(unittest.TestCase):
     def test_default_sample_budget(self):
         self.assertEqual(DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY, 10_000)
-        self.assertEqual(DEFAULT_NULL_SAMPLES_PER_LENGTH, 10_000)
         self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 10_000)
         self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.01)
 
-    def test_raw_structure_statistics_detect_repetition_and_large_gap(self):
-        values = np.asarray(
-            [
-                [7, 7, 7, 7],
-                [100, 101, 50_000, 50_001],
-            ],
-            dtype=np.int64,
-        )
-        statistics = _distribution_statistics(
-            values,
-            np.ones_like(values, dtype=bool),
-            include_raw_structure=True,
-        )
+    def test_features_reuse_one_sorted_multiset_for_constant_and_multi(self):
+        values = np.zeros((2, IDEAL_SEQUENCE_LENGTH), dtype=np.uint16)
+        values[0] = 7
+        values[1, :40] = np.arange(40)
+        values[1, 40:80] = np.arange(10_000, 10_040)
+        mask = np.zeros_like(values, dtype=bool)
+        mask[1, 80:] = True
 
-        self.assertEqual(
-            statistics["occupancy-deficit"].value.tolist(),
-            [3.0, 0.0],
-        )
-        self.assertEqual(
-            statistics["maximum-gap"].value.tolist(),
-            [65_536.0, 49_899.0],
-        )
+        features = calculate_raw_features(values, mask)
 
-    def test_loss_positions_are_not_bridged(self):
-        values = np.zeros((1, IDEAL_SEQUENCE_LENGTH), dtype=np.int64)
-        values[0, :4] = [10, 11, 999, 13]
-        loss_mask = np.ones_like(values, dtype=bool)
-        loss_mask[0, [0, 1, 3]] = False
+        self.assertEqual(features.unique_count.tolist(), [1, 80])
+        self.assertEqual(features.cluster_count.tolist(), [1, 2])
+        self.assertEqual(features.constant.tolist(), [True, False])
+        self.assertEqual(features.multi.tolist(), [False, True])
+        self.assertEqual(calculate_scores(values, mask).tolist(), [MIN_COMPATIBILITY_SCORE] * 2)
 
-        statistics = calculate_statistics(values, loss_mask)
-
-        self.assertEqual(
-            statistics["full.increment.ks"].sample_count.tolist(),
-            [1],
-        )
-        self.assertEqual(
-            statistics["full.second-difference.ks"].sample_count.tolist(),
-            [0],
-        )
-
-    def test_bounded_support_uses_exact_binomial_upper_tail(self):
-        statistic = Statistic(
-            sample_count=np.asarray([5], dtype=np.int16),
-            value=np.asarray([5.0]),
-            tail="binomial-upper",
-        )
-
-        pvalue = _bounded_support_pvalues(statistic)[0]
-
-        self.assertAlmostEqual(pvalue, BOUNDED_INCREMENT_NULL_PROBABILITY**5)
-
-    def test_score_is_a_probability_like_minimum(self):
+    def test_raw_features_are_invariant_to_reordering(self):
         rng = np.random.default_rng(17)
-        null_tables = build_null_tables(64, rng)
-        sequences = generate_chi2_sequences(8, rng)
-        values = sequences["RANDOM"]
-        masks = np.zeros_like(values, dtype=bool)
+        values = rng.integers(
+            0,
+            1 << 16,
+            size=(32, IDEAL_SEQUENCE_LENGTH),
+            dtype=np.uint16,
+        )
+        mask = np.zeros_like(values, dtype=bool)
+        mask[:, -20:] = True
+        reordered = values.copy()
+        for row in range(len(reordered)):
+            reordered[row, :80] = rng.permutation(reordered[row, :80])
 
-        scores = calculate_scores(values, masks, null_tables)
+        original = calculate_raw_features(values, mask)
+        shuffled = calculate_raw_features(reordered, mask)
+        for field in (
+            "sample_count",
+            "unique_count",
+            "cluster_count",
+            "maximum_gap",
+            "uniformity_pvalue",
+            "occupancy_pvalue",
+            "maximum_gap_pvalue",
+            "constant",
+            "multi",
+        ):
+            np.testing.assert_array_equal(
+                getattr(original, field),
+                getattr(shuffled, field),
+            )
+
+    def test_bounded_increment_component_detects_counter(self):
+        values = np.arange(IDEAL_SEQUENCE_LENGTH, dtype=np.uint16)[None, :]
+        pvalue = bounded_increment_pvalues(
+            values,
+            np.zeros_like(values, dtype=bool),
+        )[0]
+
+        self.assertLess(pvalue, 1e-20)
+
+    def test_score_is_a_finite_probability_like_value(self):
+        rng = np.random.default_rng(23)
+        values = generate_chi2_sequences(32, rng)["RANDOM"]
+        scores = calculate_scores(values, np.zeros_like(values, dtype=bool))
 
         self.assertTrue(np.all(np.isfinite(scores)))
-        self.assertTrue(np.all((scores > 0.0) & (scores <= 1.0)))
+        self.assertTrue(np.all((scores >= MIN_COMPATIBILITY_SCORE) & (scores <= 1.0)))
+
+    def test_threshold_calibration_is_cached(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "calibration.json"
+            first = load_or_calibrate_threshold(
+                cache,
+                sample_count=128,
+                false_rejection_rate=0.05,
+                seed=42,
+            )
+            second = load_or_calibrate_threshold(
+                cache,
+                sample_count=128,
+                false_rejection_rate=0.05,
+                seed=42,
+            )
+
+            self.assertFalse(first[3])
+            self.assertTrue(second[3])
+            self.assertEqual(first[:3], second[:3])
 
     def test_rendered_artifacts_and_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -109,7 +128,6 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             with patch("ipid_analysis.plot_random_structure_score_cdf.configure_paper_style"):
                 outputs = render(
                     samples_per_strategy=8,
-                    null_samples_per_length=64,
                     threshold_samples=64,
                     false_rejection_rate=0.05,
                     seed=23,
@@ -133,55 +151,22 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
                 set(table.column("IPID_SELECTION_STRATEGY").to_pylist()),
                 set(PLOT_STRATEGIES),
             )
-            self.assertEqual(
-                table.column_names,
-                [
-                    "DATASET",
-                    "IPID_SELECTION_STRATEGY",
-                    "SAMPLE_INDEX",
-                    "RANDOM_COMPATIBILITY_SCORE",
-                    "IS_RANDOM_COMPATIBLE",
-                ],
-            )
 
             metadata = json.loads(ideal_json.read_text())
             lossy_metadata = json.loads(lossy_json.read_text())
             reordered_metadata = json.loads(reordered_json.read_text())
             self.assertGreater(metadata["threshold"]["tau"], 0.0)
-            self.assertEqual(
-                metadata["threshold"]["tau"],
-                lossy_metadata["threshold"]["tau"],
-            )
+            self.assertEqual(metadata["threshold"]["tau"], lossy_metadata["threshold"]["tau"])
             self.assertEqual(
                 metadata["threshold"]["tau"],
                 reordered_metadata["threshold"]["tau"],
             )
-            self.assertEqual(
-                metadata["score"]["increment_views"],
-                list(INCREMENT_VIEWS),
-            )
-            self.assertEqual(
-                metadata["score"]["random_compatible_when"],
-                "S >= tau",
-            )
-            self.assertIn(
-                "occupancy deficit (sample count minus distinct-value count)",
-                metadata["score"]["raw_components"],
-            )
-            self.assertIn(
-                "circular maximum gap",
-                metadata["score"]["raw_components"],
-            )
-            self.assertEqual(
-                metadata["score"]["bounded_increment_null_probability"],
-                BOUNDED_INCREMENT_NULL_PROBABILITY,
-            )
-            self.assertEqual(
-                len(metadata["score"]["pooled_increment_family_components"]),
-                1,
-            )
-            self.assertEqual(metadata["null_calibration"]["runtime_simulation"], False)
-            self.assertEqual(metadata["ideal_sequence_length"], IDEAL_SEQUENCE_LENGTH)
+            self.assertEqual(metadata["score"]["version"], SCORE_VERSION)
+            self.assertEqual(metadata["score"]["uniformity_bins"], UNIFORMITY_BINS)
+            self.assertEqual(metadata["score"]["sorts_per_sequence"], 1)
+            self.assertTrue(metadata["score"]["raw_components_reordering_invariant"])
+            self.assertEqual(metadata["score"]["random_compatible_when"], "S >= tau")
+            self.assertTrue(Path(metadata["threshold"]["cache"]).is_file())
 
 
 if __name__ == "__main__":

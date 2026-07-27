@@ -179,21 +179,23 @@ make plot-random-structure-score-cdf
 make plot-random-structure-score-cdf ARGS="--samples-per-strategy 10000 --seed 42"
 ```
 
-The score `S` is the minimum p-value from discrete KS-D, two-sided circular
-Greenwood-spacing, raw-value occupancy-deficit and circular-maximum-gap tests,
-second-difference KS-D, and an exact Binomial test for increments in the
-deterministic counter range `1..21845`. Occupancy identifies repeated or
-low-cardinality patterns such as constant and reflection sequences, while the
-maximum gap identifies separated clusters such as multi-counter sequences.
-The tests cover the raw, full, destination, and connection views; the
-bounded-increment test pools the two destination and four connection views for
-power under reordering.
-Unlike the older Chi-square diagnostic, increments are formed only between
-logically adjacent present positions; missing replies are never bridged.
-Independent sets of 10,000 discrete-uniform null samples convert the
-nonparametric statistics to comparable p-values. A separate 10,000-sequence
+The production-oriented score `S` uses the unordered multiset of present IP-ID
+values. Each sequence is sorted exactly once; that sort is reused for an exact
+constant gate, the production multi-cluster rule, occupancy/collision
+probability, and a conservative circular maximum-gap probability. A 16-bin
+analytic Pearson test supplies the full-range uniformity component. One linear
+pass additionally evaluates exact bounded-increment support over pooled full,
+destination, and connection families, retaining power for counter sequences
+after partial reordering without another sort. The minimum component value is
+the score, and fewer than two samples or a matching constant/multi gate is an
+immediate structural rejection. No per-sequence Monte Carlo simulation or
+KS/Greenwood calculation is used.
+
+The raw components are order-independent; only the inexpensive bounded-
+increment component can change after reordering. A separate 10,000-sequence
 RANDOM calibration set selects one global threshold `tau` at a target 1%
-false-rejection rate, shared by the ideal, lossy, and lossy+reordered plots:
+false-rejection rate. Its versioned result is cached below
+`data/processed/classifier-validation/` and reused by matching later runs:
 `S >= tau` is RANDOM-compatible. By default, the plotted nontrivial strategies
 also use 10,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
 The PDFs and JSON metadata are written below
