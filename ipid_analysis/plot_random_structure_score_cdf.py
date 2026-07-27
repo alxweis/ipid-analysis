@@ -1,12 +1,13 @@
 """Plot synthetic RANDOM-compatibility structure-score CDFs.
 
 This is an independent classifier diagnostic.  It does not change the
-production strategy classifier.  The score combines three small, complementary
+production strategy classifier.  The score combines four small, complementary
 tests over the raw IP-IDs and the logical full/destination/connection views:
 
 * discrete KS-D for marginal non-uniformity,
 * two-sided circular Greenwood spacings for clustering or over-regularity,
-* discrete KS-D for second differences (serial structure).
+* discrete KS-D for second differences (serial structure),
+* exact Binomial support for counter increments in the bounded 1..21845 range.
 
 All component statistics are converted to empirical p-values using simulated
 discrete-uniform null distributions of the matching sample length.  Their
@@ -33,6 +34,7 @@ matplotlib.use("Agg")
 from matplotlib.lines import Line2D  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter  # noqa: E402
+from scipy.special import betainc  # noqa: E402
 
 from ipid_analysis.classifier_validation import apply_fixed_interval_impairments  # noqa: E402
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
@@ -56,6 +58,7 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (  # noqa: E402
     generate_chi2_sequences,
 )
 from ipid_analysis.strategies import (  # noqa: E402
+    MAX_INC,
     MODULUS,
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
@@ -67,6 +70,7 @@ DEFAULT_NULL_SAMPLES_PER_LENGTH = 10_000
 DEFAULT_THRESHOLD_SAMPLES = 10_000
 DEFAULT_RANDOM_FALSE_REJECTION_RATE = 0.01
 MIN_TEST_SAMPLES = 2
+BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
 X_AXIS_MAXIMUM = 1.05
 THRESHOLD_COLOR = "#C62828"
 
@@ -182,6 +186,20 @@ def _second_differences(
     return differences, difference_present
 
 
+def _bounded_increment_support(
+    increments: np.ndarray,
+    present: np.ndarray,
+) -> Statistic:
+    """Count valid increments in the deterministic counter range."""
+    sample_count = present.sum(axis=1).astype(np.int16)
+    bounded = present & (increments >= 1) & (increments <= MAX_INC)
+    return Statistic(
+        sample_count,
+        bounded.sum(axis=1).astype(float),
+        "binomial-upper",
+    )
+
+
 def calculate_statistics(
     values: np.ndarray,
     loss_mask: np.ndarray,
@@ -193,8 +211,10 @@ def calculate_statistics(
         f"{RAW_VIEW}.ks": _ks_d(values, present),
         f"{RAW_VIEW}.greenwood": _greenwood(values, present),
     }
+    increments_by_view = {}
     for view_name, (view_values, view_present) in _logical_views(values, present).items():
         increments, increment_present = _adjacent_increments(view_values, view_present)
+        increments_by_view[view_name] = (increments, increment_present)
         second_differences, second_present = _second_differences(
             view_values,
             view_present,
@@ -210,6 +230,26 @@ def calculate_statistics(
         statistics[f"{view_name}.second-difference.ks"] = _ks_d(
             second_differences,
             second_present,
+        )
+
+    bounded_families = {
+        "full": (increments_by_view["full"],),
+        "destination": tuple(increments_by_view[f"destination-{index}"] for index in range(2)),
+        "connection": tuple(
+            increments_by_view[f"connection-{index}"] for index in range(CONNECTION_COUNT)
+        ),
+    }
+    for family, components in bounded_families.items():
+        family_increments = np.concatenate(
+            [component[0] for component in components],
+            axis=1,
+        )
+        family_present = np.concatenate(
+            [component[1] for component in components],
+            axis=1,
+        )
+        statistics[f"{family}.increment.bounded-support"] = _bounded_increment_support(
+            family_increments, family_present
         )
     return statistics
 
@@ -257,6 +297,20 @@ def _empirical_pvalues(
     return pvalues
 
 
+def _bounded_support_pvalues(statistic: Statistic) -> np.ndarray:
+    """Exact upper-tail Binomial p-values under 16-bit uniform increments."""
+    sample_count = statistic.sample_count.astype(np.int64)
+    bounded_count = statistic.value.astype(np.int64)
+    pvalues = np.ones(len(bounded_count), dtype=float)
+    positive = (sample_count >= MIN_TEST_SAMPLES) & (bounded_count > 0)
+    pvalues[positive] = betainc(
+        bounded_count[positive],
+        sample_count[positive] - bounded_count[positive] + 1,
+        BOUNDED_INCREMENT_NULL_PROBABILITY,
+    )
+    return pvalues
+
+
 def calculate_scores(
     values: np.ndarray,
     loss_mask: np.ndarray,
@@ -266,8 +320,11 @@ def calculate_scores(
     statistics = calculate_statistics(values, loss_mask)
     component_pvalues = []
     for name, statistic in statistics.items():
-        table_name = "greenwood" if name.endswith(".greenwood") else "ks"
-        component_pvalues.append(_empirical_pvalues(statistic, null_tables[table_name]))
+        if statistic.tail == "binomial-upper":
+            component_pvalues.append(_bounded_support_pvalues(statistic))
+        else:
+            table_name = "greenwood" if name.endswith(".greenwood") else "ks"
+            component_pvalues.append(_empirical_pvalues(statistic, null_tables[table_name]))
     return np.min(np.stack(component_pvalues, axis=1), axis=1)
 
 
@@ -599,6 +656,10 @@ def render(
                     "two-sided circular Greenwood",
                     "discrete KS-D of second differences",
                 ],
+                "pooled_increment_family_components": [
+                    (f"exact upper-tail Binomial support test for increments in [1, {MAX_INC}]")
+                ],
+                "bounded_increment_null_probability": (BOUNDED_INCREMENT_NULL_PROBABILITY),
                 "increment_views": list(INCREMENT_VIEWS),
                 "loss_handling": (
                     "increments and second differences use only logically adjacent "

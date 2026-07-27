@@ -176,16 +176,18 @@ make plot-random-structure-score-cdf
 make plot-random-structure-score-cdf ARGS="--samples-per-strategy 10000 --seed 42"
 ```
 
-The score `S` is the minimum empirical p-value from discrete KS-D, two-sided
-circular Greenwood-spacing, and second-difference KS-D tests over the raw,
-full, destination, and connection views. Unlike the older Chi-square
-diagnostic, increments are formed only between logically adjacent present
-positions; missing replies are never bridged. Independent discrete-uniform
-null samples convert all statistics to comparable p-values. A separate RANDOM
-calibration set selects one global threshold `tau` shared by the ideal, lossy,
-and lossy+reordered plots: `S >= tau` is RANDOM-compatible. The PDFs and JSON
-metadata are written below `reports/figures/classifier-validation/`; the
-underlying scores and decisions are stored in
+The score `S` is the minimum p-value from discrete KS-D, two-sided circular
+Greenwood-spacing, second-difference KS-D, and an exact Binomial test for
+increments in the deterministic counter range `1..21845`. The tests cover the
+raw, full, destination, and connection views; the bounded-increment test pools
+the two destination and four connection views for power under reordering.
+Unlike the older Chi-square diagnostic, increments are formed only between
+logically adjacent present positions; missing replies are never bridged.
+Independent discrete-uniform null samples convert the nonparametric statistics
+to comparable p-values. A separate RANDOM calibration set selects one global
+threshold `tau` shared by the ideal, lossy, and lossy+reordered plots:
+`S >= tau` is RANDOM-compatible. The PDFs and JSON metadata are written below
+`reports/figures/classifier-validation/`; the underlying scores and decisions are stored in
 `data/processed/classifier-validation/random-structure-score-cdf.pq`. This
 diagnostic does not yet change the production classifier.
 

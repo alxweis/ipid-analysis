@@ -17,7 +17,10 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     generate_chi2_sequences,
 )
 from ipid_analysis.plot_random_structure_score_cdf import (
+    BOUNDED_INCREMENT_NULL_PROBABILITY,
     INCREMENT_VIEWS,
+    Statistic,
+    _bounded_support_pvalues,
     build_null_tables,
     calculate_scores,
     calculate_statistics,
@@ -42,6 +45,17 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             statistics["full.second-difference.ks"].sample_count.tolist(),
             [0],
         )
+
+    def test_bounded_support_uses_exact_binomial_upper_tail(self):
+        statistic = Statistic(
+            sample_count=np.asarray([5], dtype=np.int16),
+            value=np.asarray([5.0]),
+            tail="binomial-upper",
+        )
+
+        pvalue = _bounded_support_pvalues(statistic)[0]
+
+        self.assertAlmostEqual(pvalue, BOUNDED_INCREMENT_NULL_PROBABILITY**5)
 
     def test_score_is_a_probability_like_minimum(self):
         rng = np.random.default_rng(17)
@@ -115,6 +129,14 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             self.assertEqual(
                 metadata["score"]["random_compatible_when"],
                 "S >= tau",
+            )
+            self.assertEqual(
+                metadata["score"]["bounded_increment_null_probability"],
+                BOUNDED_INCREMENT_NULL_PROBABILITY,
+            )
+            self.assertEqual(
+                len(metadata["score"]["pooled_increment_family_components"]),
+                1,
             )
             self.assertEqual(metadata["null_calibration"]["runtime_simulation"], False)
             self.assertEqual(metadata["ideal_sequence_length"], IDEAL_SEQUENCE_LENGTH)
