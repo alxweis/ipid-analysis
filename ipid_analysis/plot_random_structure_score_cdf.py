@@ -336,7 +336,7 @@ def plot_score_cdf(
     ax.set_ylim(0, 103)
     ax.yaxis.set_major_locator(MultipleLocator(20))
     ax.yaxis.set_minor_locator(MultipleLocator(10))
-    ax.set_xlabel(r"RANDOM-Compatibility Score $S$")
+    ax.set_xlabel(r"Random-Compatibility Score $S$")
     ax.set_ylabel("Cumulative Percentage [%]")
     ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
     ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
@@ -360,7 +360,7 @@ def plot_score_cdf(
             color=THRESHOLD_COLOR,
             linestyle="--",
             linewidth=1.2,
-            label=rf"Threshold $\tau={threshold:.1e}$",
+            label=rf"Threshold $\tau$",
         )
     )
     ax.legend(
