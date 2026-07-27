@@ -7,6 +7,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ipid_analysis.increments import mass_increments
 from ipid_analysis.manifest import IpidMeasurement
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
@@ -71,7 +72,7 @@ class StrategyClassificationTest(unittest.TestCase):
 
         self.assertEqual(codes.tolist(), [int(IPIDStrategy.UNCLASSIFIED)])
 
-    def test_mass_classifies_only_constant_multi_and_random(self):
+    def test_mass_classifies_exact_and_robust_strategies(self):
         rng = np.random.default_rng(42)
         random_values = rng.integers(0, 1 << 16, size=100).tolist()
         multi_values = list(range(40)) + list(range(10_000, 10_040))
@@ -95,9 +96,60 @@ class StrategyClassificationTest(unittest.TestCase):
                 int(IPIDStrategy.CONSTANT),
                 int(IPIDStrategy.MULTI),
                 int(IPIDStrategy.RANDOM),
-                int(IPIDStrategy.UNCLASSIFIED),
+                int(IPIDStrategy.SINGLE),
             ],
         )
+
+    def test_mass_uses_all_exact_base_rules_for_complete_rows(self):
+        length = self.mass_config.sequence_length
+        request_pattern = self.mass_config.request_ip_ids[
+            np.arange(length) % self.mass_config.request_ip_ids.size
+        ]
+        reflection = ((request_pattern + 1234) % (1 << 16)).tolist()
+
+        per_destination = np.empty(length, dtype=np.int64)
+        per_destination[0::2] = 1000 + np.arange(length // 2)
+        per_destination[1::2] = 30_000 + np.arange(length // 2)
+
+        rounds = np.arange(self.mass_config.requests_per_connection)[:, None]
+        connection_starts = np.asarray([1000, 10_000, 30_000, 50_000])[None, :]
+        per_connection = (connection_starts + rounds).reshape(-1).tolist()
+        bucket_starts = np.asarray([1000, 30_000, 31_000, 32_000])[None, :]
+        per_bucket = (bucket_starts + 2 * rounds).reshape(-1).tolist()
+
+        values = pa.array(
+            [
+                reflection,
+                [17] * length,
+                per_destination.tolist(),
+                per_connection,
+                list(range(0, 2 * length, 2)),
+                per_bucket,
+            ],
+            type=pa.list_(pa.int64()),
+        )
+
+        codes = classify_batch_mass(values, self.mass_config)
+
+        self.assertEqual(
+            codes.tolist(),
+            [
+                int(IPIDStrategy.REFLECTION),
+                int(IPIDStrategy.CONSTANT),
+                int(IPIDStrategy.PER_DESTINATION),
+                int(IPIDStrategy.PER_CONNECTION),
+                int(IPIDStrategy.SINGLE),
+                int(IPIDStrategy.PER_BUCKET),
+            ],
+        )
+
+    def test_mass_does_not_apply_exact_rules_to_incomplete_rows(self):
+        incomplete_single = list(range(99)) + [-1]
+        values = pa.array([incomplete_single], type=pa.list_(pa.int64()))
+
+        codes = classify_batch_mass(values, self.mass_config)
+
+        self.assertEqual(codes.tolist(), [int(IPIDStrategy.UNCLASSIFIED)])
 
     def test_mass_does_not_duplicate_measurement_reply_rate_filter(self):
         values = pa.array([[17] * 79], type=pa.list_(pa.int64()))
@@ -106,7 +158,7 @@ class StrategyClassificationTest(unittest.TestCase):
 
         self.assertEqual(codes.tolist(), [int(IPIDStrategy.CONSTANT)])
 
-    def test_mass_classification_is_position_independent(self):
+    def test_mass_multiset_and_random_rules_are_position_independent(self):
         rng = np.random.default_rng(7)
         random_values = rng.integers(0, 1 << 16, size=100).tolist()
         multi_values = list(range(40)) + list(range(10_000, 10_040))
@@ -126,10 +178,13 @@ class StrategyClassificationTest(unittest.TestCase):
         )
 
     def test_mass_constant_and_multi_keep_priority_over_random_score(self):
+        rng = np.random.default_rng(13)
+        multi_values = list(range(50)) + list(range(10_000, 10_050))
+        rng.shuffle(multi_values)
         values = pa.array(
             [
                 [17] * 100,
-                list(range(50)) + list(range(10_000, 10_050)),
+                multi_values,
             ],
             type=pa.list_(pa.int64()),
         )
@@ -145,6 +200,28 @@ class StrategyClassificationTest(unittest.TestCase):
             [int(IPIDStrategy.CONSTANT), int(IPIDStrategy.MULTI)],
         )
         score.assert_not_called()
+
+    def test_mass_increments_follow_exact_strategy_views_only_for_complete_rows(self):
+        length = self.mass_config.sequence_length
+        per_destination = np.empty(length, dtype=np.int64)
+        per_destination[0::2] = 1000 + np.arange(length // 2)
+        per_destination[1::2] = 30_000 + np.arange(length // 2)
+        incomplete = per_destination.copy()
+        incomplete[1] = -1
+        ipids = pa.array(
+            [per_destination.tolist(), incomplete.tolist()],
+            type=pa.list_(pa.int64()),
+        )
+        codes = np.asarray(
+            [int(IPIDStrategy.PER_DESTINATION), int(IPIDStrategy.PER_DESTINATION)],
+            dtype=np.int8,
+        )
+
+        offsets, values = mass_increments(ipids, self.mass_config, codes)
+
+        self.assertEqual(offsets.tolist(), [0, 98, 195])
+        self.assertEqual(values[:98].tolist(), [1] * 98)
+        self.assertEqual(len(values[98:]), 97)
 
     def test_snapshot_loads_measurement_shape_without_reply_rate(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -263,8 +340,7 @@ class StrategyClassificationTest(unittest.TestCase):
                 raw_dir / "ipid.pq",
             )
             (raw_dir / "ipid.snapshot.yaml").write_text(
-                "connection_count: 4\nrequests_per_connection: 4\n"
-                "request_ip_ids: [1, 2, 3, 4]\n"
+                "connection_count: 4\nrequests_per_connection: 4\nrequest_ip_ids: [1, 2, 3, 4]\n"
             )
 
             classify_measurement(

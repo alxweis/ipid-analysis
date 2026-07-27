@@ -61,7 +61,6 @@ FIXED_CONFIG = MeasurementConfig(
 RT_DATASET = "rt-based-4x4-ideal"
 RT_OUT_OF_SCOPE_DATASET = "rt-based-4x4-out-of-scope"
 FIXED_IDEAL_DATASET = "fixed-interval-4x25-ideal"
-FIXED_OUT_OF_SCOPE_DATASET = "fixed-interval-4x25-out-of-scope"
 FIXED_LOSSY_DATASET = "fixed-interval-4x25-lossy"
 FIXED_REORDERED_DATASET = "fixed-interval-4x25-lossy-reordered"
 
@@ -74,10 +73,11 @@ RT_STRATEGIES = (
     "PER_BUCKET",
 )
 RT_DETECTED_STRATEGIES = (*RT_STRATEGIES, "UNCLASSIFIED")
-FIXED_STRATEGIES = ("CONSTANT", "MULTI", "RANDOM")
+FIXED_STRATEGIES = (*RT_STRATEGIES, "MULTI", "RANDOM")
 FIXED_DETECTED_STRATEGIES = (*FIXED_STRATEGIES, "UNCLASSIFIED")
+FIXED_IMPAIRED_STRATEGIES = ("CONSTANT", "MULTI", "RANDOM")
+FIXED_IMPAIRED_DETECTED_STRATEGIES = (*FIXED_IMPAIRED_STRATEGIES, "UNCLASSIFIED")
 RT_OUT_OF_SCOPE_STRATEGIES = ("MULTI",)
-FIXED_OUT_OF_SCOPE_STRATEGIES = ("SINGLE",)
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 SYNTHETIC_GENERATOR_PARAMETERS = {
     "sampling": "independent discrete uniform unless fixed by the strategy",
@@ -209,19 +209,20 @@ def _generate_multi_sequences(
     return sequences
 
 
-def generate_rt_sequences(
+def _generate_exact_sequences(
     samples_per_strategy: int,
+    requests_per_connection: int,
     rng: np.random.Generator,
 ) -> tuple[MeasurementConfig, dict[str, np.ndarray]]:
-    """Generate balanced ideal 4x4 sequences for RT-based classification."""
+    """Generate complete sequences for the shared exact strategy rules."""
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
 
     n = samples_per_strategy
-    length = CONNECTION_COUNT * RT_REQUESTS_PER_CONNECTION
+    length = CONNECTION_COUNT * requests_per_connection
     config = MeasurementConfig(
         connection_count=CONNECTION_COUNT,
-        requests_per_connection=RT_REQUESTS_PER_CONNECTION,
+        requests_per_connection=requests_per_connection,
         request_ip_ids=REQUEST_IP_IDS,
     )
     request_pattern = REQUEST_IP_IDS[np.arange(length) % len(REQUEST_IP_IDS)]
@@ -253,7 +254,7 @@ def generate_rt_sequences(
     )
     per_connection_cube = (
         connection_starts[:, None, :]
-        + np.arange(RT_REQUESTS_PER_CONNECTION, dtype=np.int64)[None, :, None]
+        + np.arange(requests_per_connection, dtype=np.int64)[None, :, None]
     ) % MODULUS
     per_connection = _round_connection_flatten(per_connection_cube)
 
@@ -275,7 +276,7 @@ def generate_rt_sequences(
     bucket_increments = rng.integers(
         1,
         MAX_INC + 1,
-        size=(n, CONNECTION_COUNT, RT_REQUESTS_PER_CONNECTION - 1),
+        size=(n, CONNECTION_COUNT, requests_per_connection - 1),
         dtype=np.int64,
     )
     bucket_connections = np.concatenate(
@@ -295,6 +296,18 @@ def generate_rt_sequences(
         "PER_DESTINATION": per_destination,
         "PER_BUCKET": per_bucket,
     }
+
+
+def generate_rt_sequences(
+    samples_per_strategy: int,
+    rng: np.random.Generator,
+) -> tuple[MeasurementConfig, dict[str, np.ndarray]]:
+    """Generate balanced ideal 4x4 sequences for RT-based classification."""
+    return _generate_exact_sequences(
+        samples_per_strategy,
+        RT_REQUESTS_PER_CONNECTION,
+        rng,
+    )
 
 
 def generate_rt_out_of_scope_sequences(
@@ -321,9 +334,11 @@ def generate_fixed_sequences(
     n = samples_per_strategy
     length = CONNECTION_COUNT * FIXED_REQUESTS_PER_CONNECTION
 
-    constant_values = rng.integers(0, MODULUS, size=n, dtype=np.uint16)
-    constant = np.repeat(constant_values[:, None], length, axis=1)
-
+    _, sequences = _generate_exact_sequences(
+        samples_per_strategy,
+        FIXED_REQUESTS_PER_CONNECTION,
+        rng,
+    )
     multi = _generate_multi_sequences(n, length, rng)
     random = rng.integers(
         0,
@@ -332,31 +347,7 @@ def generate_fixed_sequences(
         dtype=np.uint16,
     )
 
-    return {
-        "CONSTANT": constant,
-        "MULTI": multi,
-        "RANDOM": random,
-    }
-
-
-def generate_fixed_out_of_scope_sequences(
-    samples_per_strategy: int,
-    rng: np.random.Generator,
-) -> dict[str, np.ndarray]:
-    """Generate SINGLE-like sequences that fixed-interval analysis must reject."""
-    if samples_per_strategy < 1:
-        raise ValueError("samples_per_strategy must be positive")
-
-    n = samples_per_strategy
-    length = CONNECTION_COUNT * FIXED_REQUESTS_PER_CONNECTION
-    single_starts = rng.integers(0, MODULUS, size=n, dtype=np.int64)
-    single_increments = rng.integers(
-        1,
-        MAX_INC + 1,
-        size=(n, length - 1),
-        dtype=np.int64,
-    )
-    return {"SINGLE": _cumulative_sequences(single_starts, single_increments)}
+    return {**sequences, "MULTI": multi, "RANDOM": random}
 
 
 def apply_fixed_interval_impairments(
@@ -679,15 +670,15 @@ def plot_impaired_confusion_matrices(
     image = _draw_confusion_matrix(
         axes[0],
         lossy_metrics,
-        FIXED_STRATEGIES,
-        FIXED_DETECTED_STRATEGIES,
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
         title="Lossy Dataset",
     )
     _draw_confusion_matrix(
         axes[1],
         reordered_metrics,
-        FIXED_STRATEGIES,
-        FIXED_DETECTED_STRATEGIES,
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
         title="Lossy+Reordered Dataset",
     )
     axes[0].tick_params(axis="x", bottom=False, labelbottom=False)
@@ -811,8 +802,8 @@ def validate_classifier(
         raise ValueError("samples_per_strategy must be positive")
 
     seed_sequence = np.random.SeedSequence(seed)
-    rt_rng, rt_out_of_scope_rng, fixed_rng, fixed_out_of_scope_rng, impairment_rng = [
-        np.random.default_rng(child) for child in seed_sequence.spawn(5)
+    rt_rng, rt_out_of_scope_rng, fixed_rng, impairment_rng = [
+        np.random.default_rng(child) for child in seed_sequence.spawn(4)
     ]
 
     generated_sample_count = max(samples_per_strategy, TRIVIAL_SAMPLES_PER_STRATEGY)
@@ -855,17 +846,8 @@ def validate_classifier(
         strategy: _strategy_names(_classify_mass(values))
         for strategy, values in fixed_sequences.items()
     }
-    fixed_out_of_scope_sequences = generate_fixed_out_of_scope_sequences(
-        samples_per_strategy,
-        fixed_out_of_scope_rng,
-    )
-    fixed_out_of_scope_detections = {
-        strategy: _strategy_names(_classify_mass(values))
-        for strategy, values in fixed_out_of_scope_sequences.items()
-    }
-
     fixed_matrix = np.concatenate(
-        [fixed_sequences[strategy] for strategy in FIXED_STRATEGIES],
+        [fixed_sequences[strategy] for strategy in FIXED_IMPAIRED_STRATEGIES],
         axis=0,
     )
     fixed_loss_mask, lossy_matrix, reordered_matrix = apply_fixed_interval_impairments(
@@ -874,18 +856,19 @@ def validate_classifier(
     )
     class_slices = {}
     class_offset = 0
-    for strategy in FIXED_STRATEGIES:
+    for strategy in FIXED_IMPAIRED_STRATEGIES:
         next_offset = class_offset + len(fixed_sequences[strategy])
         class_slices[strategy] = slice(class_offset, next_offset)
         class_offset = next_offset
     lossy_sequences = {
-        strategy: lossy_matrix[class_slices[strategy]] for strategy in FIXED_STRATEGIES
+        strategy: lossy_matrix[class_slices[strategy]] for strategy in FIXED_IMPAIRED_STRATEGIES
     }
     reordered_sequences = {
-        strategy: reordered_matrix[class_slices[strategy]] for strategy in FIXED_STRATEGIES
+        strategy: reordered_matrix[class_slices[strategy]]
+        for strategy in FIXED_IMPAIRED_STRATEGIES
     }
     loss_masks = {
-        strategy: fixed_loss_mask[class_slices[strategy]] for strategy in FIXED_STRATEGIES
+        strategy: fixed_loss_mask[class_slices[strategy]] for strategy in FIXED_IMPAIRED_STRATEGIES
     }
     lossy_detections = {
         strategy: _strategy_names(_classify_mass(values, loss_masks[strategy]))
@@ -906,10 +889,13 @@ def validate_classifier(
 
     rt_expected, rt_detected = flatten_labels(rt_detections, RT_STRATEGIES)
     fixed_expected, fixed_detected = flatten_labels(fixed_detections, FIXED_STRATEGIES)
-    lossy_expected, lossy_detected = flatten_labels(lossy_detections, FIXED_STRATEGIES)
+    lossy_expected, lossy_detected = flatten_labels(
+        lossy_detections,
+        FIXED_IMPAIRED_STRATEGIES,
+    )
     reordered_expected, reordered_detected = flatten_labels(
         reordered_detections,
-        FIXED_STRATEGIES,
+        FIXED_IMPAIRED_STRATEGIES,
     )
     rt_metrics = _confusion_metrics(
         rt_expected,
@@ -926,19 +912,16 @@ def validate_classifier(
     lossy_metrics = _confusion_metrics(
         lossy_expected,
         lossy_detected,
-        FIXED_STRATEGIES,
-        FIXED_DETECTED_STRATEGIES,
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
     )
     reordered_metrics = _confusion_metrics(
         reordered_expected,
         reordered_detected,
-        FIXED_STRATEGIES,
-        FIXED_DETECTED_STRATEGIES,
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
     )
-    out_of_scope_metrics = {
-        "rt_based": _rejection_metrics(rt_out_of_scope_detections),
-        "fixed_interval": _rejection_metrics(fixed_out_of_scope_detections),
-    }
+    out_of_scope_metrics = _rejection_metrics(rt_out_of_scope_detections)
 
     columns = _empty_validation_columns()
     next_address = _append_dataset_rows(
@@ -965,15 +948,6 @@ def validate_classifier(
         detections=fixed_detections,
         requests_per_connection=FIXED_REQUESTS_PER_CONNECTION,
         address_offset=next_address,
-    )
-    next_address = _append_dataset_rows(
-        columns,
-        dataset=FIXED_OUT_OF_SCOPE_DATASET,
-        sequences=fixed_out_of_scope_sequences,
-        detections=fixed_out_of_scope_detections,
-        requests_per_connection=FIXED_REQUESTS_PER_CONNECTION,
-        address_offset=next_address,
-        expected_strategies={"SINGLE": "UNCLASSIFIED"},
     )
     next_address = _append_dataset_rows(
         columns,
@@ -1007,9 +981,17 @@ def validate_classifier(
         "random_structure_score": {
             "version": RANDOM_STRUCTURE_SCORE_VERSION,
             "threshold": RANDOM_STRUCTURE_MIN_SCORE,
-            "applies_after": ["CONSTANT", "MULTI"],
+            "applies_after": [
+                "REFLECTION",
+                "CONSTANT",
+                "PER_DESTINATION",
+                "PER_CONNECTION",
+                "SINGLE",
+                "PER_BUCKET",
+                "MULTI",
+            ],
         },
-        "synthetic_generator_version": "2",
+        "synthetic_generator_version": "3",
         "seed": seed,
         "samples_per_strategy": samples_per_strategy,
         "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
@@ -1023,10 +1005,6 @@ def validate_classifier(
             RT_OUT_OF_SCOPE_DATASET: {
                 strategy: len(rt_out_of_scope_sequences[strategy])
                 for strategy in RT_OUT_OF_SCOPE_STRATEGIES
-            },
-            FIXED_OUT_OF_SCOPE_DATASET: {
-                strategy: len(fixed_out_of_scope_sequences[strategy])
-                for strategy in FIXED_OUT_OF_SCOPE_STRATEGIES
             },
         },
         "connection_count": CONNECTION_COUNT,
@@ -1082,19 +1060,14 @@ def validate_classifier(
         {
             **common_metadata,
             "purpose": (
-                "Validate that real generating strategies outside each measurement "
-                "classifier's supported label space are rejected as UNCLASSIFIED."
+                "Validate that MULTI, which is outside the RT-based classifier's "
+                "supported label space, is rejected as UNCLASSIFIED."
             ),
             "tests": {
                 "rt_based": {
                     "dataset": RT_OUT_OF_SCOPE_DATASET,
                     "generating_strategies": list(RT_OUT_OF_SCOPE_STRATEGIES),
-                    "metrics": out_of_scope_metrics["rt_based"],
-                },
-                "fixed_interval": {
-                    "dataset": FIXED_OUT_OF_SCOPE_DATASET,
-                    "generating_strategies": list(FIXED_OUT_OF_SCOPE_STRATEGIES),
-                    "metrics": out_of_scope_metrics["fixed_interval"],
+                    "metrics": out_of_scope_metrics,
                 },
             },
         },

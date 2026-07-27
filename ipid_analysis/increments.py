@@ -7,8 +7,9 @@ stored:
     PER_CONNECTION/PER_BUCKET -> increments of the connection subsequences
     everything else (fallback) -> increments of the whole sequence
 
-Mass measurements store whole-sequence increments only where adjacent
-measurement positions both contain replies.
+Complete mass measurements use the same strategy-selected subsequences as base
+measurements. Incomplete mass rows retain whole-sequence increments only where
+adjacent measurement positions both contain replies.
 
     python ipid_analysis/increments.py tcp.ipid.no-connection.fixed-interval.base
     -> data/processed/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.pq
@@ -93,17 +94,57 @@ def base_increments(matrix: np.ndarray, cfg, skip_first: bool, codes: np.ndarray
     return offsets, values
 
 
-def mass_increments(ipid_list: pa.ListArray, cfg):
-    """Whole-sequence increments between adjacent received measurement positions."""
-    _, present, vals = _mass_padded(ipid_list, cfg.sequence_length)
+def mass_increments(ipid_list: pa.ListArray, cfg, codes: np.ndarray):
+    """Strategy-selected increments without inventing edges across missing replies."""
+    lengths, present, vals = _mass_padded(ipid_list, cfg.sequence_length)
     if vals.shape[1] == 0:
         return np.zeros(len(present) + 1, dtype=np.int64), np.empty(0, dtype=np.int32)
+
     diff = (vals[:, 1:] - vals[:, :-1]) & 0xFFFF
     inc_present = present[:, :-1] & present[:, 1:]
-    values = diff[inc_present].astype(np.int32)  # present increments, row-major
+    complete = lengths == cfg.sequence_length
+    is_src = complete & np.isin(codes, _SRC_CODES)
+    is_con = complete & np.isin(codes, _CON_CODES)
+    is_all = ~(is_src | is_con)
+
     widths = inc_present.sum(axis=1)
+    destination_width = 2 * (cfg.sequence_length // 2 - 1)
+    connection_width = cfg.connection_count * (cfg.requests_per_connection - 1)
+    widths[is_src] = destination_width
+    widths[is_con] = connection_width
     offsets = np.zeros(len(present) + 1, dtype=np.int64)
     np.cumsum(widths, out=offsets[1:])
+    values = np.empty(int(offsets[-1]), dtype=np.int32)
+
+    # Fill variable-width whole-sequence rows one measurement edge at a time to
+    # avoid allocating another batch-sized rank matrix.
+    ranks = np.zeros(len(present), dtype=np.int64)
+    for column in range(diff.shape[1]):
+        selected = is_all & inc_present[:, column]
+        values[offsets[:-1][selected] + ranks[selected]] = diff[selected, column]
+        ranks[selected] += 1
+
+    source_rows = np.flatnonzero(is_src)
+    destination_steps = cfg.sequence_length // 2 - 1
+    for source in range(2):
+        for step in range(destination_steps):
+            left = source + 2 * step
+            right = left + 2
+            destination = offsets[source_rows] + source * destination_steps + step
+            values[destination] = (vals[source_rows, right] - vals[source_rows, left]) & 0xFFFF
+
+    connection_rows = np.flatnonzero(is_con)
+    for connection in range(cfg.connection_count):
+        for step in range(cfg.requests_per_connection - 1):
+            left = step * cfg.connection_count + connection
+            right = left + cfg.connection_count
+            destination = (
+                offsets[connection_rows] + connection * (cfg.requests_per_connection - 1) + step
+            )
+            values[destination] = (
+                vals[connection_rows, right] - vals[connection_rows, left]
+            ) & 0xFFFF
+
     return offsets, values
 
 
@@ -147,7 +188,7 @@ def extract_increments(
 
             if mass:
                 codes = classify_batch_mass(batch.column("ipid"), cfg)
-                offsets, values = mass_increments(batch.column("ipid"), cfg)
+                offsets, values = mass_increments(batch.column("ipid"), cfg, codes)
             else:
                 valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
                 codes = np.full(n, int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)

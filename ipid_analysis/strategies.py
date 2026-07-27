@@ -46,7 +46,7 @@ from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
-CLASSIFIER_VERSION = "5"
+CLASSIFIER_VERSION = "6"
 
 # --- classifier thresholds (tuning, measurement-independent) ---------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3
@@ -578,8 +578,10 @@ def classify_batch_mass(
 ) -> np.ndarray:
     """Fixed-interval mass classification.
 
-    CONSTANT and MULTI retain their existing priority and definitions. Only
-    residual rows are evaluated with the RANDOM structure score.
+    Complete rows first use the exact position-dependent base rules. Incomplete
+    rows are never compressed into artificial subsequences. CONSTANT and MULTI
+    then retain their established loss-tolerant definitions, and only residual
+    rows are evaluated with the RANDOM structure score.
     """
     lengths, present, values = _mass_padded(ipid_list, cfg.sequence_length)
     n = len(lengths)
@@ -587,8 +589,15 @@ def classify_batch_mass(
     if values.shape[1] == 0:
         return codes
 
-    # CONSTANT and MULTI are intentionally evaluated before RANDOM and retain
-    # their existing definitions over the multiset of received IP-IDs.
+    complete = lengths == cfg.sequence_length
+    if complete.any():
+        codes[complete] = classify_batch(
+            values[complete].astype(np.uint16, copy=False),
+            cfg,
+        )
+
+    # CONSTANT and MULTI retain their existing definitions over the multiset of
+    # received IP-IDs. This also preserves classification of incomplete rows.
     ordered = _sorted_present_values(values, present)
     last_index = np.clip(lengths - 1, 0, values.shape[1] - 1)
     m_constant = (lengths >= 1) & (ordered[:, 0] == ordered[np.arange(n), last_index])
@@ -600,24 +609,22 @@ def classify_batch_mass(
     )
     m_multi = (n_clusters > 1) & (n_clusters <= MULTI_MAX_CLUSTERS)
 
-    codes = np.select(
-        [m_constant, m_multi],
-        [int(IPIDStrategy.CONSTANT), int(IPIDStrategy.MULTI)],
-        default=-1,
-    ).astype(np.int8)
+    residual = codes == int(IPIDStrategy.UNCLASSIFIED)
+    codes[residual & m_constant] = int(IPIDStrategy.CONSTANT)
+    codes[residual & ~m_constant & m_multi] = int(IPIDStrategy.MULTI)
 
-    residual = np.flatnonzero(codes == -1)
-    if residual.size:
+    residual_rows = np.flatnonzero(codes == int(IPIDStrategy.UNCLASSIFIED))
+    if residual_rows.size:
         score = random_structure_scores(
-            values[residual],
-            present[residual],
+            values[residual_rows],
+            present[residual_rows],
             cfg,
-            ordered=ordered[residual],
+            ordered=ordered[residual_rows],
         )
         is_random = (score >= RANDOM_STRUCTURE_MIN_SCORE) & (
-            lengths[residual] >= RANDOM_STRUCTURE_MIN_TEST_SAMPLES
+            lengths[residual_rows] >= RANDOM_STRUCTURE_MIN_TEST_SAMPLES
         )
-        codes[residual] = np.where(
+        codes[residual_rows] = np.where(
             is_random,
             int(IPIDStrategy.RANDOM),
             int(IPIDStrategy.UNCLASSIFIED),
