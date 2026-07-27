@@ -92,6 +92,23 @@ Reclassification does not replace the persisted historical input. Its result
 may differ from the classification that selected the original fixed-interval
 mass target when classifier rules have changed in the meantime.
 
+To inspect why sampled mass-measurement rows retained a particular label, join
+their processed strategy with the raw IP-ID sequence and step through ten
+interactive plots:
+
+```bash
+make inspect-sequences ARGS="icmp.ipid.no-connection.fixed-interval.mass \
+  --manifest data/analysis-jobs/<job-id>/manifest.json \
+  --strategy UNCLASSIFIED --samples 10 --seed 42"
+```
+
+Each window shows the complete measurement order, both destination and all four
+connection subsequences, missing replies, and the production RANDOM-score components.
+Closing the window (or pressing Right/Space) advances to the next sample; Left
+returns to the previous one and Q/Escape exits. On a headless SSH session, add
+`--save-dir reports/sequence-inspection/<job-id>` to write the ten figures as
+PNGs instead.
+
 ### Synthetic classifier validation
 
 Generate reproducible, measurement-shaped IP-ID sequences and evaluate the
