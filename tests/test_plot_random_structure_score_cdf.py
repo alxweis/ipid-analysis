@@ -34,11 +34,11 @@ from ipid_analysis.plot_random_structure_score_cdf import (
 
 
 class RandomStructureScoreCDFTest(unittest.TestCase):
-    def test_high_resolution_defaults(self):
-        self.assertEqual(DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY, 100_000)
-        self.assertEqual(DEFAULT_NULL_SAMPLES_PER_LENGTH, 100_000)
-        self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 100_000)
-        self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.001)
+    def test_default_sample_budget(self):
+        self.assertEqual(DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY, 10_000)
+        self.assertEqual(DEFAULT_NULL_SAMPLES_PER_LENGTH, 10_000)
+        self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 10_000)
+        self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.01)
 
     def test_raw_structure_statistics_detect_repetition_and_large_gap(self):
         values = np.asarray(
