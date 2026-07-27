@@ -274,9 +274,9 @@ def calculate_scores(values: np.ndarray, loss_mask: np.ndarray) -> np.ndarray:
     scores = np.minimum.reduce(
         [
             features.uniformity_pvalue,
-            # features.occupancy_pvalue,
-            # features.maximum_gap_pvalue,
-            # bounded_increment_pvalues(values, loss_mask),
+            features.occupancy_pvalue,
+            features.maximum_gap_pvalue,
+            bounded_increment_pvalues(values, loss_mask),
         ]
     )
     hard_rejection = (
