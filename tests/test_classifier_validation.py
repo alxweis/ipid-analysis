@@ -8,11 +8,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ipid_analysis.classifier_validation import (
-    FIXED_IDEAL_DATASET,
     FIXED_CONFIG,
+    FIXED_IDEAL_DATASET,
+    FIXED_IMPAIRED_STRATEGIES,
     FIXED_LOSSY_DATASET,
-    FIXED_OUT_OF_SCOPE_DATASET,
-    FIXED_OUT_OF_SCOPE_STRATEGIES,
     FIXED_REORDERED_DATASET,
     FIXED_STRATEGIES,
     RT_DATASET,
@@ -22,7 +21,6 @@ from ipid_analysis.classifier_validation import (
     TRIVIAL_SAMPLES_PER_STRATEGY,
     _generate_multi_sequences,
     apply_fixed_interval_impairments,
-    generate_fixed_out_of_scope_sequences,
     generate_fixed_sequences,
     generate_rt_out_of_scope_sequences,
     generate_rt_sequences,
@@ -34,7 +32,6 @@ from ipid_analysis.strategies import (
     RANDOM_STRUCTURE_MIN_SCORE,
     RANDOM_STRUCTURE_SCORE_VERSION,
     IPIDStrategy,
-    MeasurementConfig,
     _cluster_counts_mass,
     _mass_padded,
     classify_batch,
@@ -105,23 +102,6 @@ class ClassifierValidationTest(unittest.TestCase):
                 np.all(detected == int(IPIDStrategy[strategy])),
                 strategy,
             )
-        fixed_out_of_scope = generate_fixed_out_of_scope_sequences(
-            16,
-            np.random.default_rng(4),
-        )
-        self.assertEqual(tuple(fixed_out_of_scope), FIXED_OUT_OF_SCOPE_STRATEGIES)
-        fixed_config = MeasurementConfig(
-            connection_count=4,
-            requests_per_connection=25,
-            request_ip_ids=np.asarray([18933, 18932, 3717, 3718, 3719]),
-        )
-        for strategy, values in fixed_out_of_scope.items():
-            self.assertEqual(values.shape, (16, 100))
-            detected = classify_batch(values, fixed_config)
-            self.assertTrue(
-                np.all(detected == int(IPIDStrategy.SINGLE)),
-                strategy,
-            )
 
     def test_impairments_remove_twenty_and_reorder_present_values_only(self):
         ideal = np.tile(np.arange(100, dtype=np.uint16), (8, 1))
@@ -166,10 +146,11 @@ class ClassifierValidationTest(unittest.TestCase):
 
             table = pq.read_table(outputs["dataset"])
             rt_row_count = 2 * TRIVIAL_SAMPLES_PER_STRATEGY + 4 * 8
-            fixed_row_count = TRIVIAL_SAMPLES_PER_STRATEGY + 2 * 8
+            fixed_ideal_row_count = 2 * TRIVIAL_SAMPLES_PER_STRATEGY + 6 * 8
+            fixed_impaired_row_count = TRIVIAL_SAMPLES_PER_STRATEGY + 2 * 8
             self.assertEqual(
                 table.num_rows,
-                rt_row_count + 8 + 3 * fixed_row_count + 8,
+                rt_row_count + 8 + fixed_ideal_row_count + 2 * fixed_impaired_row_count,
             )
             rows = table.to_pylist()
             datasets = {row["DATASET"] for row in rows}
@@ -179,16 +160,12 @@ class ClassifierValidationTest(unittest.TestCase):
                     RT_DATASET,
                     RT_OUT_OF_SCOPE_DATASET,
                     FIXED_IDEAL_DATASET,
-                    FIXED_OUT_OF_SCOPE_DATASET,
                     FIXED_LOSSY_DATASET,
                     FIXED_REORDERED_DATASET,
                 },
             )
             for row in rows:
-                if row["DATASET"] in (
-                    RT_OUT_OF_SCOPE_DATASET,
-                    FIXED_OUT_OF_SCOPE_DATASET,
-                ):
+                if row["DATASET"] == RT_OUT_OF_SCOPE_DATASET:
                     self.assertNotEqual(row["GENERATOR_STRATEGY"], "UNCLASSIFIED")
                     self.assertEqual(row["EXPECTED_STRATEGY"], "UNCLASSIFIED")
                 tokens = row["IPID_SEQUENCE"].split(",")
@@ -220,7 +197,12 @@ class ClassifierValidationTest(unittest.TestCase):
             self.assertEqual(
                 fixed_report["samples_by_dataset_and_strategy"][FIXED_IDEAL_DATASET],
                 {
+                    "REFLECTION": TRIVIAL_SAMPLES_PER_STRATEGY,
                     "CONSTANT": TRIVIAL_SAMPLES_PER_STRATEGY,
+                    "SINGLE": 8,
+                    "PER_CONNECTION": 8,
+                    "PER_DESTINATION": 8,
+                    "PER_BUCKET": 8,
                     "MULTI": 8,
                     "RANDOM": 8,
                 },
@@ -230,7 +212,15 @@ class ClassifierValidationTest(unittest.TestCase):
                 {
                     "version": RANDOM_STRUCTURE_SCORE_VERSION,
                     "threshold": RANDOM_STRUCTURE_MIN_SCORE,
-                    "applies_after": ["CONSTANT", "MULTI"],
+                    "applies_after": [
+                        "REFLECTION",
+                        "CONSTANT",
+                        "PER_DESTINATION",
+                        "PER_CONNECTION",
+                        "SINGLE",
+                        "PER_BUCKET",
+                        "MULTI",
+                    ],
                 },
             )
             self.assertEqual(
@@ -238,8 +228,10 @@ class ClassifierValidationTest(unittest.TestCase):
                 {"MULTI": 8},
             )
             self.assertEqual(
-                fixed_report["samples_by_dataset_and_strategy"][FIXED_OUT_OF_SCOPE_DATASET],
-                {"SINGLE": 8},
+                impaired_report["datasets"]["lossy"]["metrics"]["confusion_matrix"][
+                    "generated_class_order"
+                ],
+                list(FIXED_IMPAIRED_STRATEGIES),
             )
             self.assertNotIn(
                 "UNCLASSIFIED",
@@ -273,13 +265,7 @@ class ClassifierValidationTest(unittest.TestCase):
                 out_of_scope_report["tests"]["rt_based"]["metrics"]["rejection_rate"],
                 1.0,
             )
-            fixed_rejection = out_of_scope_report["tests"]["fixed_interval"]["metrics"]
-            self.assertEqual(fixed_rejection["sample_count"], 8)
-            self.assertEqual(fixed_rejection["expected_output"], "UNCLASSIFIED")
-            self.assertEqual(
-                sum(fixed_rejection["by_generator"]["SINGLE"]["detected_output_counts"].values()),
-                8,
-            )
+            self.assertEqual(set(out_of_scope_report["tests"]), {"rt_based"})
 
 
 if __name__ == "__main__":

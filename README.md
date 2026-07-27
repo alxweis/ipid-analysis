@@ -68,14 +68,21 @@ strategies `REFLECTION`, `CONSTANT`, `PER_DESTINATION`, `PER_CONNECTION`,
 `SINGLE`, and `PER_BUCKET`. All other base sequences are `UNCLASSIFIED` and can
 be passed to a mass measurement.
 
-Mass measurements classify `CONSTANT` and `MULTI` first with their established
-position-independent rules. Only the remaining sequences are tested for
-`RANDOM` using the calibrated RANDOM-compatibility structure score described
-below; all other sequences remain `UNCLASSIFIED`. The 4 x 25 position layout
-and missing-reply markers are retained for the score's full, destination, and
-connection views. Minimum reply-rate filtering is performed by `ipid-measure`
-before fixed-interval rows are written, so analysis does not duplicate that
-measurement-stage decision as an IPID strategy.
+Complete mass-measurement sequences first use the same exact rules and priority
+as base measurements: `REFLECTION`, `CONSTANT`, `PER_DESTINATION`,
+`PER_CONNECTION`, `SINGLE`, and `PER_BUCKET`. The established
+position-independent `CONSTANT` and `MULTI` rules then handle residual rows,
+including rows with missing replies. Only the remaining sequences are tested
+for `RANDOM` using the calibrated RANDOM-compatibility structure score described
+below; all other sequences remain `UNCLASSIFIED`.
+
+The exact rules require all 100 positions. Missing-reply markers are never
+removed to create a shorter artificial sequence, so this does not introduce
+loss-tolerant variants of the base rules. The 4 x 25 position layout and
+missing-reply markers are retained for the RANDOM score's full, destination,
+and connection views. Minimum reply-rate filtering is performed by
+`ipid-measure` before fixed-interval rows are written, so analysis does not
+duplicate that measurement-stage decision as an IPID strategy.
 
 The classification produced by the measurement handoff is the authoritative
 historical result. `make analyse data.json` first reuses an existing processed
@@ -136,17 +143,18 @@ parameters are also recorded in every validation JSON sidecar.
 
 The RT-based dataset uses the real 4 x 4 round/connection interleaving and
 evaluates `REFLECTION`, `CONSTANT`, `SINGLE`, `PER_CONNECTION`,
-`PER_DESTINATION`, and `PER_BUCKET`. The fixed-interval dataset uses 4 x 25
-sequences and evaluates `CONSTANT`, `MULTI`, and `RANDOM`. `UNCLASSIFIED`
-remains a possible detected output, but is not shown as a generating strategy
-because it is a classifier result rather than an IP-ID generation mechanism.
-The fixed-interval robustness variants apply exactly 20 missing replies and
-then additionally permute 16 of the remaining 80 IP-ID values per sequence.
+`PER_DESTINATION`, and `PER_BUCKET`. The ideal fixed-interval dataset uses
+4 x 25 sequences and evaluates the same six exact strategies plus `MULTI` and
+`RANDOM`. `UNCLASSIFIED` remains a possible detected output, but is not shown
+as a generating strategy because it is a classifier result rather than an
+IP-ID generation mechanism. The fixed-interval robustness datasets remain
+limited to the loss-tolerant `CONSTANT`, `MULTI`, and `RANDOM` rules: they apply
+exactly 20 missing replies and then additionally permute 16 of the remaining
+80 IP-ID values per sequence.
 
 Out-of-scope rejection is evaluated separately: MULTI-like sequences are
-expected to remain `UNCLASSIFIED` in RT-based analysis, while SINGLE-like
-sequences are expected to remain `UNCLASSIFIED` in fixed-interval analysis.
-Their rejection rates and detected-output counts are written to
+expected to remain `UNCLASSIFIED` in RT-based analysis. Their rejection rates
+and detected-output counts are written to
 `reports/figures/classifier-validation/out-of-scope-classifier-rejection.json`
 and are not mixed into the supported-strategy accuracy, precision, recall, or
 F1 scores.
@@ -218,10 +226,11 @@ false-rejection rate. Its versioned result is cached below
 `S >= tau` is RANDOM-compatible. By default, the plotted nontrivial strategies
 also use 100,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
 The standard calibration pins production `tau` to
-`0.000016313656391956604`. `CONSTANT` and `MULTI` keep their earlier precedence
-and definitions; this score replaces only the former RANDOM test. The PDFs and
-JSON metadata are written below `reports/figures/classifier-validation/`; the
-underlying scores and decisions are stored in
+`0.000016313656391956604`. The exact complete-sequence rules and the established
+`CONSTANT` and `MULTI` fallbacks keep precedence over this score, which replaces
+only the former RANDOM test. The PDFs and JSON metadata are written below
+`reports/figures/classifier-validation/`; the underlying scores and decisions
+are stored in
 `data/processed/classifier-validation/random-structure-score-cdf.pq`. The
 logarithmic x-axis reserves one decade of space below the smallest score,
 labels every second power of ten as a major tick, and uses the intervening
