@@ -24,6 +24,8 @@ from ipid_analysis.plot_random_structure_score_cdf import (
     RawFeatures,
     SCORE_VERSION,
     UNIFORMITY_BINS,
+    _floor_only_strategies,
+    _log_axis_parameters,
     bounded_increment_pvalues,
     calculate_raw_features,
     calculate_scores,
@@ -37,6 +39,30 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         self.assertEqual(DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY, 10_000)
         self.assertEqual(DEFAULT_THRESHOLD_SAMPLES, 10_000)
         self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.01)
+
+    def test_log_axis_keeps_floor_cdfs_inside_plot(self):
+        scores = {
+            strategy: np.array([MIN_COMPATIBILITY_SCORE])
+            for strategy in PLOT_STRATEGIES
+        }
+
+        axis_minimum, major_ticks, _ = _log_axis_parameters(scores, 1e-3)
+
+        self.assertEqual(axis_minimum, 1e-21)
+        self.assertEqual(major_ticks[0], 1e-21)
+
+    def test_fully_coincident_floor_strategies_are_identified(self):
+        scores = {
+            strategy: np.array([1e-10])
+            for strategy in PLOT_STRATEGIES
+        }
+        scores["CONSTANT"] = np.full(4, MIN_COMPATIBILITY_SCORE)
+        scores["PER_CONNECTION"] = np.full(4, MIN_COMPATIBILITY_SCORE)
+
+        self.assertEqual(
+            _floor_only_strategies(scores),
+            ["CONSTANT", "PER_CONNECTION"],
+        )
 
     def test_features_reuse_one_sorted_multiset(self):
         values = np.zeros((2, IDEAL_SEQUENCE_LENGTH), dtype=np.uint16)

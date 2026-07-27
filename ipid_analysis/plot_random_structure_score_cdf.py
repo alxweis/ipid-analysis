@@ -77,6 +77,7 @@ MIN_TEST_SAMPLES = 2
 MIN_COMPATIBILITY_SCORE = 1e-20
 BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
 X_AXIS_MAXIMUM = 1.05
+X_AXIS_LEFT_PADDING_DECADES = 1
 THRESHOLD_COLOR = "#C62828"
 CALIBRATION_FILENAME = f"random-score-calibration-{SCORE_VERSION}.json"
 
@@ -378,7 +379,10 @@ def _log_axis_parameters(
         *(float(values[values > 0].min()) for values in scores.values()),
     )
     minimum_exponent = math.floor(math.log10(positive_minimum))
-    axis_minimum_exponent = min(-1, minimum_exponent)
+    axis_minimum_exponent = min(
+        -1,
+        minimum_exponent - X_AXIS_LEFT_PADDING_DECADES,
+    )
     major_ticks = np.power(
         10.0,
         np.arange(axis_minimum_exponent, 1, dtype=float),
@@ -392,6 +396,15 @@ def _log_axis_parameters(
     return 10.0**axis_minimum_exponent, major_ticks, minor_ticks
 
 
+def _floor_only_strategies(scores: dict[str, np.ndarray]) -> list[str]:
+    """Return strategies whose complete CDF is censored at the plotting floor."""
+    return [
+        strategy
+        for strategy in PLOT_STRATEGIES
+        if np.all(scores[strategy] <= MIN_COMPATIBILITY_SCORE)
+    ]
+
+
 def plot_score_cdf(
     scores: dict[str, np.ndarray],
     threshold: float,
@@ -401,6 +414,7 @@ def plot_score_cdf(
 ) -> Path:
     configure_paper_style()
     fig, ax = plt.subplots(figsize=(7.16, 3.15))
+    floor_only_strategies = _floor_only_strategies(scores)
     for strategy in PLOT_STRATEGIES:
         x_values, cumulative_percentages = _ecdf_coordinates(scores[strategy])
         ax.step(
@@ -410,6 +424,26 @@ def plot_score_cdf(
             color=STRATEGY_COLORS[strategy],
             linewidth=1.7,
         )
+    if floor_only_strategies:
+        marker_percentages = np.linspace(
+            15.0,
+            85.0,
+            len(floor_only_strategies),
+        )
+        for strategy, percentage in zip(
+            floor_only_strategies,
+            marker_percentages,
+            strict=True,
+        ):
+            ax.scatter(
+                [MIN_COMPATIBILITY_SCORE],
+                [percentage],
+                color=STRATEGY_COLORS[strategy],
+                edgecolors="white",
+                linewidths=0.35,
+                s=18,
+                zorder=3,
+            )
     ax.axvline(
         threshold,
         color=THRESHOLD_COLOR,
@@ -439,6 +473,8 @@ def plot_score_cdf(
             [0],
             color=STRATEGY_COLORS[strategy],
             linewidth=1.7,
+            marker="o" if strategy in floor_only_strategies else None,
+            markersize=4,
             label=STRATEGY_PRETTY[strategy],
         )
         for strategy in PLOT_STRATEGIES
