@@ -46,7 +46,7 @@ from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
-CLASSIFIER_VERSION = "4"
+CLASSIFIER_VERSION = "5"
 
 # --- classifier thresholds (tuning, measurement-independent) ---------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3

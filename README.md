@@ -194,8 +194,8 @@ the score. No strategy-specific hard gate, per-sequence Monte Carlo simulation,
 or KS/Greenwood calculation is used.
 
 The raw components are order-independent; only the inexpensive bounded-
-increment component can change after reordering. A separate 10,000-sequence
-RANDOM calibration set selects one global threshold `tau` at a target 1%
+increment component can change after reordering. A separate 100,000-sequence
+RANDOM calibration set selects one global threshold `tau` at a target 0.01%
 false-rejection rate. Its versioned result is cached below
 `data/processed/classifier-validation/` and reused by matching later runs:
 `S >= tau` is RANDOM-compatible. By default, the plotted nontrivial strategies
