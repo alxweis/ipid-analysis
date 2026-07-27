@@ -200,10 +200,11 @@ also use 10,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
 The PDFs and JSON metadata are written below
 `reports/figures/classifier-validation/`; the underlying scores and decisions are stored in
 `data/processed/classifier-validation/random-structure-score-cdf.pq`. This
-diagnostic does not yet change the production classifier. The logarithmic
-x-axis reserves one decade of space below the smallest score. Strategies whose
-complete CDF coincides at the numerical score floor are additionally marked in
-their strategy colors on that shared vertical line.
+diagnostic does not yet change the production classifier. Scores are retained
+over the complete mathematical range `[0, 1]` without a positive plotting
+floor. The CDF uses a narrow linear panel for the exact probability mass at
+`S = 0`; a broken axis separates it from the logarithmic panel for `S > 0`.
+Coincident zero-mass jumps are additionally marked in their strategy colors.
 
 ## Merging base and mass strategies
 
