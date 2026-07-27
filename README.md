@@ -180,16 +180,15 @@ make plot-random-structure-score-cdf ARGS="--samples-per-strategy 10000 --seed 4
 ```
 
 The production-oriented score `S` uses the unordered multiset of present IP-ID
-values. Each sequence is sorted exactly once; that sort is reused for an exact
-constant gate, the production multi-cluster rule, occupancy/collision
-probability, and a conservative circular maximum-gap probability. A 16-bin
+values. Each sequence is sorted exactly once; that sort is reused for
+occupancy/collision probability and a conservative circular maximum-gap
+probability. A 16-bin
 analytic Pearson test supplies the full-range uniformity component. One linear
 pass additionally evaluates exact bounded-increment support over pooled full,
 destination, and connection families, retaining power for counter sequences
 after partial reordering without another sort. The minimum component value is
-the score, and fewer than two samples or a matching constant/multi gate is an
-immediate structural rejection. No per-sequence Monte Carlo simulation or
-KS/Greenwood calculation is used.
+the score. No strategy-specific hard gate, per-sequence Monte Carlo simulation,
+or KS/Greenwood calculation is used.
 
 The raw components are order-independent; only the inexpensive bounded-
 increment component can change after reordering. A separate 10,000-sequence
