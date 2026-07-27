@@ -13,8 +13,8 @@ Design for scale (>100 GB / >300M rows):
   * Only IP_ADDR and IPID_SEQUENCE are read; the timestamp columns are never
     touched (the current rules do not use them -> saves most of the I/O).
   * Base sequences have a fixed length, so a whole batch becomes one (N, L)
-    uint16 matrix. Mass sequences are handled as variable-length arrays after
-    missing replies have been removed. All rules run vectorized over each batch.
+    uint16 matrix. Mass sequences retain their fixed measurement positions and
+    mark missing replies explicitly. All rules run vectorized over each batch.
   * The strategy column is dictionary-encoded (int8 + small dictionary), so it
     costs ~1 byte/row instead of a string per row.
 """
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+from functools import lru_cache
 import math
 from pathlib import Path
 import re
@@ -34,7 +35,7 @@ from loguru import logger
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from scipy.special import gammaincc  # vectorized chi-square survival function
+from scipy.special import betainc, gammaincc
 from tqdm import tqdm
 import typer
 import yaml
@@ -45,15 +46,21 @@ from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
-CLASSIFIER_VERSION = "3"
+CLASSIFIER_VERSION = "4"
 
 # --- classifier thresholds (tuning, measurement-independent) ---------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3
 MAX_INC = math.ceil(MODULUS / MIN_STEPS_BEFORE_WRAPAROUND) - 1  # 21845
 MULTI_MAX_INC = 800
 MULTI_MAX_CLUSTERS = 16
-RANDOM_MIN_P_VALUE = 1e-9  # reject "random" if the value-uniformity p-value is below this
+# Retained for the legacy Chi-square diagnostic plot; production RANDOM uses S.
+RANDOM_MIN_P_VALUE = 1e-9
 CHI2_BINS = 4  # equal-width bins for the IPID-value uniformity test
+RANDOM_STRUCTURE_SCORE_VERSION = "raw-multiset-bounded-v2"
+RANDOM_STRUCTURE_MIN_SCORE = 0.002018328854246871
+RANDOM_STRUCTURE_UNIFORMITY_BINS = 16
+RANDOM_STRUCTURE_MIN_TEST_SAMPLES = 2
+RANDOM_STRUCTURE_BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
 
 INPUT_NAME = "ipid.pq"
 SNAPSHOT_NAME = "ipid.snapshot.yaml"
@@ -113,7 +120,11 @@ OUTPUT_SCHEMA = pa.schema(
         ("IP_ADDR", pa.string()),
         ("IPID_SELECTION_STRATEGY", pa.dictionary(pa.int8(), pa.string())),
     ],
-    metadata={b"classifier_version": CLASSIFIER_VERSION.encode()},
+    metadata={
+        b"classifier_version": CLASSIFIER_VERSION.encode(),
+        b"random_structure_score_version": RANDOM_STRUCTURE_SCORE_VERSION.encode(),
+        b"random_structure_min_score": str(RANDOM_STRUCTURE_MIN_SCORE).encode(),
+    },
 )
 
 # DuckDB does the heavy lifting: scan + split + cast, multithreaded in C++.
@@ -131,15 +142,16 @@ FROM (
 )
 """
 
-# Mass measurements are not the fixed 4x4 structure (up to 4x25 = 80..100 values,
-# with '-' for lost replies). Drop the '-' and classify the *present* values with
-# position-independent rules only. Batches are capped to bound the padded matrix.
+# Mass measurements are not the fixed 4x4 structure (4x25 positions with '-'
+# for lost replies). Preserve every position as either an IP-ID or -1 so the
+# RANDOM score can evaluate full/destination/connection subsequences. CONSTANT
+# and MULTI still operate only on present IP-IDs.
 READ_SQL_MASS = """
 SELECT
     IP_ADDR,
-    list_filter(
-        list_transform(string_split(IPID_SEQUENCE, ','), x -> TRY_CAST(x AS INTEGER)),
-        v -> v IS NOT NULL
+    list_transform(
+        string_split(IPID_SEQUENCE, ','),
+        x -> COALESCE(TRY_CAST(x AS INTEGER), -1)
     ) AS ipid
 FROM read_parquet($input)
 """
@@ -265,35 +277,67 @@ def _batch_to_matrix(ipid_list: pa.ListArray, seq_len: int) -> tuple[np.ndarray,
     return valid, matrix
 
 
-def _mass_padded(ipid_list: pa.ListArray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Ragged list<int> -> (lengths, present_mask, values) padded to the batch's
-    max present length. `values` uses -1 for padding; `present_mask` marks the
-    real entries."""
-    lengths = ipid_list.value_lengths().to_numpy(zero_copy_only=False).astype(np.int64)
-    n = len(lengths)
-    w = int(lengths.max()) if n and lengths.max() > 0 else 0
+def _mass_padded(
+    ipid_list: pa.ListArray,
+    sequence_length: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Ragged list<int> -> (present counts, present mask, position matrix).
+
+    Input -1 values and padded cells both represent missing replies. When
+    ``sequence_length`` is supplied, every row retains exactly that many
+    measurement positions.
+    """
+    list_lengths = ipid_list.value_lengths().to_numpy(zero_copy_only=False).astype(np.int64)
+    n = len(list_lengths)
+    maximum_list_length = int(list_lengths.max()) if n and list_lengths.max() > 0 else 0
+    if sequence_length is not None and maximum_list_length > sequence_length:
+        raise ValueError(
+            f"mass sequence contains {maximum_list_length} positions, "
+            f"expected at most {sequence_length}"
+        )
+    w = sequence_length if sequence_length is not None else maximum_list_length
     if w == 0:
-        return lengths, np.zeros((n, 0), bool), np.full((n, 0), -1, np.int64)
+        return (
+            np.zeros(n, dtype=np.int64),
+            np.zeros((n, 0), bool),
+            np.full((n, 0), -1, np.int64),
+        )
 
     flat = ipid_list.flatten().to_numpy(zero_copy_only=False).astype(np.int64)
     starts = np.empty(n, dtype=np.int64)
     starts[0] = 0
-    np.cumsum(lengths[:-1], out=starts[1:])
+    np.cumsum(list_lengths[:-1], out=starts[1:])
 
     col = np.arange(w)
-    present = col[None, :] < lengths[:, None]
+    in_list = col[None, :] < list_lengths[:, None]
     gather = np.clip(starts[:, None] + col[None, :], 0, max(flat.size - 1, 0))
-    values = np.where(present, flat[gather] if flat.size else -1, -1)
+    values = np.where(in_list, flat[gather] if flat.size else -1, -1)
+    present = in_list & (values >= 0)
+    lengths = present.sum(axis=1).astype(np.int64)
     return lengths, present, values
 
 
+def _sorted_present_values(
+    values: np.ndarray,
+    present: np.ndarray,
+) -> np.ndarray:
+    """Sort present 16-bit values and place missing positions at the end."""
+    sentinel = np.uint32(MODULUS)
+    values_u32 = np.where(present, values, 0).astype(np.uint32, copy=False)
+    return np.sort(np.where(present, values_u32, sentinel), axis=1)
+
+
 def _cluster_counts_mass(
-    values: np.ndarray, present: np.ndarray, lengths: np.ndarray
+    values: np.ndarray,
+    present: np.ndarray,
+    lengths: np.ndarray,
+    *,
+    ordered: np.ndarray | None = None,
 ) -> np.ndarray:
     """Circular single-link cluster count per row over the present values."""
     n, w = values.shape
-    big = 1 << 20
-    ordered = np.sort(np.where(present, values, big), axis=1)
+    if ordered is None:
+        ordered = _sorted_present_values(values, present)
     gaps = np.diff(ordered, axis=1)
     gap_present = np.arange(w - 1)[None, :] < (lengths[:, None] - 1)
     interior = np.where(gap_present, gaps > MULTI_MAX_INC, False).sum(axis=1)
@@ -324,20 +368,236 @@ def chi2_uniformity_pvalues(values: np.ndarray, present: np.ndarray) -> np.ndarr
     return np.where(sample_count > 0, p, 1.0)
 
 
-def classify_batch_mass(ipid_list: pa.ListArray) -> np.ndarray:
-    """Position-independent classification for mass measurements ('-' already
-    dropped). Only CONSTANT, MULTI, and RANDOM apply; all other rows are
-    UNCLASSIFIED. The measurement stage already enforces its minimum reply rate."""
-    lengths, present, values = _mass_padded(ipid_list)
+@dataclass(frozen=True)
+class RandomStructureFeatures:
+    sample_count: np.ndarray
+    unique_count: np.ndarray
+    maximum_gap: np.ndarray
+    uniformity_pvalue: np.ndarray
+    occupancy_pvalue: np.ndarray
+    maximum_gap_pvalue: np.ndarray
+
+
+@lru_cache(maxsize=None)
+def _occupancy_cdf_table(maximum: int) -> np.ndarray:
+    """Exact P(D <= d) for n draws over the 16-bit IP-ID space."""
+    table = np.ones((maximum + 1, maximum + 1), dtype=float)
+    distribution = np.zeros(maximum + 1, dtype=float)
+    distribution[0] = 1.0
+
+    for sample_count in range(1, maximum + 1):
+        previous = distribution
+        distribution = np.zeros_like(previous)
+        distinct = np.arange(1, sample_count + 1)
+        distribution[distinct] = (
+            previous[distinct] * distinct / MODULUS
+            + previous[distinct - 1] * (MODULUS - distinct + 1) / MODULUS
+        )
+        table[sample_count] = np.cumsum(distribution)
+    return table
+
+
+def random_structure_features(
+    values: np.ndarray,
+    present: np.ndarray,
+    *,
+    ordered: np.ndarray | None = None,
+) -> RandomStructureFeatures:
+    """Calculate raw RANDOM-compatibility components with one row-wise sort."""
+    sample_count = present.sum(axis=1).astype(np.int16)
+    values_u32 = np.where(present, values, 0).astype(np.uint32, copy=False)
+    if ordered is None:
+        ordered = _sorted_present_values(values, present)
+    width = ordered.shape[1]
+    if width == 0:
+        empty = np.zeros(len(values), dtype=float)
+        return RandomStructureFeatures(
+            sample_count=sample_count,
+            unique_count=sample_count.copy(),
+            maximum_gap=np.zeros(len(values), dtype=np.int64),
+            uniformity_pvalue=np.ones(len(values), dtype=float),
+            occupancy_pvalue=np.ones(len(values), dtype=float),
+            maximum_gap_pvalue=empty,
+        )
+
+    adjacent_active = np.arange(width - 1)[None, :] < (sample_count[:, None] - 1)
+    interior_gaps = ordered[:, 1:] - ordered[:, :-1]
+    repeated = adjacent_active & (interior_gaps == 0)
+    unique_count = sample_count - repeated.sum(axis=1)
+
+    last_index = np.clip(sample_count - 1, 0, width - 1)
+    first = ordered[:, 0]
+    last = ordered[np.arange(len(ordered)), last_index]
+    wrap_gap = MODULUS - last.astype(np.int64) + first.astype(np.int64)
+    active_gaps = np.where(adjacent_active, interior_gaps, 0)
+    maximum_gap = np.maximum(active_gaps.max(axis=1), wrap_gap).astype(np.int64)
+
+    row_count = len(values)
+    bins = (values_u32 * RANDOM_STRUCTURE_UNIFORMITY_BINS) // MODULUS
+    rows = np.broadcast_to(np.arange(row_count)[:, None], values.shape)
+    flat_bin = (rows * RANDOM_STRUCTURE_UNIFORMITY_BINS + bins)[present]
+    counts = np.bincount(
+        flat_bin,
+        minlength=row_count * RANDOM_STRUCTURE_UNIFORMITY_BINS,
+    ).reshape(row_count, RANDOM_STRUCTURE_UNIFORMITY_BINS)
+    expected = np.where(
+        sample_count > 0,
+        sample_count / RANDOM_STRUCTURE_UNIFORMITY_BINS,
+        1.0,
+    )[:, None]
+    chi2 = ((counts - expected) ** 2 / expected).sum(axis=1)
+    uniformity_pvalue = gammaincc(
+        (RANDOM_STRUCTURE_UNIFORMITY_BINS - 1) / 2.0,
+        chi2 / 2.0,
+    )
+
+    occupancy_table = _occupancy_cdf_table(width)
+    occupancy_pvalue = occupancy_table[
+        np.clip(sample_count, 0, width),
+        np.clip(unique_count, 0, width),
+    ]
+
+    gap_fraction = np.clip(maximum_gap / MODULUS, 0.0, 1.0)
+    maximum_gap_pvalue = np.minimum(
+        1.0,
+        sample_count * np.power(1.0 - gap_fraction, np.maximum(sample_count - 1, 0)),
+    )
+
+    return RandomStructureFeatures(
+        sample_count=sample_count,
+        unique_count=unique_count,
+        maximum_gap=maximum_gap,
+        uniformity_pvalue=uniformity_pvalue,
+        occupancy_pvalue=occupancy_pvalue,
+        maximum_gap_pvalue=maximum_gap_pvalue,
+    )
+
+
+def _binomial_upper_tail(
+    success_count: np.ndarray,
+    sample_count: np.ndarray,
+) -> np.ndarray:
+    pvalues = np.ones(len(sample_count), dtype=float)
+    valid = (sample_count >= RANDOM_STRUCTURE_MIN_TEST_SAMPLES) & (success_count > 0)
+    pvalues[valid] = betainc(
+        success_count[valid],
+        sample_count[valid] - success_count[valid] + 1,
+        RANDOM_STRUCTURE_BOUNDED_INCREMENT_NULL_PROBABILITY,
+    )
+    return pvalues
+
+
+def _increment_counts(
+    values: np.ndarray,
+    present: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    pair_present = present[:, :-1] & present[:, 1:]
+    increments = (values[:, 1:] - values[:, :-1]) & 0xFFFF
+    bounded = pair_present & (increments >= 1) & (increments <= MAX_INC)
+    return (
+        bounded.sum(axis=1).astype(np.int64),
+        pair_present.sum(axis=1).astype(np.int64),
+    )
+
+
+def random_structure_bounded_increment_pvalues(
+    values: np.ndarray,
+    present: np.ndarray,
+    cfg: MeasurementConfig,
+) -> np.ndarray:
+    """Minimum bounded-increment support over full/destination/connection views."""
+    if values.shape[1] != cfg.sequence_length:
+        raise ValueError(
+            f"RANDOM score requires {cfg.sequence_length} positions, got {values.shape[1]}"
+        )
+
+    full_success, full_count = _increment_counts(values, present)
+
+    destination_components = [
+        _increment_counts(values[:, index::2], present[:, index::2]) for index in range(2)
+    ]
+    destination_success = sum(component[0] for component in destination_components)
+    destination_count = sum(component[1] for component in destination_components)
+
+    connections = values.reshape(
+        len(values),
+        cfg.requests_per_connection,
+        cfg.connection_count,
+    ).transpose(0, 2, 1)
+    connection_present = present.reshape(
+        len(values),
+        cfg.requests_per_connection,
+        cfg.connection_count,
+    ).transpose(0, 2, 1)
+    connection_components = [
+        _increment_counts(connections[:, index], connection_present[:, index])
+        for index in range(cfg.connection_count)
+    ]
+    connection_success = sum(component[0] for component in connection_components)
+    connection_count = sum(component[1] for component in connection_components)
+
+    return np.minimum.reduce(
+        [
+            _binomial_upper_tail(full_success, full_count),
+            _binomial_upper_tail(destination_success, destination_count),
+            _binomial_upper_tail(connection_success, connection_count),
+        ]
+    )
+
+
+def random_structure_scores(
+    values: np.ndarray,
+    present: np.ndarray,
+    cfg: MeasurementConfig,
+    *,
+    ordered: np.ndarray | None = None,
+) -> np.ndarray:
+    """Production RANDOM-compatibility score shared with synthetic evaluation."""
+    features = random_structure_features(values, present, ordered=ordered)
+    return np.clip(
+        np.minimum.reduce(
+            [
+                features.uniformity_pvalue,
+                features.occupancy_pvalue,
+                features.maximum_gap_pvalue,
+                random_structure_bounded_increment_pvalues(
+                    values,
+                    present,
+                    cfg,
+                ),
+            ]
+        ),
+        0.0,
+        1.0,
+    )
+
+
+def classify_batch_mass(
+    ipid_list: pa.ListArray,
+    cfg: MeasurementConfig,
+) -> np.ndarray:
+    """Fixed-interval mass classification.
+
+    CONSTANT and MULTI retain their existing priority and definitions. Only
+    residual rows are evaluated with the RANDOM structure score.
+    """
+    lengths, present, values = _mass_padded(ipid_list, cfg.sequence_length)
     n = len(lengths)
     codes = np.full(n, int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
     if values.shape[1] == 0:
         return codes
 
-    diff = (values[:, 1:] - values[:, :-1]) & 0xFFFF  # consecutive present, mod 2**16
-    inc_present = np.arange(values.shape[1] - 1)[None, :] < (lengths[:, None] - 1)
-    m_constant = (lengths >= 1) & np.where(inc_present, diff == 0, True).all(axis=1)
-    n_clusters = _cluster_counts_mass(values, present, lengths)
+    # CONSTANT and MULTI are intentionally evaluated before RANDOM and retain
+    # their existing definitions over the multiset of received IP-IDs.
+    ordered = _sorted_present_values(values, present)
+    last_index = np.clip(lengths - 1, 0, values.shape[1] - 1)
+    m_constant = (lengths >= 1) & (ordered[:, 0] == ordered[np.arange(n), last_index])
+    n_clusters = _cluster_counts_mass(
+        values,
+        present,
+        lengths,
+        ordered=ordered,
+    )
     m_multi = (n_clusters > 1) & (n_clusters <= MULTI_MAX_CLUSTERS)
 
     codes = np.select(
@@ -348,8 +608,15 @@ def classify_batch_mass(ipid_list: pa.ListArray) -> np.ndarray:
 
     residual = np.flatnonzero(codes == -1)
     if residual.size:
-        p = chi2_uniformity_pvalues(values[residual], present[residual])
-        is_random = (p >= RANDOM_MIN_P_VALUE) & (lengths[residual] >= 2)
+        score = random_structure_scores(
+            values[residual],
+            present[residual],
+            cfg,
+            ordered=ordered[residual],
+        )
+        is_random = (score >= RANDOM_STRUCTURE_MIN_SCORE) & (
+            lengths[residual] >= RANDOM_STRUCTURE_MIN_TEST_SAMPLES
+        )
         codes[residual] = np.where(
             is_random,
             int(IPIDStrategy.RANDOM),
@@ -369,8 +636,8 @@ def process(
     threads: int,
 ) -> int:
     """Stream input_path through the classifier into output_path. Returns the
-    number of IPs written. `mass` selects the position-independent, variable-length
-    path (READ_SQL_MASS); otherwise the fixed 4x4 path."""
+    number of IPs written. ``mass`` selects the fixed-interval path that retains
+    missing positions (READ_SQL_MASS); otherwise the fixed 4x4 path."""
     total = pq.ParquetFile(input_path).metadata.num_rows
     con = duckdb.connect(config={"threads": threads} if threads else {})
     read_sql = READ_SQL_MASS if mass else READ_SQL
@@ -384,7 +651,7 @@ def process(
             for batch in reader:
                 ip_addr = batch.column("IP_ADDR").cast(pa.string())
                 if mass:
-                    codes = classify_batch_mass(batch.column("ipid"))
+                    codes = classify_batch_mass(batch.column("ipid"), cfg)
                 else:
                     valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
                     codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
@@ -508,7 +775,10 @@ def classify_measurement(
     skip_first = (m.protocol == "tcp") and not mass
 
     if mass:
-        logger.info(f"[{m.target}] {m.measurement_id}: mass, position-independent rules only")
+        logger.info(
+            f"[{m.target}] {m.measurement_id}: mass, "
+            "CONSTANT/MULTI followed by RANDOM structure score"
+        )
     else:
         logger.info(
             f"[{m.target}] {m.measurement_id}: "

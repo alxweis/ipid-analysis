@@ -1,8 +1,8 @@
 """Plot production-oriented synthetic RANDOM-compatibility score CDFs.
 
-This remains an independent classifier diagnostic and does not change the
-production strategy classifier.  Unlike the more expensive increment-view
-diagnostics, this score is designed to scale to large fixed-interval datasets:
+The plot and the production fixed-interval classifier share this score
+implementation. Unlike the more expensive increment-view diagnostics, the
+score is designed to scale to large fixed-interval datasets:
 
 * one sort of the present 16-bit IP-ID values,
 * an exact discrete occupancy/collision tail probability,
@@ -19,9 +19,7 @@ cached as a versioned artifact for reproducible, inexpensive reruns.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from functools import lru_cache
 import json
 import math
 from pathlib import Path
@@ -37,7 +35,6 @@ matplotlib.use("Agg")
 from matplotlib.lines import Line2D  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter  # noqa: E402
-from scipy.special import betainc, gammaincc  # noqa: E402
 
 from ipid_analysis.classifier_validation import apply_fixed_interval_impairments  # noqa: E402
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
@@ -62,24 +59,37 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
     MAX_INC,
     MODULUS,
+    RANDOM_STRUCTURE_BOUNDED_INCREMENT_NULL_PROBABILITY,
+    RANDOM_STRUCTURE_SCORE_VERSION,
+    RANDOM_STRUCTURE_UNIFORMITY_BINS,
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
+    MeasurementConfig,
+    RandomStructureFeatures,
+    random_structure_bounded_increment_pvalues,
+    random_structure_features,
+    random_structure_scores,
 )
 
 app = typer.Typer()
 
-SCORE_VERSION = "raw-multiset-bounded-v2"
+SCORE_VERSION = RANDOM_STRUCTURE_SCORE_VERSION
 DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY = 10_000
 DEFAULT_THRESHOLD_SAMPLES = 10_000
 DEFAULT_RANDOM_FALSE_REJECTION_RATE = 0.01
-UNIFORMITY_BINS = 16
-MIN_TEST_SAMPLES = 2
+UNIFORMITY_BINS = RANDOM_STRUCTURE_UNIFORMITY_BINS
 MIN_COMPATIBILITY_SCORE = 1e-20
-BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
+BOUNDED_INCREMENT_NULL_PROBABILITY = RANDOM_STRUCTURE_BOUNDED_INCREMENT_NULL_PROBABILITY
 X_AXIS_MAXIMUM = 1.05
 X_AXIS_LEFT_PADDING_DECADES = 1
+X_MAJOR_EXPONENT_STEP = 2
 THRESHOLD_COLOR = "#C62828"
 CALIBRATION_FILENAME = f"random-score-calibration-{SCORE_VERSION}.json"
+SCORE_CONFIG = MeasurementConfig(
+    connection_count=CONNECTION_COUNT,
+    requests_per_connection=REQUESTS_PER_CONNECTION,
+    request_ip_ids=np.empty(0, dtype=np.int64),
+)
 
 SCORE_SCHEMA = pa.schema(
     [
@@ -92,170 +102,40 @@ SCORE_SCHEMA = pa.schema(
 )
 
 
-@dataclass(frozen=True)
-class RawFeatures:
-    sample_count: np.ndarray
-    unique_count: np.ndarray
-    maximum_gap: np.ndarray
-    uniformity_pvalue: np.ndarray
-    occupancy_pvalue: np.ndarray
-    maximum_gap_pvalue: np.ndarray
+RawFeatures = RandomStructureFeatures
 
 
-@lru_cache(maxsize=1)
-def _occupancy_cdf_table() -> np.ndarray:
-    """P(D <= d) for n draws over 2**16 values, n,d <= sequence length."""
-    maximum = IDEAL_SEQUENCE_LENGTH
-    table = np.ones((maximum + 1, maximum + 1), dtype=float)
-    distribution = np.zeros(maximum + 1, dtype=float)
-    distribution[0] = 1.0
-
-    for sample_count in range(1, maximum + 1):
-        previous = distribution
-        distribution = np.zeros_like(previous)
-        distinct = np.arange(1, sample_count + 1)
-        distribution[distinct] = (
-            previous[distinct] * distinct / MODULUS
-            + previous[distinct - 1] * (MODULUS - distinct + 1) / MODULUS
-        )
-        table[sample_count] = np.cumsum(distribution)
-    return table
-
-
-def calculate_raw_features(values: np.ndarray, loss_mask: np.ndarray) -> RawFeatures:
-    """Calculate every score component with one row-wise sort."""
-    present = ~loss_mask
-    sample_count = present.sum(axis=1).astype(np.int16)
-    values_u32 = values.astype(np.uint32, copy=False)
-    sentinel = np.uint32(MODULUS)
-    ordered = np.sort(np.where(present, values_u32, sentinel), axis=1)
-    width = ordered.shape[1]
-
-    adjacent_active = np.arange(width - 1)[None, :] < (sample_count[:, None] - 1)
-    interior_gaps = ordered[:, 1:] - ordered[:, :-1]
-    repeated = adjacent_active & (interior_gaps == 0)
-    unique_count = sample_count - repeated.sum(axis=1)
-
-    last_index = np.clip(sample_count - 1, 0, width - 1)
-    first = ordered[:, 0]
-    last = ordered[np.arange(len(ordered)), last_index]
-    wrap_gap = MODULUS - last.astype(np.int64) + first.astype(np.int64)
-    active_gaps = np.where(adjacent_active, interior_gaps, 0)
-    maximum_gap = np.maximum(active_gaps.max(axis=1), wrap_gap).astype(np.int64)
-
-    row_count = len(values)
-    bins = (values_u32 * UNIFORMITY_BINS) // MODULUS
-    rows = np.broadcast_to(np.arange(row_count)[:, None], values.shape)
-    flat_bin = (rows * UNIFORMITY_BINS + bins)[present]
-    counts = np.bincount(
-        flat_bin,
-        minlength=row_count * UNIFORMITY_BINS,
-    ).reshape(row_count, UNIFORMITY_BINS)
-    expected = np.where(sample_count > 0, sample_count / UNIFORMITY_BINS, 1.0)[:, None]
-    chi2 = ((counts - expected) ** 2 / expected).sum(axis=1)
-    uniformity_pvalue = gammaincc((UNIFORMITY_BINS - 1) / 2.0, chi2 / 2.0)
-
-    occupancy_table = _occupancy_cdf_table()
-    occupancy_pvalue = occupancy_table[
-        np.clip(sample_count, 0, IDEAL_SEQUENCE_LENGTH),
-        np.clip(unique_count, 0, IDEAL_SEQUENCE_LENGTH),
-    ]
-
-    gap_fraction = np.clip(maximum_gap / MODULUS, 0.0, 1.0)
-    maximum_gap_pvalue = np.minimum(
-        1.0,
-        sample_count * np.power(1.0 - gap_fraction, np.maximum(sample_count - 1, 0)),
-    )
-
-    return RawFeatures(
-        sample_count=sample_count,
-        unique_count=unique_count,
-        maximum_gap=maximum_gap,
-        uniformity_pvalue=uniformity_pvalue,
-        occupancy_pvalue=occupancy_pvalue,
-        maximum_gap_pvalue=maximum_gap_pvalue,
-    )
-
-
-def _binomial_upper_tail(
-    success_count: np.ndarray,
-    sample_count: np.ndarray,
-) -> np.ndarray:
-    pvalues = np.ones(len(sample_count), dtype=float)
-    valid = (sample_count >= MIN_TEST_SAMPLES) & (success_count > 0)
-    pvalues[valid] = betainc(
-        success_count[valid],
-        sample_count[valid] - success_count[valid] + 1,
-        BOUNDED_INCREMENT_NULL_PROBABILITY,
-    )
-    return pvalues
-
-
-def _increment_counts(
+def calculate_raw_features(
     values: np.ndarray,
-    present: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    pair_present = present[:, :-1] & present[:, 1:]
-    increments = (
-        values[:, 1:].astype(np.uint32) - values[:, :-1].astype(np.uint32)
-    ) & 0xFFFF
-    bounded = pair_present & (increments >= 1) & (increments <= MAX_INC)
-    return bounded.sum(axis=1).astype(np.int64), pair_present.sum(axis=1).astype(np.int64)
+    loss_mask: np.ndarray,
+) -> RawFeatures:
+    """Expose the production feature calculation to the evaluation plot."""
+    return random_structure_features(values, ~loss_mask)
 
 
 def bounded_increment_pvalues(
     values: np.ndarray,
     loss_mask: np.ndarray,
 ) -> np.ndarray:
-    """Minimum exact support p-value over three pooled logical families."""
-    present = ~loss_mask
-    full_success, full_count = _increment_counts(values, present)
-
-    destination_components = [
-        _increment_counts(values[:, index::2], present[:, index::2])
-        for index in range(2)
-    ]
-    destination_success = sum(component[0] for component in destination_components)
-    destination_count = sum(component[1] for component in destination_components)
-
-    connections = values.reshape(
-        len(values),
-        REQUESTS_PER_CONNECTION,
-        CONNECTION_COUNT,
-    ).transpose(0, 2, 1)
-    connection_present = present.reshape(
-        len(values),
-        REQUESTS_PER_CONNECTION,
-        CONNECTION_COUNT,
-    ).transpose(0, 2, 1)
-    connection_components = [
-        _increment_counts(connections[:, index], connection_present[:, index])
-        for index in range(CONNECTION_COUNT)
-    ]
-    connection_success = sum(component[0] for component in connection_components)
-    connection_count = sum(component[1] for component in connection_components)
-
-    return np.minimum.reduce(
-        [
-            _binomial_upper_tail(full_success, full_count),
-            _binomial_upper_tail(destination_success, destination_count),
-            _binomial_upper_tail(connection_success, connection_count),
-        ]
+    """Expose the production sequence-view component to the evaluation plot."""
+    return random_structure_bounded_increment_pvalues(
+        values,
+        ~loss_mask,
+        SCORE_CONFIG,
     )
 
 
 def calculate_scores(values: np.ndarray, loss_mask: np.ndarray) -> np.ndarray:
-    """Fast RANDOM score for fixed-interval residuals."""
-    features = calculate_raw_features(values, loss_mask)
-    scores = np.minimum.reduce(
-        [
-            features.uniformity_pvalue,
-            features.occupancy_pvalue,
-            features.maximum_gap_pvalue,
-            bounded_increment_pvalues(values, loss_mask),
-        ]
+    """Production score, clipped only to make zero values visible on log axes."""
+    return np.clip(
+        random_structure_scores(
+            values,
+            ~loss_mask,
+            SCORE_CONFIG,
+        ),
+        MIN_COMPATIBILITY_SCORE,
+        1.0,
     )
-    return np.clip(scores, MIN_COMPATIBILITY_SCORE, 1.0)
 
 
 def _random_calibration_datasets(
@@ -383,16 +263,10 @@ def _log_axis_parameters(
         -1,
         minimum_exponent - X_AXIS_LEFT_PADDING_DECADES,
     )
-    major_ticks = np.power(
-        10.0,
-        np.arange(axis_minimum_exponent, 1, dtype=float),
-    )
-    minor_ticks = np.concatenate(
-        [
-            np.arange(2, 10, dtype=float) * 10.0**exponent
-            for exponent in range(axis_minimum_exponent, 0)
-        ]
-    )
+    exponents = np.arange(axis_minimum_exponent, 1, dtype=int)
+    major_mask = (exponents % X_MAJOR_EXPONENT_STEP) == 0
+    major_ticks = np.power(10.0, exponents[major_mask].astype(float))
+    minor_ticks = np.power(10.0, exponents[~major_mask].astype(float))
     return 10.0**axis_minimum_exponent, major_ticks, minor_ticks
 
 

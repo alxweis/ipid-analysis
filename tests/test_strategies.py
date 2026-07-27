@@ -1,6 +1,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pyarrow as pa
@@ -9,6 +10,8 @@ import pyarrow.parquet as pq
 from ipid_analysis.manifest import IpidMeasurement
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
+    RANDOM_STRUCTURE_MIN_SCORE,
+    RANDOM_STRUCTURE_SCORE_VERSION,
     IPIDStrategy,
     MeasurementConfig,
     classify_batch,
@@ -24,6 +27,11 @@ class StrategyClassificationTest(unittest.TestCase):
         self.base_config = MeasurementConfig(
             connection_count=4,
             requests_per_connection=4,
+            request_ip_ids=np.asarray([1, 2, 3, 4], dtype=np.int64),
+        )
+        self.mass_config = MeasurementConfig(
+            connection_count=4,
+            requests_per_connection=25,
             request_ip_ids=np.asarray([1, 2, 3, 4], dtype=np.int64),
         )
 
@@ -79,7 +87,7 @@ class StrategyClassificationTest(unittest.TestCase):
             type=pa.list_(pa.int64()),
         )
 
-        codes = classify_batch_mass(values)
+        codes = classify_batch_mass(values, self.mass_config)
 
         self.assertEqual(
             codes.tolist(),
@@ -94,7 +102,7 @@ class StrategyClassificationTest(unittest.TestCase):
     def test_mass_does_not_duplicate_measurement_reply_rate_filter(self):
         values = pa.array([[17] * 79], type=pa.list_(pa.int64()))
 
-        codes = classify_batch_mass(values)
+        codes = classify_batch_mass(values, self.mass_config)
 
         self.assertEqual(codes.tolist(), [int(IPIDStrategy.CONSTANT)])
 
@@ -108,14 +116,35 @@ class StrategyClassificationTest(unittest.TestCase):
             type=pa.list_(pa.int64()),
         )
 
-        original_codes = classify_batch_mass(original)
-        shuffled_codes = classify_batch_mass(shuffled)
+        original_codes = classify_batch_mass(original, self.mass_config)
+        shuffled_codes = classify_batch_mass(shuffled, self.mass_config)
 
         self.assertEqual(original_codes.tolist(), shuffled_codes.tolist())
         self.assertEqual(
             original_codes.tolist(),
             [int(IPIDStrategy.MULTI), int(IPIDStrategy.RANDOM)],
         )
+
+    def test_mass_constant_and_multi_keep_priority_over_random_score(self):
+        values = pa.array(
+            [
+                [17] * 100,
+                list(range(50)) + list(range(10_000, 10_050)),
+            ],
+            type=pa.list_(pa.int64()),
+        )
+
+        with patch(
+            "ipid_analysis.strategies.random_structure_scores",
+            return_value=np.ones(2),
+        ) as score:
+            codes = classify_batch_mass(values, self.mass_config)
+
+        self.assertEqual(
+            codes.tolist(),
+            [int(IPIDStrategy.CONSTANT), int(IPIDStrategy.MULTI)],
+        )
+        score.assert_not_called()
 
     def test_snapshot_loads_measurement_shape_without_reply_rate(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -153,9 +182,15 @@ class StrategyClassificationTest(unittest.TestCase):
             classify_paths(source, snapshot, output, protocol="icmp")
 
             strategies = pq.read_table(output)["IPID_SELECTION_STRATEGY"].to_pylist()
+            metadata = pq.ParquetFile(output).schema_arrow.metadata
+            self.assertEqual(metadata[b"classifier_version"].decode(), CLASSIFIER_VERSION)
             self.assertEqual(
-                pq.ParquetFile(output).schema_arrow.metadata[b"classifier_version"].decode(),
-                CLASSIFIER_VERSION,
+                metadata[b"random_structure_score_version"].decode(),
+                RANDOM_STRUCTURE_SCORE_VERSION,
+            )
+            self.assertEqual(
+                float(metadata[b"random_structure_min_score"]),
+                RANDOM_STRUCTURE_MIN_SCORE,
             )
             self.assertEqual(
                 strategies,
