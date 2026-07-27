@@ -1,26 +1,28 @@
-"""Plot synthetic RANDOM-compatibility structure-score CDFs.
+"""Plot production-oriented synthetic RANDOM-compatibility score CDFs.
 
-This is an independent classifier diagnostic.  It does not change the
-production strategy classifier.  The score combines four small, complementary
-tests over the raw IP-IDs and the logical full/destination/connection views:
+This remains an independent classifier diagnostic and does not change the
+production strategy classifier.  Unlike the more expensive increment-view
+diagnostics, this score is designed to scale to large fixed-interval datasets:
 
-* discrete KS-D for marginal non-uniformity,
-* two-sided circular Greenwood spacings for clustering or over-regularity,
-* raw-value occupancy deficit for repeated or low-cardinality patterns,
-* raw-value circular maximum gap for separated clusters,
-* discrete KS-D for second differences (serial structure),
-* exact Binomial support for counter increments in the bounded 1..21845 range.
+* one sort of the present 16-bit IP-ID values,
+* exact CONSTANT and MULTI gates from the sorted values,
+* an exact discrete occupancy/collision tail probability,
+* a conservative circular maximum-gap tail bound,
+* an analytic 16-bin Pearson uniformity p-value,
+* one linear bounded-increment support pass over full/destination/connection
+  families to retain power for damaged counters.
 
-All component statistics are converted to empirical p-values using simulated
-discrete-uniform null distributions of the matching sample length.  Their
-minimum is the RANDOM-compatibility score S.  A single global threshold is
-calibrated on separate synthetic RANDOM sequences and shared by all datasets.
+The raw-value components are invariant to sample order.  Reordering can only
+change the inexpensive bounded-increment component.
+Threshold calibration is independent of the plotted strategy samples and is
+cached as a versioned artifact for reproducible, inexpensive reruns.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 import json
 import math
 from pathlib import Path
@@ -36,7 +38,7 @@ matplotlib.use("Agg")
 from matplotlib.lines import Line2D  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter  # noqa: E402
-from scipy.special import betainc  # noqa: E402
+from scipy.special import betainc, gammaincc  # noqa: E402
 
 from ipid_analysis.classifier_validation import apply_fixed_interval_impairments  # noqa: E402
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
@@ -61,32 +63,25 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
     MAX_INC,
     MODULUS,
+    MULTI_MAX_CLUSTERS,
+    MULTI_MAX_INC,
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
 )
 
 app = typer.Typer()
 
+SCORE_VERSION = "raw-multiset-bounded-v1"
 DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY = 10_000
-DEFAULT_NULL_SAMPLES_PER_LENGTH = 10_000
 DEFAULT_THRESHOLD_SAMPLES = 10_000
 DEFAULT_RANDOM_FALSE_REJECTION_RATE = 0.01
+UNIFORMITY_BINS = 16
 MIN_TEST_SAMPLES = 2
+MIN_COMPATIBILITY_SCORE = 1e-20
 BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
-NULL_CALIBRATION_BATCH_SIZE = 10_000
 X_AXIS_MAXIMUM = 1.05
 THRESHOLD_COLOR = "#C62828"
-
-RAW_VIEW = "raw"
-INCREMENT_VIEWS = (
-    "full",
-    "destination-0",
-    "destination-1",
-    "connection-0",
-    "connection-1",
-    "connection-2",
-    "connection-3",
-)
+CALIBRATION_FILENAME = f"random-score-calibration-{SCORE_VERSION}.json"
 
 SCORE_SCHEMA = pa.schema(
     [
@@ -100,124 +95,153 @@ SCORE_SCHEMA = pa.schema(
 
 
 @dataclass(frozen=True)
-class Statistic:
+class RawFeatures:
     sample_count: np.ndarray
-    value: np.ndarray
-    tail: str
+    unique_count: np.ndarray
+    cluster_count: np.ndarray
+    maximum_gap: np.ndarray
+    uniformity_pvalue: np.ndarray
+    occupancy_pvalue: np.ndarray
+    maximum_gap_pvalue: np.ndarray
+    constant: np.ndarray
+    multi: np.ndarray
 
 
-def _ordered_values(
+@lru_cache(maxsize=1)
+def _occupancy_cdf_table() -> np.ndarray:
+    """P(D <= d) for n draws over 2**16 values, n,d <= sequence length."""
+    maximum = IDEAL_SEQUENCE_LENGTH
+    table = np.ones((maximum + 1, maximum + 1), dtype=float)
+    distribution = np.zeros(maximum + 1, dtype=float)
+    distribution[0] = 1.0
+
+    for sample_count in range(1, maximum + 1):
+        previous = distribution
+        distribution = np.zeros_like(previous)
+        distinct = np.arange(1, sample_count + 1)
+        distribution[distinct] = (
+            previous[distinct] * distinct / MODULUS
+            + previous[distinct - 1] * (MODULUS - distinct + 1) / MODULUS
+        )
+        table[sample_count] = np.cumsum(distribution)
+    return table
+
+
+def calculate_raw_features(values: np.ndarray, loss_mask: np.ndarray) -> RawFeatures:
+    """Calculate every score component with one row-wise sort."""
+    present = ~loss_mask
+    sample_count = present.sum(axis=1).astype(np.int16)
+    values_u32 = values.astype(np.uint32, copy=False)
+    sentinel = np.uint32(MODULUS)
+    ordered = np.sort(np.where(present, values_u32, sentinel), axis=1)
+    width = ordered.shape[1]
+
+    adjacent_active = np.arange(width - 1)[None, :] < (sample_count[:, None] - 1)
+    interior_gaps = ordered[:, 1:] - ordered[:, :-1]
+    repeated = adjacent_active & (interior_gaps == 0)
+    unique_count = sample_count - repeated.sum(axis=1)
+
+    last_index = np.clip(sample_count - 1, 0, width - 1)
+    first = ordered[:, 0]
+    last = ordered[np.arange(len(ordered)), last_index]
+    wrap_gap = MODULUS - last.astype(np.int64) + first.astype(np.int64)
+    active_gaps = np.where(adjacent_active, interior_gaps, 0)
+    maximum_gap = np.maximum(active_gaps.max(axis=1), wrap_gap).astype(np.int64)
+
+    large_gap_count = (
+        (adjacent_active & (interior_gaps > MULTI_MAX_INC)).sum(axis=1)
+        + ((wrap_gap > MULTI_MAX_INC) & (sample_count >= 1))
+    )
+    cluster_count = np.where(
+        sample_count >= 1,
+        np.where(large_gap_count == 0, 1, large_gap_count),
+        0,
+    ).astype(np.int16)
+
+    row_count = len(values)
+    bins = (values_u32 * UNIFORMITY_BINS) // MODULUS
+    rows = np.broadcast_to(np.arange(row_count)[:, None], values.shape)
+    flat_bin = (rows * UNIFORMITY_BINS + bins)[present]
+    counts = np.bincount(
+        flat_bin,
+        minlength=row_count * UNIFORMITY_BINS,
+    ).reshape(row_count, UNIFORMITY_BINS)
+    expected = np.where(sample_count > 0, sample_count / UNIFORMITY_BINS, 1.0)[:, None]
+    chi2 = ((counts - expected) ** 2 / expected).sum(axis=1)
+    uniformity_pvalue = gammaincc((UNIFORMITY_BINS - 1) / 2.0, chi2 / 2.0)
+
+    occupancy_table = _occupancy_cdf_table()
+    occupancy_pvalue = occupancy_table[
+        np.clip(sample_count, 0, IDEAL_SEQUENCE_LENGTH),
+        np.clip(unique_count, 0, IDEAL_SEQUENCE_LENGTH),
+    ]
+
+    gap_fraction = np.clip(maximum_gap / MODULUS, 0.0, 1.0)
+    maximum_gap_pvalue = np.minimum(
+        1.0,
+        sample_count * np.power(1.0 - gap_fraction, np.maximum(sample_count - 1, 0)),
+    )
+
+    constant = (sample_count >= 1) & (unique_count == 1)
+    multi = (
+        (cluster_count > 1)
+        & (cluster_count <= MULTI_MAX_CLUSTERS)
+        & ~constant
+    )
+    return RawFeatures(
+        sample_count=sample_count,
+        unique_count=unique_count,
+        cluster_count=cluster_count,
+        maximum_gap=maximum_gap,
+        uniformity_pvalue=uniformity_pvalue,
+        occupancy_pvalue=occupancy_pvalue,
+        maximum_gap_pvalue=maximum_gap_pvalue,
+        constant=constant,
+        multi=multi,
+    )
+
+
+def _binomial_upper_tail(
+    success_count: np.ndarray,
+    sample_count: np.ndarray,
+) -> np.ndarray:
+    pvalues = np.ones(len(sample_count), dtype=float)
+    valid = (sample_count >= MIN_TEST_SAMPLES) & (success_count > 0)
+    pvalues[valid] = betainc(
+        success_count[valid],
+        sample_count[valid] - success_count[valid] + 1,
+        BOUNDED_INCREMENT_NULL_PROBABILITY,
+    )
+    return pvalues
+
+
+def _increment_counts(
     values: np.ndarray,
     present: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    sample_count = present.sum(axis=1).astype(np.int16)
-    ordered = np.sort(np.where(present, values, MODULUS), axis=1)
-    return sample_count, ordered
+    pair_present = present[:, :-1] & present[:, 1:]
+    increments = (
+        values[:, 1:].astype(np.uint32) - values[:, :-1].astype(np.uint32)
+    ) & 0xFFFF
+    bounded = pair_present & (increments >= 1) & (increments <= MAX_INC)
+    return bounded.sum(axis=1).astype(np.int64), pair_present.sum(axis=1).astype(np.int64)
 
 
-def _ks_d_from_ordered(sample_count: np.ndarray, ordered: np.ndarray) -> Statistic:
-    """One-sample KS-D against the discrete uniform 16-bit distribution."""
-    width = ordered.shape[1]
-    ranks = np.arange(1, width + 1, dtype=float)[None, :]
-    active = ranks <= sample_count[:, None]
-    denominator = np.maximum(sample_count, 1)[:, None]
-    uniform_cdf = (ordered.astype(float) + 0.5) / MODULUS
-    d_plus = np.where(active, ranks / denominator - uniform_cdf, -np.inf)
-    d_minus = np.where(active, uniform_cdf - (ranks - 1.0) / denominator, -np.inf)
-    statistic = np.maximum(d_plus.max(axis=1), d_minus.max(axis=1))
-    statistic = np.where(sample_count >= MIN_TEST_SAMPLES, statistic, np.nan)
-    return Statistic(sample_count, statistic, "upper")
-
-
-def _greenwood_from_ordered(sample_count: np.ndarray, ordered: np.ndarray) -> Statistic:
-    """Dimensionless circular Greenwood spacing statistic."""
-    width = ordered.shape[1]
-    interior = np.diff(ordered, axis=1).astype(float)
-    interior_active = np.arange(width - 1)[None, :] < (sample_count[:, None] - 1)
-    scaled = sample_count[:, None] * interior / MODULUS - 1.0
-    statistic = np.where(interior_active, scaled * scaled, 0.0).sum(axis=1)
-
-    last_index = np.clip(sample_count - 1, 0, width - 1)
-    wrap = (MODULUS - ordered[np.arange(len(ordered)), last_index] + ordered[:, 0]).astype(float)
-    wrap_scaled = sample_count * wrap / MODULUS - 1.0
-    statistic += wrap_scaled * wrap_scaled
-    statistic = np.where(sample_count >= MIN_TEST_SAMPLES, statistic, np.nan)
-    return Statistic(sample_count, statistic, "two-sided")
-
-
-def _occupancy_deficit_from_ordered(
-    sample_count: np.ndarray,
-    ordered: np.ndarray,
-) -> Statistic:
-    """Number of observations beyond the distinct-value count."""
-    adjacent_active = np.arange(ordered.shape[1] - 1)[None, :] < (
-        sample_count[:, None] - 1
-    )
-    repeated = adjacent_active & (ordered[:, 1:] == ordered[:, :-1])
-    statistic = repeated.sum(axis=1).astype(float)
-    statistic = np.where(sample_count >= MIN_TEST_SAMPLES, statistic, np.nan)
-    return Statistic(sample_count, statistic, "upper")
-
-
-def _maximum_gap_from_ordered(
-    sample_count: np.ndarray,
-    ordered: np.ndarray,
-) -> Statistic:
-    """Largest circular spacing between occupied 16-bit values."""
-    width = ordered.shape[1]
-    interior = np.diff(ordered, axis=1).astype(float)
-    interior_active = np.arange(width - 1)[None, :] < (sample_count[:, None] - 1)
-    interior = np.where(interior_active, interior, -np.inf)
-    last_index = np.clip(sample_count - 1, 0, width - 1)
-    wrap = (
-        MODULUS
-        - ordered[np.arange(len(ordered)), last_index]
-        + ordered[:, 0]
-    ).astype(float)
-    statistic = np.maximum(interior.max(axis=1), wrap)
-    statistic = np.where(sample_count >= MIN_TEST_SAMPLES, statistic, np.nan)
-    return Statistic(sample_count, statistic, "upper")
-
-
-def _distribution_statistics(
+def bounded_increment_pvalues(
     values: np.ndarray,
-    present: np.ndarray,
-    *,
-    include_raw_structure: bool = False,
-) -> dict[str, Statistic]:
-    sample_count, ordered = _ordered_values(values, present)
-    statistics = {
-        "ks": _ks_d_from_ordered(sample_count, ordered),
-        "greenwood": _greenwood_from_ordered(sample_count, ordered),
-    }
-    if include_raw_structure:
-        statistics.update(
-            {
-                "occupancy-deficit": _occupancy_deficit_from_ordered(
-                    sample_count,
-                    ordered,
-                ),
-                "maximum-gap": _maximum_gap_from_ordered(
-                    sample_count,
-                    ordered,
-                ),
-            }
-        )
-    return statistics
+    loss_mask: np.ndarray,
+) -> np.ndarray:
+    """Minimum exact support p-value over three pooled logical families."""
+    present = ~loss_mask
+    full_success, full_count = _increment_counts(values, present)
 
+    destination_components = [
+        _increment_counts(values[:, index::2], present[:, index::2])
+        for index in range(2)
+    ]
+    destination_success = sum(component[0] for component in destination_components)
+    destination_count = sum(component[1] for component in destination_components)
 
-def _ks_d(values: np.ndarray, present: np.ndarray) -> Statistic:
-    return _distribution_statistics(values, present)["ks"]
-
-
-def _greenwood(values: np.ndarray, present: np.ndarray) -> Statistic:
-    return _distribution_statistics(values, present)["greenwood"]
-
-
-def _logical_views(
-    values: np.ndarray,
-    present: np.ndarray,
-) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     connections = values.reshape(
         len(values),
         REQUESTS_PER_CONNECTION,
@@ -228,208 +252,40 @@ def _logical_views(
         REQUESTS_PER_CONNECTION,
         CONNECTION_COUNT,
     ).transpose(0, 2, 1)
-    views = {
-        "full": (values, present),
-        "destination-0": (values[:, 0::2], present[:, 0::2]),
-        "destination-1": (values[:, 1::2], present[:, 1::2]),
-    }
-    views.update(
-        {
-            f"connection-{index}": (
-                connections[:, index, :],
-                connection_present[:, index, :],
-            )
-            for index in range(CONNECTION_COUNT)
-        }
-    )
-    return views
+    connection_components = [
+        _increment_counts(connections[:, index], connection_present[:, index])
+        for index in range(CONNECTION_COUNT)
+    ]
+    connection_success = sum(component[0] for component in connection_components)
+    connection_count = sum(component[1] for component in connection_components)
 
-
-def _adjacent_increments(
-    values: np.ndarray,
-    present: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    increment_present = present[:, :-1] & present[:, 1:]
-    increments = (values[:, 1:] - values[:, :-1]) & 0xFFFF
-    return increments, increment_present
-
-
-def _second_differences(
-    values: np.ndarray,
-    present: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    difference_present = present[:, :-2] & present[:, 1:-1] & present[:, 2:]
-    differences = (values[:, 2:] - 2 * values[:, 1:-1] + values[:, :-2]) & 0xFFFF
-    return differences, difference_present
-
-
-def _bounded_increment_support(
-    increments: np.ndarray,
-    present: np.ndarray,
-) -> Statistic:
-    """Count valid increments in the deterministic counter range."""
-    sample_count = present.sum(axis=1).astype(np.int16)
-    bounded = present & (increments >= 1) & (increments <= MAX_INC)
-    return Statistic(
-        sample_count,
-        bounded.sum(axis=1).astype(float),
-        "binomial-upper",
+    return np.minimum.reduce(
+        [
+            _binomial_upper_tail(full_success, full_count),
+            _binomial_upper_tail(destination_success, destination_count),
+            _binomial_upper_tail(connection_success, connection_count),
+        ]
     )
 
 
-def calculate_statistics(
-    values: np.ndarray,
-    loss_mask: np.ndarray,
-) -> dict[str, Statistic]:
-    """Calculate the raw and logical-view statistics for every sequence."""
-    values = values.astype(np.int64, copy=False)
-    present = ~loss_mask
-    statistics = {
-        f"{RAW_VIEW}.{name}": statistic
-        for name, statistic in _distribution_statistics(
-            values,
-            present,
-            include_raw_structure=True,
-        ).items()
-    }
-    increments_by_view = {}
-    for view_name, (view_values, view_present) in _logical_views(values, present).items():
-        increments, increment_present = _adjacent_increments(view_values, view_present)
-        increments_by_view[view_name] = (increments, increment_present)
-        second_differences, second_present = _second_differences(
-            view_values,
-            view_present,
-        )
-        increment_statistics = _distribution_statistics(
-            increments,
-            increment_present,
-        )
-        statistics.update(
-            {
-                f"{view_name}.increment.{name}": statistic
-                for name, statistic in increment_statistics.items()
-            }
-        )
-        statistics[f"{view_name}.second-difference.ks"] = _ks_d(
-            second_differences,
-            second_present,
-        )
-
-    bounded_families = {
-        "full": (increments_by_view["full"],),
-        "destination": tuple(increments_by_view[f"destination-{index}"] for index in range(2)),
-        "connection": tuple(
-            increments_by_view[f"connection-{index}"] for index in range(CONNECTION_COUNT)
-        ),
-    }
-    for family, components in bounded_families.items():
-        family_increments = np.concatenate(
-            [component[0] for component in components],
-            axis=1,
-        )
-        family_present = np.concatenate(
-            [component[1] for component in components],
-            axis=1,
-        )
-        statistics[f"{family}.increment.bounded-support"] = _bounded_increment_support(
-            family_increments, family_present
-        )
-    return statistics
-
-
-def build_null_tables(
-    samples_per_length: int,
-    rng: np.random.Generator,
-) -> dict[str, dict[int, np.ndarray]]:
-    """Discrete-uniform reference distributions indexed by statistic and length."""
-    if samples_per_length < 2:
-        raise ValueError("samples_per_length must be at least 2")
-    tables: dict[str, dict[int, np.ndarray]] = {
-        "ks": {},
-        "greenwood": {},
-        "occupancy-deficit": {},
-        "maximum-gap": {},
-    }
-    for sample_count in range(MIN_TEST_SAMPLES, IDEAL_SEQUENCE_LENGTH + 1):
-        names = ["ks", "greenwood"]
-        if sample_count in (PRESENT_SEQUENCE_LENGTH, IDEAL_SEQUENCE_LENGTH):
-            names.extend(["occupancy-deficit", "maximum-gap"])
-        samples = {
-            name: np.empty(samples_per_length, dtype=float)
-            for name in names
-        }
-        for start in range(0, samples_per_length, NULL_CALIBRATION_BATCH_SIZE):
-            stop = min(start + NULL_CALIBRATION_BATCH_SIZE, samples_per_length)
-            values = rng.integers(
-                0,
-                MODULUS,
-                size=(stop - start, sample_count),
-                dtype=np.uint16,
-            ).astype(np.int64)
-            present = np.ones_like(values, dtype=bool)
-            statistics = _distribution_statistics(
-                values,
-                present,
-                include_raw_structure=len(names) > 2,
-            )
-            for name in names:
-                samples[name][start:stop] = statistics[name].value
-        for name in names:
-            tables[name][sample_count] = np.sort(samples[name])
-    return tables
-
-
-def _empirical_pvalues(
-    statistic: Statistic,
-    references: dict[int, np.ndarray],
-) -> np.ndarray:
-    pvalues = np.ones(len(statistic.value), dtype=float)
-    valid = np.isfinite(statistic.value) & (statistic.sample_count >= MIN_TEST_SAMPLES)
-    for sample_count in np.unique(statistic.sample_count[valid]):
-        selected = valid & (statistic.sample_count == sample_count)
-        observed = statistic.value[selected]
-        reference = references[int(sample_count)]
-        denominator = len(reference) + 1.0
-        upper = (
-            len(reference) - np.searchsorted(reference, observed, side="left") + 1.0
-        ) / denominator
-        if statistic.tail == "upper":
-            pvalues[selected] = upper
-        else:
-            lower = (np.searchsorted(reference, observed, side="right") + 1.0) / denominator
-            pvalues[selected] = np.minimum(1.0, 2.0 * np.minimum(lower, upper))
-    return pvalues
-
-
-def _bounded_support_pvalues(statistic: Statistic) -> np.ndarray:
-    """Exact upper-tail Binomial p-values under 16-bit uniform increments."""
-    sample_count = statistic.sample_count.astype(np.int64)
-    bounded_count = statistic.value.astype(np.int64)
-    pvalues = np.ones(len(bounded_count), dtype=float)
-    positive = (sample_count >= MIN_TEST_SAMPLES) & (bounded_count > 0)
-    pvalues[positive] = betainc(
-        bounded_count[positive],
-        sample_count[positive] - bounded_count[positive] + 1,
-        BOUNDED_INCREMENT_NULL_PROBABILITY,
+def calculate_scores(values: np.ndarray, loss_mask: np.ndarray) -> np.ndarray:
+    """Fast RANDOM score for fixed-interval residuals."""
+    features = calculate_raw_features(values, loss_mask)
+    scores = np.minimum.reduce(
+        [
+            features.uniformity_pvalue,
+            features.occupancy_pvalue,
+            features.maximum_gap_pvalue,
+            bounded_increment_pvalues(values, loss_mask),
+        ]
     )
-    return pvalues
-
-
-def calculate_scores(
-    values: np.ndarray,
-    loss_mask: np.ndarray,
-    null_tables: dict[str, dict[int, np.ndarray]],
-) -> np.ndarray:
-    """Minimum empirical p-value over every valid structure test and view."""
-    statistics = calculate_statistics(values, loss_mask)
-    component_pvalues = []
-    for name, statistic in statistics.items():
-        if statistic.tail == "binomial-upper":
-            component_pvalues.append(_bounded_support_pvalues(statistic))
-        else:
-            table_name = name.rsplit(".", maxsplit=1)[-1]
-            component_pvalues.append(_empirical_pvalues(statistic, null_tables[table_name]))
-    return np.min(np.stack(component_pvalues, axis=1), axis=1)
+    hard_rejection = (
+        features.constant
+        | features.multi
+        | (features.sample_count < MIN_TEST_SAMPLES)
+    )
+    scores = np.where(hard_rejection, MIN_COMPATIBILITY_SCORE, scores)
+    return np.clip(scores, MIN_COMPATIBILITY_SCORE, 1.0)
 
 
 def _random_calibration_datasets(
@@ -456,23 +312,71 @@ def _random_calibration_datasets(
     }
 
 
-def calibrate_threshold(
-    null_tables: dict[str, dict[int, np.ndarray]],
+def _calibration_key(
+    *,
     sample_count: int,
     false_rejection_rate: float,
-    sequence_rng: np.random.Generator,
-    impairment_rng: np.random.Generator,
-) -> tuple[float, dict[str, np.ndarray], dict[str, float]]:
+    seed: int,
+) -> dict:
+    return {
+        "score_version": SCORE_VERSION,
+        "sample_count_per_dataset": sample_count,
+        "false_rejection_rate": false_rejection_rate,
+        "seed": seed,
+        "uniformity_bins": UNIFORMITY_BINS,
+        "multi_max_increment": MULTI_MAX_INC,
+        "multi_max_clusters": MULTI_MAX_CLUSTERS,
+        "bounded_increment_maximum": MAX_INC,
+        "ideal_sequence_length": IDEAL_SEQUENCE_LENGTH,
+        "loss_fraction": LOSS_FRACTION,
+    }
+
+
+def _write_json(value: dict, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary.unlink(missing_ok=True)
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary.replace(output_path)
+    return output_path
+
+
+def load_or_calibrate_threshold(
+    cache_path: Path,
+    *,
+    sample_count: int,
+    false_rejection_rate: float,
+    seed: int,
+) -> tuple[float, dict[str, float], dict[str, int], bool]:
     if sample_count < 2:
         raise ValueError("threshold sample count must be at least 2")
     if not 0.0 < false_rejection_rate < 1.0:
         raise ValueError("false rejection rate must lie strictly between 0 and 1")
 
+    key = _calibration_key(
+        sample_count=sample_count,
+        false_rejection_rate=false_rejection_rate,
+        seed=seed,
+    )
+    if cache_path.is_file():
+        cached = json.loads(cache_path.read_text())
+        if cached.get("key") == key:
+            return (
+                float(cached["tau"]),
+                {name: float(value) for name, value in cached["dataset_lower_quantiles"].items()},
+                {name: int(value) for name, value in cached["random_below_tau"].items()},
+                True,
+            )
+
+    threshold_rng, impairment_rng = [
+        np.random.default_rng(child)
+        for child in np.random.SeedSequence(seed).spawn(2)
+    ]
     scores = {
-        dataset: calculate_scores(values, mask, null_tables)
+        dataset: calculate_scores(values, mask)
         for dataset, (values, mask) in _random_calibration_datasets(
             sample_count,
-            sequence_rng,
+            threshold_rng,
             impairment_rng,
         ).items()
     }
@@ -480,19 +384,22 @@ def calibrate_threshold(
         dataset: float(np.quantile(values, false_rejection_rate, method="lower"))
         for dataset, values in scores.items()
     }
-    # One conservative threshold shared by every impairment condition.
-    return min(quantiles.values()), scores, quantiles
-
-
-def calculate_strategy_scores(
-    sequences: dict[str, np.ndarray],
-    loss_masks: dict[str, np.ndarray],
-    null_tables: dict[str, dict[int, np.ndarray]],
-) -> dict[str, np.ndarray]:
-    return {
-        strategy: calculate_scores(sequences[strategy], loss_masks[strategy], null_tables)
-        for strategy in PLOT_STRATEGIES
+    tau = min(quantiles.values())
+    below = {
+        dataset: int((values < tau).sum())
+        for dataset, values in scores.items()
     }
+    _write_json(
+        {
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "key": key,
+            "tau": tau,
+            "dataset_lower_quantiles": quantiles,
+            "random_below_tau": below,
+        },
+        cache_path,
+    )
+    return tau, quantiles, below, False
 
 
 def _log_axis_parameters(
@@ -596,10 +503,10 @@ def plot_score_cdf(
         bbox_inches="tight",
         metadata={
             "Title": (
-                "RANDOM-compatibility structure-score distributions by IP-ID "
-                f"selection strategy ({dataset_label})"
+                "Production-oriented RANDOM-compatibility score distributions "
+                f"by IP-ID selection strategy ({dataset_label})"
             ),
-            "Subject": f"Synthetic 4x25 empirical CDFs ({dataset_label})",
+            "Subject": f"Synthetic 4x25 order-invariant CDFs ({dataset_label})",
             "Creator": "ipid-analysis",
         },
     )
@@ -636,19 +543,9 @@ def _write_scores(
     return output_path
 
 
-def _write_json(value: dict, output_path: Path) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
-    temporary.unlink(missing_ok=True)
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(output_path)
-    return output_path
-
-
 def render(
     *,
     samples_per_strategy: int = DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
-    null_samples_per_length: int = DEFAULT_NULL_SAMPLES_PER_LENGTH,
     threshold_samples: int = DEFAULT_THRESHOLD_SAMPLES,
     false_rejection_rate: float = DEFAULT_RANDOM_FALSE_REJECTION_RATE,
     seed: int = DEFAULT_SEED,
@@ -658,17 +555,21 @@ def render(
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
 
-    rngs = [np.random.default_rng(child) for child in np.random.SeedSequence(seed).spawn(5)]
-    sequence_rng, impairment_rng, null_rng, threshold_rng, threshold_impairment_rng = rngs
-    null_tables = build_null_tables(null_samples_per_length, null_rng)
-    threshold, calibration_scores, calibration_quantiles = calibrate_threshold(
-        null_tables,
-        threshold_samples,
-        false_rejection_rate,
-        threshold_rng,
-        threshold_impairment_rng,
+    processed_dir = processed_root / "classifier-validation"
+    figure_dir = figures_root / "classifier-validation"
+    threshold, calibration_quantiles, calibration_below, cache_hit = (
+        load_or_calibrate_threshold(
+            processed_dir / CALIBRATION_FILENAME,
+            sample_count=threshold_samples,
+            false_rejection_rate=false_rejection_rate,
+            seed=seed,
+        )
     )
 
+    sequence_rng, impairment_rng = [
+        np.random.default_rng(child)
+        for child in np.random.SeedSequence(seed).spawn(2)
+    ]
     ideal_sequences = generate_chi2_sequences(samples_per_strategy, sequence_rng)
     datasets: dict[str, dict[str, np.ndarray]] = {
         IDEAL_DATASET: {},
@@ -686,21 +587,14 @@ def render(
         datasets[IDEAL_DATASET][strategy] = calculate_scores(
             ideal,
             np.zeros_like(ideal, dtype=bool),
-            null_tables,
         )
-        datasets[LOSSY_DATASET][strategy] = calculate_scores(
-            lossy,
-            loss_mask,
-            null_tables,
-        )
+        lossy_scores = calculate_scores(lossy, loss_mask)
+        datasets[LOSSY_DATASET][strategy] = lossy_scores
         datasets[LOSSY_REORDERED_DATASET][strategy] = calculate_scores(
             reordered,
             loss_mask,
-            null_tables,
         )
 
-    processed_dir = processed_root / "classifier-validation"
-    figure_dir = figures_root / "classifier-validation"
     aggregate_path = _write_scores(
         datasets,
         threshold,
@@ -751,26 +645,31 @@ def render(
             "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
             "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
             "score": {
-                "definition": "minimum empirical p-value over all valid components",
-                "raw_components": [
-                    "discrete KS-D",
-                    "two-sided circular Greenwood",
-                    "occupancy deficit (sample count minus distinct-value count)",
-                    "circular maximum gap",
+                "version": SCORE_VERSION,
+                "definition": "minimum production-oriented compatibility score",
+                "components": [
+                    f"analytic Pearson Chi-square p-value with {UNIFORMITY_BINS} bins",
+                    "exact discrete occupancy/collision lower-tail probability",
+                    "conservative circular maximum-gap upper-tail bound",
+                    (
+                        "exact upper-tail Binomial support for increments in "
+                        f"[1, {MAX_INC}] over pooled full/destination/connection families"
+                    ),
                 ],
-                "increment_view_components": [
-                    "discrete KS-D",
-                    "two-sided circular Greenwood",
-                    "discrete KS-D of second differences",
+                "hard_rejections": [
+                    "CONSTANT: one distinct present value",
+                    (
+                        f"MULTI: 2..{MULTI_MAX_CLUSTERS} circular single-link "
+                        f"clusters at gap threshold {MULTI_MAX_INC}"
+                    ),
+                    "fewer than two present values",
                 ],
-                "pooled_increment_family_components": [
-                    (f"exact upper-tail Binomial support test for increments in [1, {MAX_INC}]")
-                ],
-                "bounded_increment_null_probability": (BOUNDED_INCREMENT_NULL_PROBABILITY),
-                "increment_views": list(INCREMENT_VIEWS),
-                "loss_handling": (
-                    "increments and second differences use only logically adjacent "
-                    "present positions; missing positions are not bridged"
+                "hard_rejection_score": MIN_COMPATIBILITY_SCORE,
+                "sorts_per_sequence": 1,
+                "uniformity_bins": UNIFORMITY_BINS,
+                "raw_components_reordering_invariant": True,
+                "bounded_increment_null_probability": (
+                    BOUNDED_INCREMENT_NULL_PROBABILITY
                 ),
                 "random_compatible_when": "S >= tau",
             },
@@ -780,16 +679,9 @@ def render(
                 "calibration_samples_per_dataset": threshold_samples,
                 "dataset_lower_quantiles": calibration_quantiles,
                 "chosen_as": "minimum dataset lower quantile",
-                "calibration_random_below_tau": {
-                    name: int((values < threshold).sum())
-                    for name, values in calibration_scores.items()
-                },
-            },
-            "null_calibration": {
-                "distribution": "discrete uniform over [0, 65535]",
-                "samples_per_sequence_length": null_samples_per_length,
-                "sequence_lengths": [MIN_TEST_SAMPLES, IDEAL_SEQUENCE_LENGTH],
-                "runtime_simulation": False,
+                "calibration_random_below_tau": calibration_below,
+                "cache": str(processed_dir / CALIBRATION_FILENAME),
+                "cache_hit": cache_hit,
             },
             "figure": str(pdf_path),
             "aggregate": str(aggregate_path),
@@ -821,15 +713,10 @@ def main(
             "synthetic sequences per nontrivial strategy; REFLECTION and CONSTANT always use 1000"
         ),
     ),
-    null_samples_per_length: int = typer.Option(
-        DEFAULT_NULL_SAMPLES_PER_LENGTH,
-        min=2,
-        help="discrete-uniform samples per sequence length for empirical p-values",
-    ),
     threshold_samples: int = typer.Option(
         DEFAULT_THRESHOLD_SAMPLES,
         min=2,
-        help="independent RANDOM sequences per dataset for threshold calibration",
+        help="independent RANDOM sequences per dataset for cached threshold calibration",
     ),
     false_rejection_rate: float = typer.Option(
         DEFAULT_RANDOM_FALSE_REJECTION_RATE,
@@ -841,7 +728,6 @@ def main(
 ) -> None:
     outputs = render(
         samples_per_strategy=samples_per_strategy,
-        null_samples_per_length=null_samples_per_length,
         threshold_samples=threshold_samples,
         false_rejection_rate=false_rejection_rate,
         seed=seed,
