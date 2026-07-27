@@ -23,6 +23,8 @@ TCP campaigns with an RT-based connection-oriented base measurement produce an
 additional version with that measurement's strategy distribution as a third bar.
 Protocol campaigns with an OS measurement also produce a row-normalized heatmap of
 merged IP-ID selection strategies by general-purpose and network OS.
+TCP campaigns with a connection-oriented RT-based base measurement produce the
+same OS heatmap for that individual strategy result.
 TCP campaigns also produce a paper plot of the merged strategy distribution
 split by the ZMap ``synack`` and ``rst`` reply classifications.
 Every available RT-base/fixed-interval-base pair is also compared with the
@@ -49,6 +51,9 @@ from ipid_analysis.paper_figures import (
 from ipid_analysis.plot_increments import render as render_increments_plot
 from ipid_analysis.plot_os_strategy import (
     render as render_os_strategy_plot,
+)
+from ipid_analysis.plot_os_strategy import (
+    render_measurement as render_os_strategy_measurement_plot,
 )
 from ipid_analysis.plot_os_strategy import (
     resolve_os_measurement_id,
@@ -115,6 +120,30 @@ def main(
         except FileNotFoundError as exc:
             logger.warning(f"[{m.target}] missing input ({exc}) -- skipped")
             skipped += 1
+
+    connection = resolve(
+        manifest,
+        "tcp.ipid.connection.rt-based.base",
+    )
+    if connection is not None:
+        os_measurement_id = resolve_os_measurement_id(manifest, "tcp")
+        if os_measurement_id is not None:
+            try:
+                connection_os_pdf, _, _ = render_os_strategy_measurement_plot(
+                    connection,
+                    os_measurement_id,
+                    compression=comp,
+                    threads=threads,
+                )
+                logger.success(
+                    f"[{connection.target}] connection-oriented OS strategy heatmap "
+                    f"-> {connection_os_pdf}"
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                logger.warning(
+                    f"[{connection.target}] connection-oriented OS strategy heatmap "
+                    f"failed ({exc}) -- skipped"
+                )
 
     merged_ok, merged_skipped = 0, 0
     for merge in iter_strategy_merges(manifest):

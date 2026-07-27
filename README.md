@@ -369,7 +369,7 @@ reports/figures/<zmap-id>/no-connection/merged/
     n-rt-b_fi-m_tcp-flags-by-strategy.json
 ```
 
-### Operating systems by merged strategy
+### Operating systems by strategy
 
 For every ICMP, TCP, or UDP-DNS campaign with an `os` measurement,
 `make analyse data.json` joins the protocol's OS fingerprints from
@@ -385,6 +385,11 @@ outcome remain visible even when a complete column is zero. Each operating-syste
 row therefore represents its complete matched merged population and still sums
 to 100%.
 
+When `tcp.ipid.connection.rt-based.base` is present, the same analysis also
+creates an identical heatmap for that individual connection-oriented strategy
+result. It uses the same OS groups, strategy columns, row normalization,
+ordering, labels, and color scale as the merged TCP plot.
+
 The OS grouping explicitly covers every `OS_NAME` currently emitted by
 `ipid-measure`, including separate RHEL and CentOS fingerprints. Rows with an
 empty `OS_NAME` retain useful vendor, server-software, or device-type evidence
@@ -396,6 +401,10 @@ operating system.
 python ipid_analysis/plot_os_strategy.py \
   <protocol>.ipid.no-connection.rt-based.base \
   <protocol>.ipid.no-connection.fixed-interval.mass \
+  --manifest data.json
+
+python ipid_analysis/plot_os_strategy.py \
+  tcp.ipid.connection.rt-based.base \
   --manifest data.json
 ```
 
@@ -410,6 +419,13 @@ reports/figures/<zmap-id>/no-connection/merged/
   rt-based-base_fixed-interval-mass/
     n-rt-b_fi-m_operating-system-by-strategy.pdf
     n-rt-b_fi-m_operating-system-by-strategy.json
+
+data/processed/<zmap-id>/connection/rt-based-base/
+  c-rt-b_operating-system-by-strategy.pq
+
+reports/figures/<zmap-id>/connection/rt-based-base/
+  c-rt-b_operating-system-by-strategy.pdf
+  c-rt-b_operating-system-by-strategy.json
 ```
 
 ## ACM comparison figures

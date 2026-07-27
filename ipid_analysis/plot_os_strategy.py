@@ -24,6 +24,7 @@ from ipid_analysis.config import (  # noqa: E402
     PROCESSED_DATA_DIR,
     RAW_DATA_DIR,
 )
+from ipid_analysis.manifest import IpidMeasurement, resolve  # noqa: E402
 from ipid_analysis.paper_figures import (  # noqa: E402
     configure_paper_style,
     linux_libertine_font_properties,
@@ -179,11 +180,7 @@ def _ordered_os_by_group(totals: dict[str, int]) -> dict[str, list[str]]:
     """Order represented operating systems by descending IP count per group."""
     return {
         group: sorted(
-            (
-                os_name
-                for os_name, _ in definitions
-                if totals.get(os_name, 0) > 0
-            ),
+            (os_name for os_name, _ in definitions if totals.get(os_name, 0) > 0),
             key=lambda os_name: (-totals[os_name], OS_INFO[os_name][1].casefold()),
         )
         for group, definitions in OS_GROUPS.items()
@@ -226,7 +223,7 @@ def _save_figure(fig, output_path: Path) -> Path:
         pad_inches=0.02,
         metadata={
             "Title": "Operating system by IP-ID selection strategy",
-            "Subject": "Row-normalized merged TCP strategy distributions by OS",
+            "Subject": "Row-normalized IP-ID strategy distributions by OS",
             "Creator": "ipid-analysis",
         },
     )
@@ -235,15 +232,15 @@ def _save_figure(fig, output_path: Path) -> Path:
 
 
 def aggregate_os_strategies(
-    merged_path: Path,
+    strategy_path: Path,
     os_path: Path,
     output_path: Path,
     *,
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> dict:
-    """Join OS fingerprints to merged strategies and normalize by OS."""
-    for path in (merged_path, os_path):
+    """Join OS fingerprints to strategy classifications and normalize by OS."""
+    for path in (strategy_path, os_path):
         if not path.is_file():
             raise FileNotFoundError(path)
 
@@ -254,7 +251,7 @@ def aggregate_os_strategies(
             WITH strategies AS (
                 SELECT IP_ADDR,
                        upper(trim(CAST(IPID_SELECTION_STRATEGY AS VARCHAR))) AS STRATEGY
-                FROM read_parquet($merged)
+                FROM read_parquet($strategies)
             ), os_evidence AS (
                 SELECT IP_ADDR, lower(trim(CAST(OS_NAME AS VARCHAR))) AS OS_NAME
                 FROM read_parquet($os)
@@ -275,11 +272,11 @@ def aggregate_os_strategies(
             FROM identified_os
             LEFT JOIN strategies USING (IP_ADDR)
             """,
-            {"merged": str(merged_path), "os": str(os_path)},
+            {"strategies": str(strategy_path), "os": str(os_path)},
         ).fetchone()
         (
-            merged_rows,
-            merged_ips,
+            strategy_rows,
+            strategy_ips,
             os_evidence_rows,
             os_evidence_ips,
             identified_os_rows,
@@ -294,28 +291,28 @@ def aggregate_os_strategies(
                    upper(trim(CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR))) AS STRATEGY,
                    count(*)::BIGINT AS N
             FROM read_parquet($os) AS o
-            INNER JOIN read_parquet($merged) AS s USING (IP_ADDR)
+            INNER JOIN read_parquet($strategies) AS s USING (IP_ADDR)
             WHERE o.OS_NAME IS NOT NULL
               AND trim(CAST(o.OS_NAME AS VARCHAR)) <> ''
             GROUP BY 1, 2
             """,
-            {"merged": str(merged_path), "os": str(os_path)},
+            {"strategies": str(strategy_path), "os": str(os_path)},
         ).fetchall()
     finally:
         con.close()
 
-    if merged_rows == 0:
-        raise ValueError(f"{merged_path}: merged strategy result is empty")
+    if strategy_rows == 0:
+        raise ValueError(f"{strategy_path}: strategy result is empty")
     if os_evidence_rows == 0:
         raise ValueError(f"{os_path}: OS result is empty")
-    if merged_rows != merged_ips:
-        raise ValueError(f"{merged_path}: duplicate IP addresses in merged strategy result")
+    if strategy_rows != strategy_ips:
+        raise ValueError(f"{strategy_path}: duplicate IP addresses in strategy result")
     if os_evidence_rows != os_evidence_ips:
         raise ValueError(f"{os_path}: duplicate IP addresses in OS result")
     if identified_os_rows == 0:
         raise ValueError(f"{os_path}: OS result contains no identified operating systems")
     if matched_rows == 0:
-        raise ValueError(f"{os_path}: no OS fingerprints match the merged strategy population")
+        raise ValueError(f"{os_path}: no OS fingerprints match the strategy population")
 
     known_os = set(OS_INFO)
     unknown_os = sorted({str(os_name) for os_name, _, _ in rows} - known_os)
@@ -332,9 +329,7 @@ def aggregate_os_strategies(
         for os_name in OS_INFO
     }
     represented_by_group = _ordered_os_by_group(os_totals)
-    represented_os = [
-        os_name for group in OS_GROUPS for os_name in represented_by_group[group]
-    ]
+    represented_os = [os_name for group in OS_GROUPS for os_name in represented_by_group[group]]
     represented_groups = {OS_INFO[os_name][0] for os_name in represented_os}
     missing_groups = [group for group in OS_GROUPS if group not in represented_groups]
     if missing_groups:
@@ -373,7 +368,7 @@ def aggregate_os_strategies(
         counts.get((os_name, "NOT_ENOUGH_SAMPLES"), 0) for os_name in represented_os
     )
     return {
-        "merged_ip_count": merged_ips,
+        "strategy_ip_count": strategy_ips,
         "os_evidence_ip_count": os_evidence_ips,
         "os_ip_count": identified_os_ips,
         "unidentified_evidence_ip_count": os_evidence_ips - identified_os_ips,
@@ -523,6 +518,7 @@ def render(
         compression=compression,
         threads=threads,
     )
+    merged_ip_count = stats.pop("strategy_ip_count")
     plot_os_by_strategy(aggregate_path, pdf_path)
     _write_json(
         json_path,
@@ -556,6 +552,80 @@ def render(
                 "zero_cell_label": "-",
                 "percentage_decimals": 1,
             },
+            "merged_ip_count": merged_ip_count,
+            **stats,
+        },
+    )
+    return pdf_path, json_path, aggregate_path
+
+
+def render_measurement(
+    measurement: IpidMeasurement,
+    os_measurement_id: str,
+    *,
+    processed_root: Path = PROCESSED_DATA_DIR,
+    raw_root: Path = RAW_DATA_DIR,
+    figures_root: Path = FIGURES_DIR,
+    compression: str | None = "zstd",
+    threads: int = 0,
+) -> tuple[Path, Path, Path]:
+    """Create the OS heatmap for a TCP connection-oriented RT-based base run."""
+    if (
+        measurement.protocol != "tcp"
+        or measurement.connection_mode != "connection"
+        or measurement.interval != "rt-based"
+        or measurement.scale != "base"
+    ):
+        raise ValueError(
+            "connection-oriented OS strategy heatmap requires tcp.ipid.connection.rt-based.base"
+        )
+    if not os_measurement_id.strip():
+        raise ValueError("OS measurement id must not be empty")
+
+    strategy_path = measurement.artifact_path(processed_root, "strategies")
+    os_path = raw_root / "os" / os_measurement_id / OS_INPUT_NAME
+    aggregate_path = measurement.artifact_path(processed_root, KIND)
+    pdf_path = measurement.artifact_path(figures_root, KIND, "pdf")
+    json_path = measurement.artifact_path(figures_root, KIND, "json")
+
+    stats = aggregate_os_strategies(
+        strategy_path,
+        os_path,
+        aggregate_path,
+        compression=compression,
+        threads=threads,
+    )
+    strategy_ip_count = stats.pop("strategy_ip_count")
+    plot_os_by_strategy(aggregate_path, pdf_path)
+    _write_json(
+        json_path,
+        {
+            "target": measurement.target,
+            "protocol": measurement.protocol,
+            "connection_mode": measurement.connection_mode,
+            "zmap_id": measurement.zmap_id,
+            "os_measurement_id": os_measurement_id,
+            "measurements": {"rt_based_base": measurement.measurement_id},
+            "sources": {
+                "strategies": str(strategy_path),
+                "os": str(os_path),
+            },
+            "aggregate": str(aggregate_path),
+            "figure": KIND,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "methodology": {
+                "strategy_input": "TCP connection-oriented RT-based base classification",
+                "os_input": "ipid-measure OS_NAME joined by IP_ADDR",
+                "os_selection": (
+                    "only non-empty OS_NAME values are plotted; vendor, software, "
+                    "device-type, and unknown evidence remains excluded"
+                ),
+                "normalization": "each operating-system row is normalized independently to 100%",
+                "not_enough_samples": ("not applicable to a single RT-based base measurement"),
+                "zero_cell_label": "-",
+                "percentage_decimals": 1,
+            },
+            "strategy_ip_count": strategy_ip_count,
             **stats,
         },
     )
@@ -564,28 +634,50 @@ def render(
 
 @app.command()
 def main(
-    base_target: str = typer.Argument(..., help="TCP RT-based base measurement target"),
-    mass_target: str = typer.Argument(..., help="TCP fixed-interval mass measurement target"),
+    base_target: str = typer.Argument(..., help="RT-based base measurement target"),
+    mass_target: str | None = typer.Argument(
+        None,
+        help="fixed-interval mass target; omit for tcp.ipid.connection.rt-based.base",
+    ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, min=0, help="DuckDB threads; 0 uses all cores"),
 ) -> None:
     try:
         manifest_data = load_manifest(manifest)
-        merge = resolve_strategy_merge(manifest_data, base_target, mass_target)
-        os_measurement_id = resolve_os_measurement_id(manifest_data, merge.protocol)
-        if os_measurement_id is None:
-            raise ValueError(f"{merge.protocol}.os: not present in manifest")
-        outputs = render(
-            merge,
-            os_measurement_id,
-            compression=None if compression == "none" else compression,
-            threads=threads,
-        )
+        if mass_target is None:
+            measurement = resolve(manifest_data, base_target)
+            if measurement is None:
+                raise ValueError(f"{base_target}: not present in manifest")
+            os_measurement_id = resolve_os_measurement_id(
+                manifest_data,
+                measurement.protocol,
+            )
+            if os_measurement_id is None:
+                raise ValueError(f"{measurement.protocol}.os: not present in manifest")
+            outputs = render_measurement(
+                measurement,
+                os_measurement_id,
+                compression=None if compression == "none" else compression,
+                threads=threads,
+            )
+            target = measurement.target
+        else:
+            merge = resolve_strategy_merge(manifest_data, base_target, mass_target)
+            os_measurement_id = resolve_os_measurement_id(manifest_data, merge.protocol)
+            if os_measurement_id is None:
+                raise ValueError(f"{merge.protocol}.os: not present in manifest")
+            outputs = render(
+                merge,
+                os_measurement_id,
+                compression=None if compression == "none" else compression,
+                threads=threads,
+            )
+            target = merge.target
     except (FileNotFoundError, ValueError) as exc:
         logger.error(str(exc))
         raise typer.Exit(code=1) from exc
-    logger.success(f"[{merge.target}] OS strategy heatmap -> {outputs[0]}")
+    logger.success(f"[{target}] OS strategy heatmap -> {outputs[0]}")
 
 
 if __name__ == "__main__":

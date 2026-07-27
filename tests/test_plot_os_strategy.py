@@ -14,6 +14,7 @@ from ipid_analysis.plot_os_strategy import (
     NETWORK_GROUP,
     _ordered_os_by_group,
     render,
+    render_measurement,
     resolve_os_measurement_id,
 )
 from ipid_analysis.strategy_merge import StrategyMerge
@@ -38,6 +39,11 @@ class OSStrategyPlotTest(unittest.TestCase):
             zmap_id="tcp-zmap",
         )
         self.merge = StrategyMerge(self.base, self.mass)
+        self.connection = replace(
+            self.base,
+            connection_mode="connection",
+            measurement_id="tcp-connection",
+        )
 
     @staticmethod
     def _write(path: Path, columns: dict[str, list[str]]) -> None:
@@ -131,6 +137,69 @@ class OSStrategyPlotTest(unittest.TestCase):
             self.assertEqual(
                 metadata["methodology"]["normalization"],
                 "each operating-system row is normalized independently to 100%",
+            )
+
+    def test_render_connection_rt_base_os_strategy_heatmap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            processed = root / "processed"
+            raw = root / "raw"
+            figures = root / "figures"
+            addresses = ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"]
+            self._write(
+                self.connection.artifact_path(processed, "strategies"),
+                {
+                    "IP_ADDR": addresses,
+                    "IPID_SELECTION_STRATEGY": [
+                        "CONSTANT",
+                        "SINGLE",
+                        "PER_CONNECTION",
+                        "RANDOM",
+                    ],
+                },
+            )
+            self._write(
+                raw / "os" / "tcp-os" / "os.pq",
+                {
+                    "IP_ADDR": addresses,
+                    "OS_NAME": ["ubuntu", "ubuntu", "cisco-ios", "cisco-ios"],
+                },
+            )
+
+            pdf_path, json_path, aggregate_path = render_measurement(
+                self.connection,
+                "tcp-os",
+                processed_root=processed,
+                raw_root=raw,
+                figures_root=figures,
+            )
+
+            self.assertEqual(
+                aggregate_path,
+                self.connection.artifact_path(processed, KIND),
+            )
+            self.assertEqual(
+                pdf_path,
+                self.connection.artifact_path(figures, KIND, "pdf"),
+            )
+            self.assertTrue(pdf_path.is_file())
+            rows = pq.read_table(aggregate_path).to_pylist()
+            shares = {
+                (row["OS_NAME"], row["IPID_SELECTION_STRATEGY"]): row["PERCENTAGE"] for row in rows
+            }
+            self.assertEqual(shares[("ubuntu", "CONSTANT")], 50.0)
+            self.assertEqual(shares[("ubuntu", "SINGLE")], 50.0)
+            self.assertEqual(shares[("cisco-ios", "PER_CONNECTION")], 50.0)
+            self.assertEqual(shares[("cisco-ios", "RANDOM")], 50.0)
+
+            metadata = json.loads(json_path.read_text())
+            self.assertEqual(metadata["target"], "tcp.ipid.connection.rt-based.base")
+            self.assertEqual(metadata["connection_mode"], "connection")
+            self.assertEqual(metadata["strategy_ip_count"], 4)
+            self.assertEqual(metadata["measurements"], {"rt_based_base": "tcp-connection"})
+            self.assertEqual(
+                metadata["methodology"]["strategy_input"],
+                "TCP connection-oriented RT-based base classification",
             )
 
     def test_orders_each_os_group_by_descending_ip_count(self):
@@ -303,6 +372,23 @@ class OSStrategyPlotTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "OS strategy heatmap requires"):
             render(invalid, "tcp-os")
+
+    def test_requires_tcp_connection_rt_based_base_measurement(self):
+        invalid_measurements = (
+            self.base,
+            replace(self.connection, protocol="icmp"),
+            replace(self.connection, interval="fixed-interval"),
+            replace(self.connection, scale="mass"),
+        )
+        for measurement in invalid_measurements:
+            with (
+                self.subTest(target=measurement.target),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "tcp.ipid.connection.rt-based.base",
+                ),
+            ):
+                render_measurement(measurement, "tcp-os")
 
     def test_resolves_os_measurement_id(self):
         manifest = {
