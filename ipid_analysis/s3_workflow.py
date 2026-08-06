@@ -39,6 +39,8 @@ PROTOCOL_VERSION = 2
 ANALYSIS_JOB_VERSION = 1
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TARGET_NAME = "zmap_unclassified.pq"
+FIXED_BASE_TARGET_NAME = "zmap-fixed-base-sample.pq"
+FIXED_BASE_TARGET_METADATA_NAME = "zmap-fixed-base-sample.json"
 SUPPORTED_PROTOCOLS = frozenset({"icmp", "tcp", "udp-dns"})
 
 app = typer.Typer()
@@ -135,6 +137,7 @@ class AnalysisRequest:
     done_uri: str
     failed_uri: str
     created_at: str
+    fixed_base_target_uri: str | None = None
 
     @classmethod
     def parse(cls, data: dict, s3_prefix: str) -> "AnalysisRequest":
@@ -167,6 +170,19 @@ class AnalysisRequest:
         for field, value in expected.items():
             if getattr(request, field) != value:
                 raise ValueError(f"{field} does not match its canonical S3 location")
+
+        if request.fixed_base_target_uri is not None:
+            if request.protocol != "tcp":
+                raise ValueError("fixed_base_target_uri is only valid for TCP")
+            expected_target_uri = join_s3(
+                request.zmap_prefix,
+                request.job_id,
+                FIXED_BASE_TARGET_NAME,
+            )
+            if request.fixed_base_target_uri != expected_target_uri:
+                raise ValueError(
+                    "fixed_base_target_uri does not match its canonical S3 location"
+                )
         return request
 
 
@@ -404,6 +420,19 @@ def download_analysis_inputs(
         join_s3(request.zmap_prefix, zmap_id, "zmap.pq"),
         raw_root / "zmap" / zmap_id / "zmap.pq",
     )
+    if request.fixed_base_target_uri is not None:
+        client.download(
+            request.fixed_base_target_uri,
+            raw_root / "zmap" / zmap_id / FIXED_BASE_TARGET_NAME,
+        )
+        client.download(
+            join_s3(
+                request.zmap_prefix,
+                zmap_id,
+                FIXED_BASE_TARGET_METADATA_NAME,
+            ),
+            raw_root / "zmap" / zmap_id / FIXED_BASE_TARGET_METADATA_NAME,
+        )
     client.download(
         join_s3(request.os_prefix, os_id, "os.pq"),
         raw_root / "os" / os_id / "os.pq",
