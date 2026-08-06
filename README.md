@@ -61,6 +61,12 @@ ZMap, OS, and IP-ID outputs into `data/raw`, then runs the same processing as
 `done.json` or `failed.json`. A single worker processes the three protocol VMs'
 jobs sequentially, so no additional scheduler or locking service is required.
 
+For TCP campaigns, the worker also downloads
+`zmap-fixed-base-sample.pq` and its JSON metadata from the ZMap measurement
+prefix. Coverage for both stateless and connection-oriented fixed-interval base
+measurements is calculated against this shared sample. Older TCP campaigns
+without the sample retain the original full-ZMap coverage behavior.
+
 ## Strategy classification by measurement scale
 
 Base measurements classify the position-dependent or cheaply identifiable
