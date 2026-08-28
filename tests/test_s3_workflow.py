@@ -12,6 +12,7 @@ from ipid_analysis.s3_workflow import (
     AnalysisRequest,
     Request,
     build_unclassified_targets,
+    download_analysis_inputs,
     process_analysis_request,
     process_request,
 )
@@ -301,6 +302,111 @@ class S3WorkflowTest(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "manifest_uri"):
             AnalysisRequest.parse(data, prefix)
+
+    def test_analysis_request_accepts_canonical_tcp_fixed_base_target(self):
+        prefix = "s3://bucket/workflow"
+        job_id = "tcp-80_2026-07-22_10-00-00"
+        data = {
+            "version": ANALYSIS_JOB_VERSION,
+            "job_id": job_id,
+            "protocol": "tcp",
+            "manifest_uri": f"{prefix}/analysis-jobs/{job_id}/manifest.json",
+            "zmap_prefix": "s3://bucket/raw/zmap/",
+            "os_prefix": "s3://bucket/raw/os/",
+            "ipid_prefix": "s3://bucket/raw/ipid/",
+            "done_uri": f"{prefix}/analysis-jobs/{job_id}/done.json",
+            "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
+            "created_at": "2026-07-22T10:05:00Z",
+            "fixed_base_target_uri": (
+                f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"
+            ),
+        }
+
+        request = AnalysisRequest.parse(data, prefix)
+
+        self.assertEqual(request.fixed_base_target_uri, data["fixed_base_target_uri"])
+
+    def test_analysis_request_rejects_fixed_base_target_for_non_tcp(self):
+        prefix = "s3://bucket/workflow"
+        job_id = "icmp_2026-07-22_10-00-00"
+        data = {
+            "version": ANALYSIS_JOB_VERSION,
+            "job_id": job_id,
+            "protocol": "icmp",
+            "manifest_uri": f"{prefix}/analysis-jobs/{job_id}/manifest.json",
+            "zmap_prefix": "s3://bucket/raw/zmap/",
+            "os_prefix": "s3://bucket/raw/os/",
+            "ipid_prefix": "s3://bucket/raw/ipid/",
+            "done_uri": f"{prefix}/analysis-jobs/{job_id}/done.json",
+            "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
+            "created_at": "2026-07-22T10:05:00Z",
+            "fixed_base_target_uri": (
+                f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"
+            ),
+        }
+
+        with self.assertRaisesRegex(ValueError, "only valid for TCP"):
+            AnalysisRequest.parse(data, prefix)
+
+    def test_downloads_tcp_fixed_base_target_and_metadata(self):
+        prefix = "s3://bucket/workflow"
+        job_id = "tcp-80_2026-07-22_10-00-00"
+        os_id = "tcp-80_2026-07-22_10-00-01"
+        rt_id = "tcp-80_2026-07-22_10-00-02"
+        fixed_id = "tcp-80_2026-07-22_10-00-03"
+        sample_uri = f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"
+        request = AnalysisRequest.parse(
+            {
+                "version": ANALYSIS_JOB_VERSION,
+                "job_id": job_id,
+                "protocol": "tcp",
+                "manifest_uri": f"{prefix}/analysis-jobs/{job_id}/manifest.json",
+                "zmap_prefix": "s3://bucket/raw/zmap/",
+                "os_prefix": "s3://bucket/raw/os/",
+                "ipid_prefix": "s3://bucket/raw/ipid/",
+                "done_uri": f"{prefix}/analysis-jobs/{job_id}/done.json",
+                "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
+                "created_at": "2026-07-22T10:05:00Z",
+                "fixed_base_target_uri": sample_uri,
+            },
+            prefix,
+        )
+        manifest = {
+            "tcp": {
+                "zmap": job_id,
+                "os": os_id,
+                "ipid": {
+                    "no-connection": {
+                        "rt-based": {"base": rt_id},
+                        "fixed-interval": {"base": fixed_id},
+                    }
+                },
+            }
+        }
+        objects = {
+            f"s3://bucket/raw/zmap/{job_id}/zmap.pq": b"zmap",
+            sample_uri: b"sample",
+            f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.json": b"metadata",
+            f"s3://bucket/raw/os/{os_id}/os.pq": b"os",
+            f"s3://bucket/raw/ipid/{rt_id}/ipid.pq": b"rt",
+            f"s3://bucket/raw/ipid/{rt_id}/ipid.snapshot.yaml": b"rt-snapshot",
+            f"s3://bucket/raw/ipid/{rt_id}/zmap_unclassified.pq": b"targets",
+            f"s3://bucket/raw/ipid/{fixed_id}/ipid.pq": b"fixed",
+            f"s3://bucket/raw/ipid/{fixed_id}/ipid.snapshot.yaml": b"fixed-snapshot",
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            raw_root = Path(directory)
+            download_analysis_inputs(FakeS3Client(objects), request, manifest, raw_root)
+
+            self.assertEqual(
+                (raw_root / "zmap" / job_id / "zmap-fixed-base-sample.pq").read_bytes(),
+                b"sample",
+            )
+            self.assertEqual(
+                (raw_root / "zmap" / job_id / "zmap-fixed-base-sample.json").read_bytes(),
+                b"metadata",
+            )
 
 
 if __name__ == "__main__":

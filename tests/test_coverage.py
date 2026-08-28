@@ -97,6 +97,41 @@ class CoverageTest(unittest.TestCase):
                 100 / 3,
             )
 
+    def test_uses_sampled_zmap_for_tcp_fixed_interval_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw_root = root / "raw"
+            processed_root = root / "processed"
+            measurement = self._measurement("fixed-interval", "base", "tcp-fixed")
+            self._write(
+                raw_root / "zmap" / "tcp-zmap" / "zmap.pq",
+                ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"],
+            )
+            self._write(
+                raw_root / "zmap" / "tcp-zmap" / "zmap-fixed-base-sample.pq",
+                ["192.0.2.1", "192.0.2.3"],
+            )
+            self._write(
+                raw_root / measurement.input_key / "ipid.pq",
+                ["192.0.2.1"],
+            )
+
+            output_path = write_coverage(
+                measurement,
+                self.manifest,
+                raw_root,
+                processed_root,
+            )
+
+            self.assertEqual(
+                json.loads(output_path.read_text()),
+                {
+                    "zmap_ip_count": 2,
+                    "ipid_ip_count": 1,
+                    "coverage_percent": 50.0,
+                },
+            )
+
     def test_rejects_ipid_address_outside_measurement_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

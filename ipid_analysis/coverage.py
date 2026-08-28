@@ -8,8 +8,21 @@ import duckdb
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import IpidMeasurement, resolve
 
+FIXED_BASE_TARGET_NAME = "zmap-fixed-base-sample.pq"
+
 
 def _target_path(m: IpidMeasurement, manifest: dict, raw_root: Path) -> Path:
+    if (
+        m.protocol == "tcp"
+        and m.interval == "fixed-interval"
+        and m.scale == "base"
+    ):
+        sampled = raw_root / "zmap" / m.zmap_id / FIXED_BASE_TARGET_NAME
+        # Backward compatibility for campaigns collected before TCP fixed-base
+        # sampling was introduced.
+        if sampled.is_file():
+            return sampled
+
     if (m.connection_mode, m.interval, m.scale) != (
         "no-connection",
         "fixed-interval",
