@@ -246,6 +246,7 @@ class S3WorkflowTest(unittest.TestCase):
                 manifest_uri: json.dumps(manifest).encode(),
                 f"s3://bucket/raw/zmap/{job_id}/zmap.pq": b"zmap",
                 f"s3://bucket/raw/os/{os_id}/os.pq": b"os",
+                f"s3://bucket/raw/os/{os_id}/os-coverage.json": b"{}",
                 f"s3://bucket/raw/ipid/{rt_id}/zmap_unclassified.pq": b"targets",
                 f"s3://bucket/raw/ipid/{rt_id}/strategies.pq": b"strategies",
             }
@@ -259,6 +260,9 @@ class S3WorkflowTest(unittest.TestCase):
                 calls.append((manifest_path, batch_size, threads))
                 self.assertTrue((root / "raw" / "zmap" / job_id / "zmap.pq").is_file())
                 self.assertTrue((root / "raw" / "os" / os_id / "os.pq").is_file())
+                self.assertTrue(
+                    (root / "raw" / "os" / os_id / "os-coverage.json").is_file()
+                )
                 self.assertTrue((root / "raw" / "ipid" / rt_id / "strategies.pq").is_file())
                 self.assertTrue((root / "raw" / "ipid" / rt_id / "zmap_unclassified.pq").is_file())
                 log_path.write_text("postprocessing complete\n")
@@ -388,6 +392,7 @@ class S3WorkflowTest(unittest.TestCase):
             sample_uri: b"sample",
             f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.json": b"metadata",
             f"s3://bucket/raw/os/{os_id}/os.pq": b"os",
+            f"s3://bucket/raw/os/{os_id}/os-coverage.json": b"{}",
             f"s3://bucket/raw/ipid/{rt_id}/ipid.pq": b"rt",
             f"s3://bucket/raw/ipid/{rt_id}/ipid.snapshot.yaml": b"rt-snapshot",
             f"s3://bucket/raw/ipid/{rt_id}/zmap_unclassified.pq": b"targets",

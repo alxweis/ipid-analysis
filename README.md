@@ -375,43 +375,49 @@ reports/figures/<zmap-id>/no-connection/merged/
     n-rt-b_fi-m_tcp-flags-by-strategy.json
 ```
 
-### Operating systems by strategy
+### Operating-system groups by strategy
 
 For every ICMP, TCP, or UDP-DNS campaign with an `os` measurement,
 `make analyse data.json` joins the protocol's OS fingerprints from
 `data/raw/os/<os-id>/os.pq` to that protocol's merged RT-based-base and
-fixed-interval-mass strategies by `IP_ADDR`. It creates one ACM-width heatmap
-per protocol, split into `General-Purpose OS` and `Network OS`. Every
-operating-system row is normalized independently to 100%, while its matched
-IP-address count is shown beside the row label. Within each group, operating
-systems are ordered by descending IP-address count. Exact zero cells are
+fixed-interval-mass strategies by `IP_ADDR`. Postprocessing validates the
+current raw schema and maps every resolved `OS_TAG` to exactly one `OS_GROUP`.
+It stores the per-IP result in
+`data/processed/os/<os-id>/os-groups.pq` and creates one
+ACM-width heatmap per protocol, split into represented `General-Purpose OS`,
+`Network / Appliance OS`, and `Embedded / RTOS` sections. Every group row is
+normalized independently to 100%, while its matched IP-address count is shown
+beside the row label. Within each section, groups are ordered by descending
+IP-address count. Exact zero cells are
 displayed as `-`.
 All nine IP-ID selection strategies plus the `NOT_ENOUGH_SAMPLES` follow-up
-outcome remain visible even when a complete column is zero. Each operating-system
-row therefore represents its complete matched merged population and still sums
+outcome remain visible even when a complete column is zero. Each OS-group row
+therefore represents its complete matched merged population and still sums
 to 100%.
+
+The S3 analysis worker downloads `os-coverage.json` beside raw `os.pq`, so the
+target, classification, per-service response/evidence/tag, and conflict counts
+recorded by the measurement remain available for coverage reporting.
 
 When `tcp.ipid.connection.rt-based.base` is present, the same analysis also
 creates an identical heatmap for that individual connection-oriented strategy
 result. It uses the same OS groups, strategy columns, row normalization,
 ordering, labels, and color scale as the merged TCP plot.
 
-The OS grouping explicitly covers every `OS_NAME` currently emitted by
-`ipid-measure`, including separate RHEL and CentOS fingerprints. Rows with an
-empty `OS_NAME` retain useful vendor, server-software, or device-type evidence
-in `os.pq` but are excluded from the operating-system heatmap. The metadata
-reports both the total evidence population and the subset with an identified
-operating system.
+The taxonomy covers every canonical OS tag emitted by `ipid-measure`. Linux
+distributions, FreeBSD, OpenBSD, NetBSD, SONiC, and SonicWall retain separate
+groups where their IP-ID behavior can differ. Product variants such as Cisco
+IOS, IOS XE, IOS XR, NX-OS, ASA, and FTD map surjectively to the `cisco` group.
+Ambiguous and unclassified rows remain quantitative measurement outcomes in
+raw `os.pq`; the group population contains resolved rows only.
+
+DuckDB performs the tag-to-group projection and strategy join using streaming
+Parquet scans and bounded memory. The processed group file is reused by the TCP
+connection and merged analyses when the source file and taxonomy version match.
+Python receives only the compact group-by-strategy aggregate used for plotting.
 
 ```bash
-python ipid_analysis/plot_os_strategy.py \
-  <protocol>.ipid.no-connection.rt-based.base \
-  <protocol>.ipid.no-connection.fixed-interval.mass \
-  --manifest data.json
-
-python ipid_analysis/plot_os_strategy.py \
-  tcp.ipid.connection.rt-based.base \
-  --manifest data.json
+make analyse data.json
 ```
 
 The generated artifacts are:
@@ -419,19 +425,23 @@ The generated artifacts are:
 ```text
 data/processed/<zmap-id>/no-connection/merged/
   rt-based-base_fixed-interval-mass/
-    n-rt-b_fi-m_operating-system-by-strategy.pq
+    n-rt-b_fi-m_operating-system-group-by-strategy.pq
+
+data/processed/os/<os-id>/
+  os-groups.pq
+  os-groups.meta.json
 
 reports/figures/<zmap-id>/no-connection/merged/
   rt-based-base_fixed-interval-mass/
-    n-rt-b_fi-m_operating-system-by-strategy.pdf
-    n-rt-b_fi-m_operating-system-by-strategy.json
+    n-rt-b_fi-m_operating-system-group-by-strategy.pdf
+    n-rt-b_fi-m_operating-system-group-by-strategy.json
 
 data/processed/<zmap-id>/connection/rt-based-base/
-  c-rt-b_operating-system-by-strategy.pq
+  c-rt-b_operating-system-group-by-strategy.pq
 
 reports/figures/<zmap-id>/connection/rt-based-base/
-  c-rt-b_operating-system-by-strategy.pdf
-  c-rt-b_operating-system-by-strategy.json
+  c-rt-b_operating-system-group-by-strategy.pdf
+  c-rt-b_operating-system-group-by-strategy.json
 ```
 
 ## ACM comparison figures

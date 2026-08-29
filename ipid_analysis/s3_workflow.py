@@ -437,6 +437,10 @@ def download_analysis_inputs(
         join_s3(request.os_prefix, os_id, "os.pq"),
         raw_root / "os" / os_id / "os.pq",
     )
+    client.download(
+        join_s3(request.os_prefix, os_id, "os-coverage.json"),
+        raw_root / "os" / os_id / "os-coverage.json",
+    )
 
     measurements = iter_ipid_measurements(manifest)
     for measurement in measurements:
