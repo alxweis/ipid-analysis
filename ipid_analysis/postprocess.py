@@ -21,8 +21,9 @@ The same pair also produces a paper plot showing how the RT-based
 ``UNCLASSIFIED`` population is refined by the fixed-interval mass measurement.
 TCP campaigns with an RT-based connection-oriented base measurement produce an
 additional version with that measurement's strategy distribution as a third bar.
-Protocol campaigns with an OS measurement also produce a row-normalized heatmap of
-merged IP-ID selection strategies by general-purpose and network OS.
+Protocol campaigns with an OS measurement also produce a processed per-IP
+OS-group Parquet file and a row-normalized heatmap of merged IP-ID selection
+strategies by general-purpose, network/appliance, and embedded/RTOS group.
 TCP campaigns with a connection-oriented RT-based base measurement produce the
 same OS heatmap for that individual strategy result.
 TCP campaigns also produce a paper plot of the merged strategy distribution
@@ -49,13 +50,13 @@ from ipid_analysis.paper_figures import (
     render_strategy_intersection,
 )
 from ipid_analysis.plot_increments import render as render_increments_plot
-from ipid_analysis.plot_os_strategy import (
+from ipid_analysis.plot_os_group_strategy import (
     render as render_os_strategy_plot,
 )
-from ipid_analysis.plot_os_strategy import (
+from ipid_analysis.plot_os_group_strategy import (
     render_measurement as render_os_strategy_measurement_plot,
 )
-from ipid_analysis.plot_os_strategy import (
+from ipid_analysis.plot_os_group_strategy import (
     resolve_os_measurement_id,
 )
 from ipid_analysis.plot_probing_intervals import render as render_intervals_plot
