@@ -39,6 +39,8 @@ PROTOCOL_VERSION = 2
 ANALYSIS_JOB_VERSION = 1
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TARGET_NAME = "zmap_unclassified.pq"
+CONNECTION_TARGET_NAME = "zmap-connection-sample.pq"
+CONNECTION_TARGET_METADATA_NAME = "zmap-connection-sample.json"
 FIXED_BASE_TARGET_NAME = "zmap-fixed-base-sample.pq"
 FIXED_BASE_TARGET_METADATA_NAME = "zmap-fixed-base-sample.json"
 SUPPORTED_PROTOCOLS = frozenset({"icmp", "tcp", "udp-dns"})
@@ -138,6 +140,7 @@ class AnalysisRequest:
     failed_uri: str
     created_at: str
     fixed_base_target_uri: str | None = None
+    connection_target_uri: str | None = None
 
     @classmethod
     def parse(cls, data: dict, s3_prefix: str) -> "AnalysisRequest":
@@ -171,6 +174,11 @@ class AnalysisRequest:
             if getattr(request, field) != value:
                 raise ValueError(f"{field} does not match its canonical S3 location")
 
+        if request.connection_target_uri is not None:
+            if request.protocol != "tcp" or request.connection_target_uri != join_s3(
+                request.zmap_prefix, request.job_id, CONNECTION_TARGET_NAME
+            ):
+                raise ValueError("invalid connection_target_uri")
         if request.fixed_base_target_uri is not None:
             if request.protocol != "tcp":
                 raise ValueError("fixed_base_target_uri is only valid for TCP")
@@ -180,9 +188,7 @@ class AnalysisRequest:
                 FIXED_BASE_TARGET_NAME,
             )
             if request.fixed_base_target_uri != expected_target_uri:
-                raise ValueError(
-                    "fixed_base_target_uri does not match its canonical S3 location"
-                )
+                raise ValueError("fixed_base_target_uri does not match its canonical S3 location")
         return request
 
 
@@ -397,6 +403,10 @@ def validate_analysis_manifest(manifest: dict, request: AnalysisRequest) -> None
     if not isinstance(os_id, str) or not JOB_ID_RE.fullmatch(os_id):
         raise ValueError("manifest is missing a valid OS measurement id")
 
+    if section.get("connection_target") != (
+        CONNECTION_TARGET_NAME if request.connection_target_uri is not None else None
+    ):
+        raise ValueError("manifest connection target does not match request")
     measurements = iter_ipid_measurements(manifest)
     if not measurements:
         raise ValueError("analysis manifest contains no IPID measurements")
@@ -420,6 +430,15 @@ def download_analysis_inputs(
         join_s3(request.zmap_prefix, zmap_id, "zmap.pq"),
         raw_root / "zmap" / zmap_id / "zmap.pq",
     )
+    if request.connection_target_uri is not None:
+        client.download(
+            request.connection_target_uri,
+            raw_root / "zmap" / zmap_id / CONNECTION_TARGET_NAME,
+        )
+        client.download(
+            join_s3(request.zmap_prefix, zmap_id, CONNECTION_TARGET_METADATA_NAME),
+            raw_root / "zmap" / zmap_id / CONNECTION_TARGET_METADATA_NAME,
+        )
     if request.fixed_base_target_uri is not None:
         client.download(
             request.fixed_base_target_uri,

@@ -11,6 +11,28 @@ from ipid_analysis.manifest import IpidMeasurement
 
 
 class CoverageTest(unittest.TestCase):
+    def test_connection_target_is_explicit_and_shared_by_both_modes(self):
+        for interval in ("rt-based", "fixed-interval"):
+            with self.subTest(interval=interval), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                m = IpidMeasurement("tcp", "connection", interval, "base", "run", "tcp-zmap")
+                campaign = root / "zmap" / "tcp-zmap"
+                self._write(campaign / "zmap.pq", ["192.0.2.1", "192.0.2.2", "192.0.2.3"])
+                self._write(campaign / "zmap-fixed-base-sample.pq", ["192.0.2.1", "192.0.2.2"])
+                self._write(root / m.input_key / "ipid.pq", ["192.0.2.1"])
+                target = "zmap-connection-sample.pq"
+                manifest = {"tcp": {"connection_target": target}}
+                with self.assertRaises(FileNotFoundError):
+                    write_coverage(m, manifest, root, root / "out")
+                self._write(campaign / target, ["192.0.2.1"])
+                output = write_coverage(m, manifest, root, root / "out")
+                self.assertEqual(json.loads(output.read_text())["coverage_percent"], 100)
+                historical = write_coverage(m, {"tcp": {}}, root, root / "out")
+                expected = 50 if interval == "fixed-interval" else 100 / 3
+                self.assertAlmostEqual(
+                    json.loads(historical.read_text())["coverage_percent"], expected
+                )
+
     def setUp(self):
         self.manifest = {
             "tcp": {
