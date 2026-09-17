@@ -12,11 +12,13 @@ FIXED_BASE_TARGET_NAME = "zmap-fixed-base-sample.pq"
 
 
 def _target_path(m: IpidMeasurement, manifest: dict, raw_root: Path) -> Path:
-    if (
-        m.protocol == "tcp"
-        and m.interval == "fixed-interval"
-        and m.scale == "base"
-    ):
+    if m.protocol == "tcp" and m.connection_mode == "connection":
+        target = manifest["tcp"].get("connection_target")
+        if target is not None:
+            if target != "zmap-connection-sample.pq":
+                raise ValueError("invalid connection target")
+            return raw_root / "zmap" / m.zmap_id / target
+    if m.protocol == "tcp" and m.interval == "fixed-interval" and m.scale == "base":
         sampled = raw_root / "zmap" / m.zmap_id / FIXED_BASE_TARGET_NAME
         # Backward compatibility for campaigns collected before TCP fixed-base
         # sampling was introduced.

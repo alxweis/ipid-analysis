@@ -15,6 +15,7 @@ from ipid_analysis.s3_workflow import (
     download_analysis_inputs,
     process_analysis_request,
     process_request,
+    validate_analysis_manifest,
 )
 
 
@@ -260,9 +261,7 @@ class S3WorkflowTest(unittest.TestCase):
                 calls.append((manifest_path, batch_size, threads))
                 self.assertTrue((root / "raw" / "zmap" / job_id / "zmap.pq").is_file())
                 self.assertTrue((root / "raw" / "os" / os_id / "os.pq").is_file())
-                self.assertTrue(
-                    (root / "raw" / "os" / os_id / "os-coverage.json").is_file()
-                )
+                self.assertTrue((root / "raw" / "os" / os_id / "os-coverage.json").is_file())
                 self.assertTrue((root / "raw" / "ipid" / rt_id / "strategies.pq").is_file())
                 self.assertTrue((root / "raw" / "ipid" / rt_id / "zmap_unclassified.pq").is_file())
                 log_path.write_text("postprocessing complete\n")
@@ -321,9 +320,7 @@ class S3WorkflowTest(unittest.TestCase):
             "done_uri": f"{prefix}/analysis-jobs/{job_id}/done.json",
             "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
             "created_at": "2026-07-22T10:05:00Z",
-            "fixed_base_target_uri": (
-                f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"
-            ),
+            "fixed_base_target_uri": (f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"),
         }
 
         request = AnalysisRequest.parse(data, prefix)
@@ -344,9 +341,7 @@ class S3WorkflowTest(unittest.TestCase):
             "done_uri": f"{prefix}/analysis-jobs/{job_id}/done.json",
             "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
             "created_at": "2026-07-22T10:05:00Z",
-            "fixed_base_target_uri": (
-                f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"
-            ),
+            "fixed_base_target_uri": (f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"),
         }
 
         with self.assertRaisesRegex(ValueError, "only valid for TCP"):
@@ -372,12 +367,16 @@ class S3WorkflowTest(unittest.TestCase):
                 "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
                 "created_at": "2026-07-22T10:05:00Z",
                 "fixed_base_target_uri": sample_uri,
+                "connection_target_uri": f"s3://bucket/raw/zmap/{job_id}/zmap-connection-sample.pq",
             },
             prefix,
         )
+        with self.assertRaisesRegex(ValueError, "invalid connection_target_uri"):
+            AnalysisRequest.parse(request.__dict__ | {"connection_target_uri": sample_uri}, prefix)
         manifest = {
             "tcp": {
                 "zmap": job_id,
+                "connection_target": "zmap-connection-sample.pq",
                 "os": os_id,
                 "ipid": {
                     "no-connection": {
@@ -390,6 +389,8 @@ class S3WorkflowTest(unittest.TestCase):
         objects = {
             f"s3://bucket/raw/zmap/{job_id}/zmap.pq": b"zmap",
             sample_uri: b"sample",
+            request.connection_target_uri: b"synack-targets",
+            f"s3://bucket/raw/zmap/{job_id}/zmap-connection-sample.json": b"synack-metadata",
             f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.json": b"metadata",
             f"s3://bucket/raw/os/{os_id}/os.pq": b"os",
             f"s3://bucket/raw/os/{os_id}/os-coverage.json": b"{}",
@@ -402,7 +403,20 @@ class S3WorkflowTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             raw_root = Path(directory)
+            validate_analysis_manifest(manifest, request)
+            manifest["tcp"]["connection_target"] = "zmap-fixed-base-sample.pq"
+            with self.assertRaisesRegex(ValueError, "connection target does not match"):
+                validate_analysis_manifest(manifest, request)
+            manifest["tcp"]["connection_target"] = "zmap-connection-sample.pq"
             download_analysis_inputs(FakeS3Client(objects), request, manifest, raw_root)
+            self.assertEqual(
+                (raw_root / "zmap" / job_id / "zmap-connection-sample.pq").read_bytes(),
+                b"synack-targets",
+            )
+            self.assertEqual(
+                (raw_root / "zmap" / job_id / "zmap-connection-sample.json").read_bytes(),
+                b"synack-metadata",
+            )
 
             self.assertEqual(
                 (raw_root / "zmap" / job_id / "zmap-fixed-base-sample.pq").read_bytes(),

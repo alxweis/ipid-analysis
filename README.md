@@ -63,9 +63,13 @@ jobs sequentially, so no additional scheduler or locking service is required.
 
 For TCP campaigns, the worker also downloads
 `zmap-fixed-base-sample.pq` and its JSON metadata from the ZMap measurement
-prefix. Coverage for both stateless and connection-oriented fixed-interval base
-measurements is calculated against this shared sample. Older TCP campaigns
-without the sample retain the original full-ZMap coverage behavior.
+prefix. Stateless fixed-base coverage uses this sample. New TCP connection runs
+declare `connection_target: zmap-connection-sample.pq` in the protocol manifest;
+the worker downloads that SYN-ACK sample and its JSON metadata, and both
+connection variants use it as their coverage denominator. A declared but missing
+sample fails instead of silently using the full ZMap population. Historical
+manifests without this declaration retain their previous coverage behavior.
+Deploy this support before enabling SYN-ACK sampling on the measurement VMs.
 
 ## Strategy classification by measurement scale
 
