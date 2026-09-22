@@ -181,6 +181,42 @@ class CoverageTest(unittest.TestCase):
                 measurement.artifact_path(processed_root, "coverage", "json").exists()
             )
 
+    def test_icmp_udp_sample_only_changes_fixed_base_denominator(self):
+        for protocol in ("icmp", "udp-dns"):
+            for sampled in (False, True):
+                with (
+                    self.subTest(protocol=protocol, sampled=sampled),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    zmap_id = protocol + "-zmap"
+                    campaign = root / "zmap" / zmap_id
+                    addresses = ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"]
+                    self._write(campaign / "zmap.pq", addresses)
+                    if sampled:
+                        self._write(campaign / "zmap-fixed-base-sample.pq", addresses[:2])
+                    self._write(root / "ipid" / "rt" / "zmap_unclassified.pq", addresses[:3])
+                    manifest = {
+                        protocol: {
+                            "zmap": zmap_id,
+                            "ipid": {"no-connection": {"rt-based": {"base": "rt"}}},
+                        }
+                    }
+                    for interval, scale, denominator in (
+                        ("rt-based", "base", 4),
+                        ("fixed-interval", "base", 2 if sampled else 4),
+                        ("fixed-interval", "mass", 3),
+                    ):
+                        m = IpidMeasurement(
+                            protocol, "no-connection", interval, scale, "run", zmap_id
+                        )
+                        self._write(root / m.input_key / "ipid.pq", addresses[:1])
+                        output = write_coverage(m, manifest, root, root / "out")
+                        result = json.loads(output.read_text())
+                        self.assertEqual(result["zmap_ip_count"], denominator)
+                        self.assertEqual(result["ipid_ip_count"], 1)
+                        self.assertAlmostEqual(result["coverage_percent"], 100 / denominator)
+
     def test_rejects_empty_measurement_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

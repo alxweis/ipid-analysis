@@ -180,8 +180,6 @@ class AnalysisRequest:
             ):
                 raise ValueError("invalid connection_target_uri")
         if request.fixed_base_target_uri is not None:
-            if request.protocol != "tcp":
-                raise ValueError("fixed_base_target_uri is only valid for TCP")
             expected_target_uri = join_s3(
                 request.zmap_prefix,
                 request.job_id,
