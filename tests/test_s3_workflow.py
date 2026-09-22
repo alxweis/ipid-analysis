@@ -327,7 +327,7 @@ class S3WorkflowTest(unittest.TestCase):
 
         self.assertEqual(request.fixed_base_target_uri, data["fixed_base_target_uri"])
 
-    def test_analysis_request_rejects_fixed_base_target_for_non_tcp(self):
+    def test_analysis_request_rejects_noncanonical_fixed_base_target(self):
         prefix = "s3://bucket/workflow"
         job_id = "icmp_2026-07-22_10-00-00"
         data = {
@@ -341,11 +341,83 @@ class S3WorkflowTest(unittest.TestCase):
             "done_uri": f"{prefix}/analysis-jobs/{job_id}/done.json",
             "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
             "created_at": "2026-07-22T10:05:00Z",
-            "fixed_base_target_uri": (f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"),
+            "fixed_base_target_uri": "s3://other/zmap-fixed-base-sample.pq",
         }
 
-        with self.assertRaisesRegex(ValueError, "only valid for TCP"):
+        with self.assertRaisesRegex(ValueError, "canonical S3 location"):
             AnalysisRequest.parse(data, prefix)
+
+    def test_downloads_icmp_udp_fixed_base_samples(self):
+        for protocol, id_prefix in (("icmp", "icmp"), ("udp-dns", "udp-dns-53")):
+            with self.subTest(protocol=protocol), tempfile.TemporaryDirectory() as directory:
+                prefix = "s3://bucket/workflow"
+                job_id = id_prefix + "_2026-07-22_10-00-00"
+                os_id = id_prefix + "_2026-07-22_10-00-01"
+                rt_id = id_prefix + "_2026-07-22_10-00-02"
+                fixed_id = id_prefix + "_2026-07-22_10-00-03"
+                sample_uri = f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.pq"
+                metadata_uri = f"s3://bucket/raw/zmap/{job_id}/zmap-fixed-base-sample.json"
+                request = AnalysisRequest.parse(
+                    {
+                        "version": ANALYSIS_JOB_VERSION,
+                        "job_id": job_id,
+                        "protocol": protocol,
+                        "manifest_uri": f"{prefix}/analysis-jobs/{job_id}/manifest.json",
+                        "zmap_prefix": "s3://bucket/raw/zmap/",
+                        "os_prefix": "s3://bucket/raw/os/",
+                        "ipid_prefix": "s3://bucket/raw/ipid/",
+                        "done_uri": f"{prefix}/analysis-jobs/{job_id}/done.json",
+                        "failed_uri": f"{prefix}/analysis-jobs/{job_id}/failed.json",
+                        "created_at": "2026-07-22T10:05:00Z",
+                        "fixed_base_target_uri": sample_uri,
+                    },
+                    prefix,
+                )
+                manifest = {
+                    protocol: {
+                        "zmap": job_id,
+                        "os": os_id,
+                        "ipid": {
+                            "no-connection": {
+                                "rt-based": {"base": rt_id},
+                                "fixed-interval": {"base": fixed_id},
+                            }
+                        },
+                    }
+                }
+                objects = {
+                    f"s3://bucket/raw/zmap/{job_id}/zmap.pq": b"zmap",
+                    sample_uri: b"sample",
+                    metadata_uri: b"metadata",
+                    f"s3://bucket/raw/os/{os_id}/os.pq": b"os",
+                    f"s3://bucket/raw/os/{os_id}/os-coverage.json": b"{}",
+                    f"s3://bucket/raw/ipid/{rt_id}/ipid.pq": b"rt",
+                    f"s3://bucket/raw/ipid/{rt_id}/ipid.snapshot.yaml": b"rt-snapshot",
+                    f"s3://bucket/raw/ipid/{rt_id}/zmap_unclassified.pq": b"targets",
+                    f"s3://bucket/raw/ipid/{fixed_id}/ipid.pq": b"fixed",
+                    f"s3://bucket/raw/ipid/{fixed_id}/ipid.snapshot.yaml": b"fixed-snapshot",
+                }
+                validate_analysis_manifest(manifest, request)
+                root = Path(directory)
+                download_analysis_inputs(FakeS3Client(objects), request, manifest, root)
+                self.assertEqual(
+                    (root / "zmap" / job_id / "zmap-fixed-base-sample.pq").read_bytes(), b"sample"
+                )
+                self.assertEqual(
+                    (root / "zmap" / job_id / "zmap-fixed-base-sample.json").read_bytes(),
+                    b"metadata",
+                )
+                with self.assertRaisesRegex(ValueError, "invalid connection_target_uri"):
+                    AnalysisRequest.parse(
+                        request.__dict__
+                        | {
+                            "connection_target_uri": f"s3://bucket/raw/zmap/{job_id}/zmap-connection-sample.pq"
+                        },
+                        prefix,
+                    )
+                del objects[sample_uri]
+                with self.assertRaises(KeyError):
+                    download_analysis_inputs(FakeS3Client(objects), request, manifest, root)
 
     def test_downloads_tcp_fixed_base_target_and_metadata(self):
         prefix = "s3://bucket/workflow"

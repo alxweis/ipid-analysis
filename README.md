@@ -61,9 +61,15 @@ ZMap, OS, and IP-ID outputs into `data/raw`, then runs the same processing as
 `done.json` or `failed.json`. A single worker processes the three protocol VMs'
 jobs sequentially, so no additional scheduler or locking service is required.
 
-For TCP campaigns, the worker also downloads
+For campaigns declaring `fixed_base_target_uri`, the worker also downloads
 `zmap-fixed-base-sample.pq` and its JSON metadata from the ZMap measurement
-prefix. Stateless fixed-base coverage uses this sample. New TCP connection runs
+prefix. Stateless fixed-base coverage uses this sample for ICMP, TCP, and
+UDP-DNS. Historical campaigns without a fixed-base sample retain the full
+ZMap denominator. RT Base and FI Mass keep their existing target populations.
+Deploy this worker version before enabling ICMP/UDP-DNS fixed-base sampling
+on the measurement VMs.
+
+New TCP connection runs
 declare `connection_target: zmap-connection-sample.pq` in the protocol manifest;
 the worker downloads that SYN-ACK sample and its JSON metadata, and both
 connection variants use it as their coverage denominator. A declared but missing
