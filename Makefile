@@ -108,6 +108,11 @@ plot-chi2-pvalue-cdf:
 plot-random-structure-score-cdf:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_structure_score_cdf $(ARGS)
 
+## Evaluate all RANDOM-score metrics and their 63 non-empty combinations
+.PHONY: evaluate-random-classifier
+evaluate-random-classifier:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_evaluation $(ARGS)
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################

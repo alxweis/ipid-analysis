@@ -254,6 +254,76 @@ powers as minor ticks. Strategies whose complete CDF coincides at the numerical
 score floor are additionally marked in their strategy colors on that shared
 vertical line.
 
+### RANDOM metric-selection experiment
+
+Evaluate the four production score components together with candidate
+increment-uniformity and circular gap-uniformity metrics without changing the
+production classifier:
+
+```bash
+# Fast pipeline/plot smoke test (not statistically conclusive)
+make evaluate-random-classifier ARGS="--samples-per-strategy 1000 --calibration-samples-per-condition 2000 --null-table-samples 5000 --batch-size 1000 --seed 42"
+
+# Full comparison run
+make evaluate-random-classifier ARGS="--samples-per-strategy 100000 --calibration-samples-per-condition 250000 --null-table-samples 500000 --target-random-frr 0.0001 --batch-size 10000 --seed 42"
+```
+
+The increment test preserves the original measurement positions: an increment
+is formed only when both originally adjacent positions in the selected full,
+destination, or connection view are present. It never bridges a missing reply.
+The number of equal-width bins is selected from the observed transition count:
+the largest power of two that retains at least five expected transitions per
+bin, capped at 16. Views with fewer than ten transitions are uninformative.
+Pearson statistics are converted to empirical multinomial null probabilities,
+so short and long views produce comparable compatibility scores.
+
+The gap test sorts the present 16-bit values, includes duplicate zero-gaps and
+the circular wraparound gap, and calculates a Cramer-von-Mises discrepancy for
+the complete spacing distribution. Its empirical discrete-uniform null table
+is conditioned on the number of present values, making the statistic invariant
+to packet order and calibrated for each tested loss level.
+
+The experiment covers ideal data; random 5%, 10%, and 20% loss; 20% loss plus
+20% reordering of present values; and 20% loss concentrated in one destination
+or one connection. In addition to the eight standard strategy generators, it
+includes constant-step SINGLE counters at low, medium, and high rates, a
+jittered high-rate SINGLE counter, and non-clustered interleavings of two, four,
+or eight independent counters. It calculates each metric once, calibrates all
+63 non-empty metric subsets as complete minimum-score decision rules, evaluates
+False-RANDOM and true-RANDOM false rejection, benchmarks standalone metric
+cost, and reports the non-dominated subsets. Calibration and held-out test
+generators use independent deterministic random streams.
+
+Compact reports are written to
+`data/processed/classifier-validation/random-classifier-evaluation/`:
+
+```text
+summary.json
+subset-results.csv
+subset-by-scenario.csv
+pareto-frontier.csv
+recommendations.txt
+run.log
+random-classifier-review-bundle.zip
+metric-scores.pq                 # large, detailed per-sequence scores
+```
+
+Plots are written to
+`reports/figures/classifier-validation/random-classifier-evaluation/`:
+
+```text
+metric-false-random-heatmap.pdf
+subset-pareto-tradeoff.pdf
+```
+
+The ZIP review bundle contains all compact CSV, JSON, text, log, and PDF
+artifacts, but deliberately excludes the potentially large Parquet score table.
+The report contains both standalone metric timings and measured timings for
+every complete subset. Occupancy and maximum-gap candidates share their sort
+and feature pass in the subset benchmark. Gap-uniformity still has its own sort;
+close finalists should be benchmarked again after the selected production code
+has been optimized.
+
 ## Merging base and mass strategies
 
 The canonical no-connection RT-base and fixed-interval-mass results can be
