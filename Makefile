@@ -113,6 +113,11 @@ plot-random-structure-score-cdf:
 evaluate-random-classifier:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_evaluation $(ARGS)
 
+## Accuracy-first RANDOM metric evaluation with independent selection/held-out generators
+.PHONY: evaluate-random-classifier-v2
+evaluate-random-classifier-v2:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_evaluation_v2 $(ARGS)
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################

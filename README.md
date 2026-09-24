@@ -324,6 +324,58 @@ and feature pass in the subset benchmark. Gap-uniformity still has its own sort;
 close finalists should be benchmarked again after the selected production code
 has been optimized.
 
+### Accuracy-first RANDOM metric-selection experiment (v2)
+
+Version 2 removes classifier-threshold leakage from the structured generators.
+Counter steps span the complete `1..65535` domain without importing the
+production increment or clustering thresholds. It uses independent selection
+and held-out generator profiles, adds burst-loss conditions, evaluates all 63
+metric subsets, and compares minimum, Fisher, Cauchy, and selection-weighted
+minimum combination rules. Every rule is calibrated against dependent
+true-RANDOM metric scores rather than an asymptotic combined-p-value formula.
+
+```bash
+# Fast end-to-end smoke run (not statistically conclusive)
+make evaluate-random-classifier-v2 ARGS="--selection-samples-per-strategy 100 --test-samples-per-strategy 100 --weight-training-samples-per-strategy 100 --calibration-samples-per-condition 1000 --null-table-samples 5000 --target-random-frr 0.01 --batch-size 100 --seed 42"
+
+# Accuracy-first full run
+make evaluate-random-classifier-v2 ARGS="--selection-samples-per-strategy 100000 --test-samples-per-strategy 500000 --weight-training-samples-per-strategy 50000 --calibration-samples-per-condition 1000000 --null-table-samples 1000000 --target-random-frr 0.0001 --batch-size 10000 --seed 20260925"
+```
+
+The selection profile learns only the weighted-minimum allocation and provides
+development-set comparisons. The independently seeded held-out profile uses a
+different step distribution, broader jitter and drift, and more imbalanced
+multi-counter traffic. Accuracy reports prioritize worst-case, p95, and
+production-residual-like False-RANDOM rates; runtime is reported but used only
+after accuracy unless costs differ materially.
+
+Compact reports are written to
+`data/processed/classifier-validation/random-classifier-evaluation-v2/`:
+
+```text
+summary.json
+combination-results.csv
+combination-by-scenario.csv
+step-sensitivity.csv
+heldout-pareto-frontier.csv
+recommendations.txt
+run.log
+random-classifier-review-bundle-v2.zip
+heldout-metric-scores.pq         # large, excluded from the review ZIP
+```
+
+Plots are written to
+`reports/figures/classifier-validation/random-classifier-evaluation-v2/`:
+
+```text
+metric-false-random-heatmap.pdf
+combination-accuracy-tradeoff.pdf
+metric-step-sensitivity.pdf
+```
+
+The ZIP is the preferred review artifact because it contains every compact
+table, the recommendations, the run log, and all three plots.
+
 ## Merging base and mass strategies
 
 The canonical no-connection RT-base and fixed-interval-mass results can be
