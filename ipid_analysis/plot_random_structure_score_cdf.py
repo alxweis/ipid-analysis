@@ -1,7 +1,6 @@
 """Plot the selected validation-only RANDOM-candidate score CDFs.
 
-The retained ``random-structure-score-cdf-*`` filenames are the stable paper
-artifact interface. Their score now exactly matches the candidate selected by
+The ``mass-4x25-random-score-cdf-*`` artifacts exactly match the candidate selected by
 the independent v2 evaluation: the minimum of raw-IPID uniformity, empirical
 increment uniformity, and empirical circular gap uniformity. The production
 classifier remains unchanged.
@@ -26,17 +25,14 @@ from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter
 
-from ipid_analysis.classifier_validation import apply_fixed_interval_impairments
+from ipid_analysis.classifier_validation import apply_fixed_interval_impairments, apply_reordering
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
 from ipid_analysis.paper_figures import configure_paper_style
 from ipid_analysis.plot_chi2_pvalue_cdf import (
     CONNECTION_COUNT,
     DEFAULT_SEED,
-    IDEAL_DATASET,
     IDEAL_SEQUENCE_LENGTH,
     LOSS_FRACTION,
-    LOSSY_DATASET,
-    LOSSY_REORDERED_DATASET,
     PLOT_STRATEGIES,
     PRESENT_SEQUENCE_LENGTH,
     REORDER_FRACTION,
@@ -73,6 +69,10 @@ X_AXIS_MAXIMUM = 1.05
 X_AXIS_LEFT_PADDING_DECADES = 1
 X_MAJOR_EXPONENT_STEP = 2
 THRESHOLD_COLOR = "#C62828"
+MASS_IDEAL_DATASET = "ideal"
+MASS_LOSSY_DATASET = "lossy"
+MASS_REORDERED_DATASET = "reordered"
+MASS_LOSSY_REORDERED_DATASET = "lossy-reordered"
 
 SCORE_SCHEMA = pa.schema(
     [
@@ -290,7 +290,7 @@ def render(
     seed: int = DEFAULT_SEED,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
-) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path, Path, Path, Path, Path]:
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
     if null_table_samples < 1:
@@ -300,16 +300,22 @@ def render(
 
     processed_dir = processed_root / "classifier-validation"
     figure_dir = figures_root / "classifier-validation"
+    for prefix in ("chi2-pvalue-cdf", "random-structure-score-cdf"):
+        for dataset in ("ideal", "lossy", "lossy-reordered"):
+            (figure_dir / f"{prefix}-{dataset}.pdf").unlink(missing_ok=True)
+            (figure_dir / f"{prefix}-{dataset}.json").unlink(missing_ok=True)
+        (processed_dir / f"{prefix}.pq").unlink(missing_ok=True)
     null_tables = EmpiricalNullTables(null_table_samples, null_table_seed)
 
-    sequence_rng, impairment_rng = [
-        np.random.default_rng(child) for child in np.random.SeedSequence(seed).spawn(2)
+    sequence_rng, impairment_rng, reorder_rng = [
+        np.random.default_rng(child) for child in np.random.SeedSequence(seed).spawn(3)
     ]
     ideal_sequences = generate_chi2_sequences(samples_per_strategy, sequence_rng)
     datasets: dict[str, dict[str, np.ndarray]] = {
-        IDEAL_DATASET: {},
-        LOSSY_DATASET: {},
-        LOSSY_REORDERED_DATASET: {},
+        MASS_IDEAL_DATASET: {},
+        MASS_LOSSY_DATASET: {},
+        MASS_REORDERED_DATASET: {},
+        MASS_LOSSY_REORDERED_DATASET: {},
     }
     for strategy in PLOT_STRATEGIES:
         ideal = ideal_sequences.pop(strategy)
@@ -319,14 +325,20 @@ def render(
             loss_fraction=LOSS_FRACTION,
             reorder_fraction=REORDER_FRACTION,
         )
-        datasets[IDEAL_DATASET][strategy] = calculate_scores(
+        reorder_only = apply_reordering(ideal, reorder_rng, reordered_count=20)
+        datasets[MASS_IDEAL_DATASET][strategy] = calculate_scores(
             ideal,
             np.zeros_like(ideal, dtype=bool),
             null_tables,
         )
         lossy_scores = calculate_scores(lossy, loss_mask, null_tables)
-        datasets[LOSSY_DATASET][strategy] = lossy_scores
-        datasets[LOSSY_REORDERED_DATASET][strategy] = calculate_scores(
+        datasets[MASS_LOSSY_DATASET][strategy] = lossy_scores
+        datasets[MASS_REORDERED_DATASET][strategy] = calculate_scores(
+            reorder_only,
+            np.zeros_like(ideal, dtype=bool),
+            null_tables,
+        )
+        datasets[MASS_LOSSY_REORDERED_DATASET][strategy] = calculate_scores(
             reordered,
             loss_mask,
             null_tables,
@@ -335,20 +347,21 @@ def render(
     aggregate_path = _write_scores(
         datasets,
         threshold,
-        processed_dir / "random-structure-score-cdf.pq",
+        processed_dir / "mass-4x25-random-score-cdf.pq",
     )
 
     labels = {
-        IDEAL_DATASET: "Ideal Dataset",
-        LOSSY_DATASET: "Lossy Dataset",
-        LOSSY_REORDERED_DATASET: "Lossy+Reordered Dataset",
+        MASS_IDEAL_DATASET: "Mass 4x25 Ideal Dataset",
+        MASS_LOSSY_DATASET: "Mass 4x25 Lossy Dataset",
+        MASS_REORDERED_DATASET: "Mass 4x25 Reordered Dataset",
+        MASS_LOSSY_REORDERED_DATASET: "Mass 4x25 Lossy+Reordered Dataset",
     }
     paths = {}
     for dataset, strategy_scores in datasets.items():
         pdf_path = plot_score_cdf(
             strategy_scores,
             threshold,
-            figure_dir / f"random-structure-score-cdf-{dataset}.pdf",
+            figure_dir / f"mass-4x25-random-score-cdf-{dataset}.pdf",
             dataset_label=labels[dataset],
         )
         summaries = {}
@@ -372,11 +385,19 @@ def render(
             "requests_per_connection": REQUESTS_PER_CONNECTION,
             "ideal_sequence_length": IDEAL_SEQUENCE_LENGTH,
             "present_ipids_per_sequence": (
-                IDEAL_SEQUENCE_LENGTH if dataset == IDEAL_DATASET else PRESENT_SEQUENCE_LENGTH
+                IDEAL_SEQUENCE_LENGTH
+                if dataset in {MASS_IDEAL_DATASET, MASS_REORDERED_DATASET}
+                else PRESENT_SEQUENCE_LENGTH
             ),
-            "loss_fraction": 0.0 if dataset == IDEAL_DATASET else LOSS_FRACTION,
+            "loss_fraction": (
+                LOSS_FRACTION
+                if dataset in {MASS_LOSSY_DATASET, MASS_LOSSY_REORDERED_DATASET}
+                else 0.0
+            ),
             "reorder_fraction_of_present": (
-                REORDER_FRACTION if dataset == LOSSY_REORDERED_DATASET else 0.0
+                REORDER_FRACTION
+                if dataset in {MASS_REORDERED_DATASET, MASS_LOSSY_REORDERED_DATASET}
+                else 0.0
             ),
             "samples_per_nontrivial_strategy": samples_per_strategy,
             "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,
@@ -410,17 +431,19 @@ def render(
         }
         json_path = _write_json(
             metadata,
-            figure_dir / f"random-structure-score-cdf-{dataset}.json",
+            figure_dir / f"mass-4x25-random-score-cdf-{dataset}.json",
         )
         paths[dataset] = (pdf_path, json_path)
 
     return (
-        paths[IDEAL_DATASET][0],
-        paths[IDEAL_DATASET][1],
-        paths[LOSSY_DATASET][0],
-        paths[LOSSY_DATASET][1],
-        paths[LOSSY_REORDERED_DATASET][0],
-        paths[LOSSY_REORDERED_DATASET][1],
+        paths[MASS_IDEAL_DATASET][0],
+        paths[MASS_IDEAL_DATASET][1],
+        paths[MASS_LOSSY_DATASET][0],
+        paths[MASS_LOSSY_DATASET][1],
+        paths[MASS_REORDERED_DATASET][0],
+        paths[MASS_REORDERED_DATASET][1],
+        paths[MASS_LOSSY_REORDERED_DATASET][0],
+        paths[MASS_LOSSY_REORDERED_DATASET][1],
         aggregate_path,
     )
 
@@ -463,6 +486,8 @@ def main(
         "ideal_json",
         "lossy_pdf",
         "lossy_json",
+        "reordered_pdf",
+        "reordered_json",
         "lossy_reordered_pdf",
         "lossy_reordered_json",
         "aggregate",

@@ -143,13 +143,13 @@ make validate-classifier
 make validate-classifier ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-The three established classifier-validation figures use the selected
-validation-only RANDOM candidate by default: the minimum of raw-IPID
+The paper figures use the selected validation-only RANDOM candidate by default:
+the minimum of raw-IPID
 uniformity, increment uniformity, and circular gap uniformity. The calibrated
 threshold and empirical-null specification are recorded in each JSON sidecar.
 This replaces only the final RANDOM decision inside the synthetic validation;
-the production classifier remains unchanged. To reproduce the figures with the
-current production RANDOM score instead, run:
+the production classifier remains unchanged. To reproduce the confusion
+matrices with the current production RANDOM score instead, run:
 
 ```bash
 python -m ipid_analysis.classifier_validation --production-random-score
@@ -169,20 +169,21 @@ modulo 2^16. The validation generates only values within the strategy
 definitions; it does not inject invalid boundary cases. The exact generator
 parameters are also recorded in every validation JSON sidecar.
 
-The RT-based dataset uses the real 4 x 4 round/connection interleaving and
+The Base validation uses the real 4 x 4 round/connection interleaving and
 evaluates `REFLECTION`, `CONSTANT`, `SINGLE`, `PER_CONNECTION`,
-`PER_DESTINATION`, and `PER_BUCKET`. The ideal fixed-interval dataset uses
-4 x 25 sequences and evaluates the same six exact strategies plus `MULTI` and
-`RANDOM`. `UNCLASSIFIED` remains a possible detected output, but is not shown
-as a generating strategy because it is a classifier result rather than an
-IP-ID generation mechanism. The fixed-interval robustness datasets remain
-limited to the loss-tolerant `CONSTANT`, `MULTI`, and `RANDOM` rules: they apply
-exactly 20 missing replies and then additionally permute 16 of the remaining
-80 IP-ID values per sequence.
+`PER_DESTINATION`, and `PER_BUCKET`. Base measurements retain only complete
+16-reply results, so no Base loss case is generated. Two paper alternatives
+compare the same ideal matrix against exactly three reordered positions
+(18.75%) and exactly four reordered positions (25%). `MULTI` and `RANDOM` are
+evaluated separately as out-of-scope Base inputs and must remain
+`UNCLASSIFIED`.
 
-Out-of-scope rejection is evaluated separately: MULTI-like sequences are
-expected to remain `UNCLASSIFIED` in RT-based analysis. Their rejection rates
-and detected-output counts are written to
+The Mass validation uses 4 x 25 sequences and evaluates all eight generating
+strategies under four conditions: ideal, exactly 20 missing replies, exactly 20
+reordered positions, and 20 missing replies plus 16 reordered positions among
+the remaining 80. Under impairment, exact-label recovery and the
+safety-critical structured-as-RANDOM behavior can therefore be inspected
+separately. Out-of-scope rejection rates and detected-output counts are written to
 `reports/figures/classifier-validation/out-of-scope-classifier-rejection.json`
 and are not mixed into the supported-strategy accuracy, precision, recall, or
 F1 scores.
@@ -195,58 +196,24 @@ balanced accuracy, per-class precision/recall/F1, macro and weighted averages,
 Cohen's kappa, and multiclass Matthews correlation coefficient.
 
 ```text
-rt-based-4x4-classifier-confusion.pdf
-fixed-interval-4x25-classifier-confusion.pdf
-fixed-interval-4x25-impaired-classifier-confusion.pdf
+base-4x4-classifier-confusion-reordered-3.pdf
+base-4x4-classifier-confusion-reordered-4.pdf
+mass-4x25-classifier-confusion.pdf
 ```
 
-Plot the empirical CDF of the selected candidate's minimum
-increment-uniformity p-value after impairing ideal synthetic 4 x 25 sequences:
+The four Mass datasets also evaluate the selected RANDOM-compatibility score:
 
 ```bash
-make validate-classifier
-# Or render only this plot:
-make plot-chi2-pvalue-cdf
+make plot-mass-random-score-cdf
 # Optional:
-make plot-chi2-pvalue-cdf ARGS="--samples-per-strategy 100000 --seed 42"
-```
-
-The plots use 100,000 sequences for every nontrivial strategy and 1,000 each for
-`REFLECTION` and `CONSTANT`. The ideal dataset keeps all 100 values without
-reordering. The lossy dataset removes exactly 20 random values from each
-100-value sequence. The paired lossy+reordered dataset uses the same loss mask
-and additionally permutes 16 of the remaining 80 values. One p-value is
-calculated for the modular increments of each of seven subsequences: the full
-sequence, two destination subsequences, and four connection subsequences. The
-minimum of these seven p-values is plotted. An increment is formed only when
-both originally adjacent positions in a subsequence are present; transitions
-across missing replies are not bridged. Reordering can therefore change the
-increment distributions, while loss reduces the number of usable transitions.
-For each observed transition count, the test uses the largest power-of-two bin
-count up to 16 that retains at least five expected observations per bin. Its
-right-tail p-values are obtained from a fixed, versioned empirical null table
-of 1,000,000 discrete 16-bit RANDOM sequences, including add-one smoothing.
-The logarithmic x-axis labels every second decade and uses the intervening
-decades as minor ticks. A red dashed vertical line marks the empirical minimum
-RANDOM p-value of the respective dataset and therefore the beginning of the
-observed p-value overlap with RANDOM; it is not the classifier's decision
-threshold. The three PDFs and their JSON metadata are written below
-`reports/figures/classifier-validation/`, and the underlying p-values are
-stored in `data/processed/classifier-validation/chi2-pvalue-cdf.pq`.
-
-The same synthetic datasets evaluate the selected validation candidate for the
-RANDOM-compatibility structure score:
-
-```bash
-make plot-random-structure-score-cdf
-# Optional:
-make plot-random-structure-score-cdf ARGS="--samples-per-strategy 100000 --seed 42"
+make plot-mass-random-score-cdf ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
 The candidate score is
 `S = min(raw_uniformity, increment_uniformity, gap_uniformity)`. Raw uniformity
-uses the established 16-bin Pearson test. Increment uniformity is the empirical
-seven-subsequence test described above and is order-dependent. Gap uniformity
+uses the established 16-bin Pearson test. Increment uniformity is the empirical,
+adaptive-bin test over the full, two destination, and four connection views; it
+uses only originally adjacent present positions and is order-dependent. Gap uniformity
 compares the complete circular spacing distribution of the present, sorted
 16-bit IP-ID values against the same versioned discrete empirical RANDOM null;
 it is order-independent. The fixed selected threshold is
@@ -261,7 +228,17 @@ the candidate score. This validation pipeline does not change the production
 classifier. The PDFs and JSON metadata are written below
 `reports/figures/classifier-validation/`; the underlying scores and decisions
 are stored in
-`data/processed/classifier-validation/random-structure-score-cdf.pq`. The
+`data/processed/classifier-validation/mass-4x25-random-score-cdf.pq`. The four
+PDFs are:
+
+```text
+mass-4x25-random-score-cdf-ideal.pdf
+mass-4x25-random-score-cdf-lossy.pdf
+mass-4x25-random-score-cdf-reordered.pdf
+mass-4x25-random-score-cdf-lossy-reordered.pdf
+```
+
+The
 logarithmic x-axis reserves one decade of space below the smallest score,
 labels every second power of ten as a major tick, and uses the intervening
 powers as minor ticks. Strategies whose complete CDF coincides at the numerical
