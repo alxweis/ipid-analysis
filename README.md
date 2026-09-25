@@ -376,6 +376,54 @@ metric-step-sensitivity.pdf
 The ZIP is the preferred review artifact because it contains every compact
 table, the recommendations, the run log, and all three plots.
 
+### Validation-only paper figures for the selected RANDOM candidate
+
+The selected candidate is the minimum of raw-IPID uniformity, increment
+uniformity, and circular gap uniformity. Its threshold and deterministic
+empirical-null specification are centralized in
+`ipid_analysis.random_classifier_candidate`. The production classifier remains
+unchanged until the paper figures and their JSON metrics have been reviewed.
+
+The validator uses the independent held-out generator profile and paired
+measurement conditions: ideal 4x25 sequences, 20% random loss, and the same
+20% loss plus reordering of 20% of the present replies. It evaluates all 16
+generator variants, including jittered, drifting, bursty, mixed, per-view, and
+2/4/8/16-counter structures.
+
+```bash
+# Paper-conclusive defaults: 100,000 samples per generator and condition,
+# one million deterministic null samples, and the selected threshold.
+make validate-random-classifier-candidate
+
+# Fast pipeline smoke test only; these parameters are not paper-conclusive.
+make validate-random-classifier-candidate ARGS="--samples-per-generator 10 --null-table-samples 256 --candidate-threshold 0.01 --batch-size 10 --seed 42"
+```
+
+The paper/review figures are written directly below
+`reports/figures/classifier-validation/`:
+
+```text
+random-classifier-candidate-confusion.pdf
+random-classifier-current-vs-candidate-confusion.pdf
+random-classifier-candidate-by-generator.pdf
+random-classifier-candidate-validation.json
+```
+
+Compact aggregate data, the run log, and the preferred review bundle are
+written below `data/processed/classifier-validation/`:
+
+```text
+random-classifier-candidate-validation.csv
+random-classifier-candidate-validation.log
+random-classifier-candidate-review-bundle.zip
+```
+
+The confusion figures evaluate the RANDOM decision stage, not recovery of an
+exact counter label from incomplete data. `Structured -> RANDOM` therefore
+measures False-RANDOM, while `RANDOM -> Non-RANDOM` measures true-RANDOM false
+rejection. The per-generator figure preserves which structured generator caused
+each error instead of merging every incomplete counter into one class.
+
 ## Merging base and mass strategies
 
 The canonical no-connection RT-base and fixed-interval-mass results can be
