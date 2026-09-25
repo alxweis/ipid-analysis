@@ -66,7 +66,6 @@ POSITIVE_SCORE_AXIS_MINIMUM = 1e-6
 X_AXIS_MAXIMUM = 1.05
 X_MAJOR_EXPONENT_STEP = 2
 THRESHOLD_COLOR = "#C62828"
-CDF_FONT_SIZE = 8.0
 MASS_IDEAL_DATASET = "ideal"
 MASS_LOSSY_DATASET = "lossy"
 MASS_REORDERED_DATASET = "reordered"
@@ -153,8 +152,8 @@ def plot_score_cdf(
     dataset_label: str,
 ) -> Path:
     configure_paper_style()
-    fig = plt.figure(figsize=(6.75, 3.15))
-    grid = fig.add_gridspec(1, 2, width_ratios=(0.055, 0.945), wspace=0.10)
+    fig = plt.figure(figsize=(7.16, 2.65))
+    grid = fig.add_gridspec(1, 2, width_ratios=(0.055, 0.945), wspace=0.065)
     subminimum_ax = fig.add_subplot(grid[0, 0])
     ax = fig.add_subplot(grid[0, 1], sharey=subminimum_ax)
     subminimum_only_strategies = _subminimum_only_strategies(scores)
@@ -223,10 +222,7 @@ def plot_score_cdf(
         current_ax.set_ylim(0, 103)
         current_ax.yaxis.set_major_locator(MultipleLocator(20))
         current_ax.yaxis.set_minor_locator(MultipleLocator(10))
-        current_ax.tick_params(axis="both", which="major", labelsize=CDF_FONT_SIZE)
-    ax.tick_params(axis="x", which="major", length=3.5, width=0.7)
-    ax.tick_params(axis="x", which="minor", length=2.3, width=0.55)
-    subminimum_ax.set_ylabel("Cumulative Percentage [%]", fontsize=CDF_FONT_SIZE)
+    subminimum_ax.set_ylabel("Cumulative Percentage [%]")
     ax.tick_params(axis="y", which="both", left=False, labelleft=False)
     subminimum_ax.tick_params(axis="y", which="both", right=False)
     subminimum_ax.spines["right"].set_visible(False)
@@ -252,13 +248,17 @@ def plot_score_cdf(
         transform=ax.transAxes,
         **break_style,
     )
-    fig.supxlabel(r"Random-Compatibility Score $S$", y=0.045, fontsize=CDF_FONT_SIZE)
+    fig.supxlabel(
+        r"Random-Compatibility Score $S$",
+        y=0.025,
+        fontsize=plt.rcParams["axes.labelsize"],
+    )
     subminimum_ax.grid(
         which="major", axis="y", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7
     )
     subminimum_ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
     ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
-    ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
+    ax.grid(which="minor", color="#D9D9D9", linestyle=":", linewidth=0.35, alpha=0.75)
 
     handles = [
         Line2D(
@@ -285,14 +285,13 @@ def plot_score_cdf(
     fig.legend(
         handles=handles,
         ncol=5,
-        loc="upper center",
-        bbox_to_anchor=(0.53, 0.985),
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.705),
         frameon=False,
-        columnspacing=0.85,
-        handlelength=2.0,
-        fontsize=CDF_FONT_SIZE,
+        columnspacing=1.4,
+        handlelength=2.7,
     )
-    fig.subplots_adjust(left=0.13, right=0.995, bottom=0.23, top=0.76)
+    fig.subplots_adjust(left=0.095, right=0.995, bottom=0.22, top=0.70)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(
         output_path,
