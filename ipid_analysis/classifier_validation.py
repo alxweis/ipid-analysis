@@ -548,22 +548,31 @@ def _confusion_metrics(
     truth_count = np.zeros(len(detected_classes), dtype=np.int64)
     for row_index, strategy in enumerate(generated_classes):
         truth_count[detected_index[strategy]] = support[row_index]
-    expected_agreement = (
-        float(np.dot(truth_count, predicted_count) / (total * total)) if total else 0.0
-    )
+    total_float = float(total)
+    correct_total = float(correct.sum())
+    truth_count_float = truth_count.astype(np.float64)
+    predicted_count_float = predicted_count.astype(np.float64)
+    agreement_count = float(np.dot(truth_count_float, predicted_count_float))
+    expected_agreement = agreement_count / (total_float * total_float) if total else 0.0
     cohen_kappa = (
         (accuracy - expected_agreement) / (1.0 - expected_agreement)
         if expected_agreement < 1.0
         else 1.0
     )
-    mcc_numerator = float(correct.sum() * total - np.dot(truth_count, predicted_count))
-    mcc_denominator = float(
-        np.sqrt(
-            (total**2 - np.dot(predicted_count, predicted_count))
-            * (total**2 - np.dot(truth_count, truth_count))
-        )
+    squared_total = total_float * total_float
+    predicted_term = max(
+        0.0,
+        squared_total - float(np.dot(predicted_count_float, predicted_count_float)),
     )
-    multiclass_mcc = mcc_numerator / mcc_denominator if mcc_denominator else 0.0
+    truth_term = max(
+        0.0,
+        squared_total - float(np.dot(truth_count_float, truth_count_float)),
+    )
+    mcc_numerator = correct_total * total_float - agreement_count
+    mcc_denominator = float(np.sqrt(predicted_term * truth_term))
+    multiclass_mcc = (
+        float(np.clip(mcc_numerator / mcc_denominator, -1.0, 1.0)) if mcc_denominator else 0.0
+    )
 
     return {
         "sample_count": total,
