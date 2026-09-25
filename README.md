@@ -200,8 +200,8 @@ fixed-interval-4x25-classifier-confusion.pdf
 fixed-interval-4x25-impaired-classifier-confusion.pdf
 ```
 
-Plot the empirical CDF of the minimum increment-subsequence Chi-square
-uniformity p-value after impairing ideal synthetic 4 x 25 sequences:
+Plot the empirical CDF of the selected candidate's minimum
+increment-uniformity p-value after impairing ideal synthetic 4 x 25 sequences:
 
 ```bash
 make validate-classifier
@@ -218,22 +218,24 @@ reordering. The lossy dataset removes exactly 20 random values from each
 and additionally permutes 16 of the remaining 80 values. One p-value is
 calculated for the modular increments of each of seven subsequences: the full
 sequence, two destination subsequences, and four connection subsequences. The
-minimum of these seven p-values is plotted. Missing values are removed within
-each subsequence before its differences are formed, so reordering can change
-the resulting increment distributions. Each Chi-square test uses four
-equal-width bins over the 16-bit IP-ID space (three degrees of freedom). The
-logarithmic x-axis uses labeled major ticks every 20 decades and one unlabeled
-minor tick halfway between consecutive major ticks. It extends only slightly
-beyond `10^0`, making the endpoint of the CDF lines at the maximum possible
-p-value visible. A red dashed vertical line marks the empirical minimum
+minimum of these seven p-values is plotted. An increment is formed only when
+both originally adjacent positions in a subsequence are present; transitions
+across missing replies are not bridged. Reordering can therefore change the
+increment distributions, while loss reduces the number of usable transitions.
+For each observed transition count, the test uses the largest power-of-two bin
+count up to 16 that retains at least five expected observations per bin. Its
+right-tail p-values are obtained from a fixed, versioned empirical null table
+of 1,000,000 discrete 16-bit RANDOM sequences, including add-one smoothing.
+The logarithmic x-axis labels every second decade and uses the intervening
+decades as minor ticks. A red dashed vertical line marks the empirical minimum
 RANDOM p-value of the respective dataset and therefore the beginning of the
 observed p-value overlap with RANDOM; it is not the classifier's decision
 threshold. The three PDFs and their JSON metadata are written below
 `reports/figures/classifier-validation/`, and the underlying p-values are
 stored in `data/processed/classifier-validation/chi2-pvalue-cdf.pq`.
 
-The same synthetic datasets evaluate the production RANDOM-compatibility
-structure score:
+The same synthetic datasets evaluate the selected validation candidate for the
+RANDOM-compatibility structure score:
 
 ```bash
 make plot-random-structure-score-cdf
@@ -241,28 +243,22 @@ make plot-random-structure-score-cdf
 make plot-random-structure-score-cdf ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-The production-oriented score `S` uses the unordered multiset of present IP-ID
-values. Each sequence is sorted exactly once; that sort is reused for
-occupancy/collision probability and a conservative circular maximum-gap
-probability. A 16-bin
-analytic Pearson test supplies the full-range uniformity component. One linear
-pass additionally evaluates exact bounded-increment support over pooled full,
-destination, and connection families, retaining power for counter sequences
-after partial reordering without another sort. The minimum component value is
-the score. No strategy-specific hard gate, per-sequence Monte Carlo simulation,
-or KS/Greenwood calculation is used.
+The candidate score is
+`S = min(raw_uniformity, increment_uniformity, gap_uniformity)`. Raw uniformity
+uses the established 16-bin Pearson test. Increment uniformity is the empirical
+seven-subsequence test described above and is order-dependent. Gap uniformity
+compares the complete circular spacing distribution of the present, sorted
+16-bit IP-ID values against the same versioned discrete empirical RANDOM null;
+it is order-independent. The fixed selected threshold is
+`tau = 8.999991223392587e-06`, calibrated at a target 0.01% RANDOM
+false-rejection rate on the independent held-out v2 evaluation. A sequence is
+RANDOM-compatible when `S >= tau`.
 
-The raw components are order-independent; only the inexpensive bounded-
-increment component can change after reordering. A separate 1,000,000-sequence
-RANDOM calibration set selects one global threshold `tau` at a target 0.01%
-false-rejection rate. Its versioned result is cached below
-`data/processed/classifier-validation/` and reused by matching later runs:
-`S >= tau` is RANDOM-compatible. By default, the plotted nontrivial strategies
-also use 100,000 sequences; `REFLECTION` and `CONSTANT` remain fixed at 1,000.
-The standard calibration pins production `tau` to
-`0.000016313656391956604`. The exact complete-sequence rules and the established
-`CONSTANT` and `MULTI` fallbacks keep precedence over this score, which replaces
-only the former RANDOM test. The PDFs and JSON metadata are written below
+By default, the plotted nontrivial strategies use 100,000 sequences;
+`REFLECTION` and `CONSTANT` remain fixed at 1,000. The exact complete-sequence
+rules and the established `CONSTANT` and `MULTI` fallbacks keep precedence over
+the candidate score. This validation pipeline does not change the production
+classifier. The PDFs and JSON metadata are written below
 `reports/figures/classifier-validation/`; the underlying scores and decisions
 are stored in
 `data/processed/classifier-validation/random-structure-score-cdf.pq`. The

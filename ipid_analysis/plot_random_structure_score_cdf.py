@@ -1,20 +1,10 @@
-"""Plot production-oriented synthetic RANDOM-compatibility score CDFs.
+"""Plot the selected validation-only RANDOM-candidate score CDFs.
 
-The plot and the production fixed-interval classifier share this score
-implementation. Unlike the more expensive increment-view diagnostics, the
-score is designed to scale to large fixed-interval datasets:
-
-* one sort of the present 16-bit IP-ID values,
-* an exact discrete occupancy/collision tail probability,
-* a conservative circular maximum-gap tail bound,
-* an analytic 16-bin Pearson uniformity p-value,
-* one linear bounded-increment support pass over full/destination/connection
-  families to retain power for damaged counters.
-
-The raw-value components are invariant to sample order.  Reordering can only
-change the inexpensive bounded-increment component.
-Threshold calibration is independent of the plotted strategy samples and is
-cached as a versioned artifact for reproducible, inexpensive reruns.
+The retained ``random-structure-score-cdf-*`` filenames are the stable paper
+artifact interface. Their score now exactly matches the candidate selected by
+the independent v2 evaluation: the minimum of raw-IPID uniformity, empirical
+increment uniformity, and empirical circular gap uniformity. The production
+classifier remains unchanged.
 """
 
 from __future__ import annotations
@@ -32,14 +22,14 @@ import typer
 
 matplotlib.use("Agg")
 
-from matplotlib.lines import Line2D  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter  # noqa: E402
+from matplotlib.lines import Line2D
+import matplotlib.pyplot as plt
+from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter
 
-from ipid_analysis.classifier_validation import apply_fixed_interval_impairments  # noqa: E402
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
-from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
-from ipid_analysis.plot_chi2_pvalue_cdf import (  # noqa: E402
+from ipid_analysis.classifier_validation import apply_fixed_interval_impairments
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.paper_figures import configure_paper_style
+from ipid_analysis.plot_chi2_pvalue_cdf import (
     CONNECTION_COUNT,
     DEFAULT_SEED,
     IDEAL_DATASET,
@@ -56,40 +46,33 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (  # noqa: E402
     _ecdf_coordinates,
     generate_chi2_sequences,
 )
-from ipid_analysis.strategies import (  # noqa: E402
-    MAX_INC,
-    MODULUS,
-    RANDOM_STRUCTURE_BOUNDED_INCREMENT_NULL_PROBABILITY,
-    RANDOM_STRUCTURE_SCORE_VERSION,
-    RANDOM_STRUCTURE_UNIFORMITY_BINS,
+from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_NULL_TABLE_SAMPLES,
+    CANDIDATE_NULL_TABLE_SEED,
+    CANDIDATE_NULL_TABLE_VERSION,
+    CANDIDATE_RANDOM_METRICS,
+    CANDIDATE_RANDOM_MIN_SCORE,
+    CANDIDATE_RANDOM_SCORE_VERSION,
+    CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
+    candidate_random_scores,
+)
+from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
+from ipid_analysis.strategies import (
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
-    MeasurementConfig,
-    RandomStructureFeatures,
-    random_structure_bounded_increment_pvalues,
-    random_structure_features,
-    random_structure_scores,
 )
 
 app = typer.Typer()
 
-SCORE_VERSION = RANDOM_STRUCTURE_SCORE_VERSION
+SCORE_VERSION = CANDIDATE_RANDOM_SCORE_VERSION
 DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY = 100_000
-DEFAULT_THRESHOLD_SAMPLES = 1_000_000
-DEFAULT_RANDOM_FALSE_REJECTION_RATE = 0.0001
-UNIFORMITY_BINS = RANDOM_STRUCTURE_UNIFORMITY_BINS
+DEFAULT_NULL_TABLE_SAMPLES = CANDIDATE_NULL_TABLE_SAMPLES
+DEFAULT_RANDOM_FALSE_REJECTION_RATE = CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE
 MIN_COMPATIBILITY_SCORE = 1e-20
-BOUNDED_INCREMENT_NULL_PROBABILITY = RANDOM_STRUCTURE_BOUNDED_INCREMENT_NULL_PROBABILITY
 X_AXIS_MAXIMUM = 1.05
 X_AXIS_LEFT_PADDING_DECADES = 1
 X_MAJOR_EXPONENT_STEP = 2
 THRESHOLD_COLOR = "#C62828"
-CALIBRATION_FILENAME = f"random-score-calibration-{SCORE_VERSION}.json"
-SCORE_CONFIG = MeasurementConfig(
-    connection_count=CONNECTION_COUNT,
-    requests_per_connection=REQUESTS_PER_CONNECTION,
-    request_ip_ids=np.empty(0, dtype=np.int64),
-)
 
 SCORE_SCHEMA = pa.schema(
     [
@@ -102,82 +85,21 @@ SCORE_SCHEMA = pa.schema(
 )
 
 
-RawFeatures = RandomStructureFeatures
-
-
-def calculate_raw_features(
+def calculate_scores(
     values: np.ndarray,
     loss_mask: np.ndarray,
-) -> RawFeatures:
-    """Expose the production feature calculation to the evaluation plot."""
-    return random_structure_features(values, ~loss_mask)
-
-
-def bounded_increment_pvalues(
-    values: np.ndarray,
-    loss_mask: np.ndarray,
+    null_tables: EmpiricalNullTables,
 ) -> np.ndarray:
-    """Expose the production sequence-view component to the evaluation plot."""
-    return random_structure_bounded_increment_pvalues(
-        values,
-        ~loss_mask,
-        SCORE_CONFIG,
-    )
-
-
-def calculate_scores(values: np.ndarray, loss_mask: np.ndarray) -> np.ndarray:
-    """Production score, clipped only to make zero values visible on log axes."""
+    """Candidate score, clipped only to make zero values visible on log axes."""
     return np.clip(
-        random_structure_scores(
+        candidate_random_scores(
             values,
             ~loss_mask,
-            SCORE_CONFIG,
+            null_tables,
         ),
         MIN_COMPATIBILITY_SCORE,
         1.0,
     )
-
-
-def _random_calibration_datasets(
-    sample_count: int,
-    sequence_rng: np.random.Generator,
-    impairment_rng: np.random.Generator,
-) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-    ideal = sequence_rng.integers(
-        0,
-        MODULUS,
-        size=(sample_count, IDEAL_SEQUENCE_LENGTH),
-        dtype=np.uint16,
-    )
-    loss_mask, lossy, reordered = apply_fixed_interval_impairments(
-        ideal,
-        impairment_rng,
-        loss_fraction=LOSS_FRACTION,
-        reorder_fraction=REORDER_FRACTION,
-    )
-    return {
-        IDEAL_DATASET: (ideal, np.zeros_like(ideal, dtype=bool)),
-        LOSSY_DATASET: (lossy, loss_mask),
-        LOSSY_REORDERED_DATASET: (reordered, loss_mask),
-    }
-
-
-def _calibration_key(
-    *,
-    sample_count: int,
-    false_rejection_rate: float,
-    seed: int,
-) -> dict:
-    return {
-        "score_version": SCORE_VERSION,
-        "sample_count_per_dataset": sample_count,
-        "false_rejection_rate": false_rejection_rate,
-        "seed": seed,
-        "uniformity_bins": UNIFORMITY_BINS,
-        "bounded_increment_maximum": MAX_INC,
-        "ideal_sequence_length": IDEAL_SEQUENCE_LENGTH,
-        "loss_fraction": LOSS_FRACTION,
-    }
 
 
 def _write_json(value: dict, output_path: Path) -> Path:
@@ -187,67 +109,6 @@ def _write_json(value: dict, output_path: Path) -> Path:
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
     temporary.replace(output_path)
     return output_path
-
-
-def load_or_calibrate_threshold(
-    cache_path: Path,
-    *,
-    sample_count: int,
-    false_rejection_rate: float,
-    seed: int,
-) -> tuple[float, dict[str, float], dict[str, int], bool]:
-    if sample_count < 2:
-        raise ValueError("threshold sample count must be at least 2")
-    if not 0.0 < false_rejection_rate < 1.0:
-        raise ValueError("false rejection rate must lie strictly between 0 and 1")
-
-    key = _calibration_key(
-        sample_count=sample_count,
-        false_rejection_rate=false_rejection_rate,
-        seed=seed,
-    )
-    if cache_path.is_file():
-        cached = json.loads(cache_path.read_text())
-        if cached.get("key") == key:
-            return (
-                float(cached["tau"]),
-                {name: float(value) for name, value in cached["dataset_lower_quantiles"].items()},
-                {name: int(value) for name, value in cached["random_below_tau"].items()},
-                True,
-            )
-
-    threshold_rng, impairment_rng = [
-        np.random.default_rng(child)
-        for child in np.random.SeedSequence(seed).spawn(2)
-    ]
-    scores = {
-        dataset: calculate_scores(values, mask)
-        for dataset, (values, mask) in _random_calibration_datasets(
-            sample_count,
-            threshold_rng,
-            impairment_rng,
-        ).items()
-    }
-    quantiles = {
-        dataset: float(np.quantile(values, false_rejection_rate, method="lower"))
-        for dataset, values in scores.items()
-    }
-    tau = min(quantiles.values())
-    below = {
-        dataset: int((values < tau).sum())
-        for dataset, values in scores.items()
-    }
-    _write_json(
-        {
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "key": key,
-            "tau": tau,
-            "dataset_lower_quantiles": quantiles,
-            "random_below_tau": below,
-        },
-        cache_path,
-    )
-    return tau, quantiles, below, False
 
 
 def _log_axis_parameters(
@@ -380,10 +241,10 @@ def plot_score_cdf(
         bbox_inches="tight",
         metadata={
             "Title": (
-                "Production-oriented RANDOM-compatibility score distributions "
+                "Selected RANDOM-candidate score distributions "
                 f"by IP-ID selection strategy ({dataset_label})"
             ),
-            "Subject": f"Synthetic 4x25 order-invariant CDFs ({dataset_label})",
+            "Subject": f"Synthetic 4x25 candidate-score CDFs ({dataset_label})",
             "Creator": "ipid-analysis",
         },
     )
@@ -423,29 +284,26 @@ def _write_scores(
 def render(
     *,
     samples_per_strategy: int = DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
-    threshold_samples: int = DEFAULT_THRESHOLD_SAMPLES,
-    false_rejection_rate: float = DEFAULT_RANDOM_FALSE_REJECTION_RATE,
+    null_table_samples: int = DEFAULT_NULL_TABLE_SAMPLES,
+    null_table_seed: int = CANDIDATE_NULL_TABLE_SEED,
+    threshold: float = CANDIDATE_RANDOM_MIN_SCORE,
     seed: int = DEFAULT_SEED,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
 ) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
+    if null_table_samples < 1:
+        raise ValueError("null_table_samples must be positive")
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must lie in [0, 1]")
 
     processed_dir = processed_root / "classifier-validation"
     figure_dir = figures_root / "classifier-validation"
-    threshold, calibration_quantiles, calibration_below, cache_hit = (
-        load_or_calibrate_threshold(
-            processed_dir / CALIBRATION_FILENAME,
-            sample_count=threshold_samples,
-            false_rejection_rate=false_rejection_rate,
-            seed=seed,
-        )
-    )
+    null_tables = EmpiricalNullTables(null_table_samples, null_table_seed)
 
     sequence_rng, impairment_rng = [
-        np.random.default_rng(child)
-        for child in np.random.SeedSequence(seed).spawn(2)
+        np.random.default_rng(child) for child in np.random.SeedSequence(seed).spawn(2)
     ]
     ideal_sequences = generate_chi2_sequences(samples_per_strategy, sequence_rng)
     datasets: dict[str, dict[str, np.ndarray]] = {
@@ -464,12 +322,14 @@ def render(
         datasets[IDEAL_DATASET][strategy] = calculate_scores(
             ideal,
             np.zeros_like(ideal, dtype=bool),
+            null_tables,
         )
-        lossy_scores = calculate_scores(lossy, loss_mask)
+        lossy_scores = calculate_scores(lossy, loss_mask, null_tables)
         datasets[LOSSY_DATASET][strategy] = lossy_scores
         datasets[LOSSY_REORDERED_DATASET][strategy] = calculate_scores(
             reordered,
             loss_mask,
+            null_tables,
         )
 
     aggregate_path = _write_scores(
@@ -523,33 +383,26 @@ def render(
             "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
             "score": {
                 "version": SCORE_VERSION,
-                "definition": "minimum production-oriented compatibility score",
-                "components": [
-                    f"analytic Pearson Chi-square p-value with {UNIFORMITY_BINS} bins",
-                    "exact discrete occupancy/collision lower-tail probability",
-                    "conservative circular maximum-gap upper-tail bound",
-                    (
-                        "exact upper-tail Binomial support for increments in "
-                        f"[1, {MAX_INC}] over pooled full/destination/connection families"
-                    ),
-                ],
-                "sorts_per_sequence": 1,
-                "uniformity_bins": UNIFORMITY_BINS,
-                "raw_components_reordering_invariant": True,
-                "bounded_increment_null_probability": (
-                    BOUNDED_INCREMENT_NULL_PROBABILITY
-                ),
+                "definition": "minimum selected RANDOM-candidate compatibility score",
+                "components": list(CANDIDATE_RANDOM_METRICS),
+                "combiner": "minimum",
+                "raw_uniformity_bins": 16,
+                "increment_uniformity_order_invariant": False,
+                "gap_uniformity_order_invariant": True,
+                "null_tables": {
+                    "version": CANDIDATE_NULL_TABLE_VERSION,
+                    "sample_count": null_table_samples,
+                    "seed": null_table_seed,
+                    "pvalue_resolution": 1.0 / (null_table_samples + 1.0),
+                },
+                "validation_only": True,
+                "production_classifier_changed": False,
                 "random_compatible_when": "S >= tau",
             },
             "threshold": {
                 "tau": threshold,
-                "target_global_random_false_rejection_rate": false_rejection_rate,
-                "calibration_samples_per_dataset": threshold_samples,
-                "dataset_lower_quantiles": calibration_quantiles,
-                "chosen_as": "minimum dataset lower quantile",
-                "calibration_random_below_tau": calibration_below,
-                "cache": str(processed_dir / CALIBRATION_FILENAME),
-                "cache_hit": cache_hit,
+                "target_global_random_false_rejection_rate": (DEFAULT_RANDOM_FALSE_REJECTION_RATE),
+                "selected_by": "independent held-out random-classifier evaluation v2",
             },
             "figure": str(pdf_path),
             "aggregate": str(aggregate_path),
@@ -581,23 +434,28 @@ def main(
             "synthetic sequences per nontrivial strategy; REFLECTION and CONSTANT always use 1000"
         ),
     ),
-    threshold_samples: int = typer.Option(
-        DEFAULT_THRESHOLD_SAMPLES,
-        min=2,
-        help="independent RANDOM sequences per dataset for cached threshold calibration",
+    null_table_samples: int = typer.Option(
+        DEFAULT_NULL_TABLE_SAMPLES,
+        min=1,
+        help="Monte Carlo samples per empirical candidate null table",
     ),
-    false_rejection_rate: float = typer.Option(
-        DEFAULT_RANDOM_FALSE_REJECTION_RATE,
+    null_table_seed: int = typer.Option(
+        CANDIDATE_NULL_TABLE_SEED,
+        help="deterministic seed for empirical candidate null tables",
+    ),
+    threshold: float = typer.Option(
+        CANDIDATE_RANDOM_MIN_SCORE,
         min=0.0,
         max=1.0,
-        help="target global false-rejection rate for synthetic RANDOM",
+        help="selected candidate minimum-score threshold",
     ),
     seed: int = typer.Option(DEFAULT_SEED, help="deterministic random seed"),
 ) -> None:
     outputs = render(
         samples_per_strategy=samples_per_strategy,
-        threshold_samples=threshold_samples,
-        false_rejection_rate=false_rejection_rate,
+        null_table_samples=null_table_samples,
+        null_table_seed=null_table_seed,
+        threshold=threshold,
         seed=seed,
     )
     names = (
