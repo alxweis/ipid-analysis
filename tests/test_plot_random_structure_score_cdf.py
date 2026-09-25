@@ -20,11 +20,12 @@ from ipid_analysis.plot_random_structure_score_cdf import (
     MASS_LOSSY_DATASET,
     MASS_LOSSY_REORDERED_DATASET,
     MASS_REORDERED_DATASET,
-    MIN_COMPATIBILITY_SCORE,
+    POSITIVE_SCORE_AXIS_MINIMUM,
     SCORE_VERSION,
     X_MAJOR_EXPONENT_STEP,
-    _floor_only_strategies,
     _log_axis_parameters,
+    _positive_ecdf_coordinates,
+    _subminimum_only_strategies,
     calculate_scores,
     render,
 )
@@ -43,30 +44,34 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         self.assertEqual(DEFAULT_NULL_TABLE_SAMPLES, 1_000_000)
         self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.0001)
 
-    def test_log_axis_keeps_floor_cdfs_inside_plot(self):
-        scores = {strategy: np.array([MIN_COMPATIBILITY_SCORE]) for strategy in PLOT_STRATEGIES}
+    def test_log_axis_starts_at_censored_positive_boundary(self):
+        axis_minimum, major_ticks, minor_ticks = _log_axis_parameters()
 
-        axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(scores, 1e-3)
-
-        self.assertEqual(axis_minimum, 1e-21)
+        self.assertEqual(axis_minimum, POSITIVE_SCORE_AXIS_MINIMUM)
         np.testing.assert_array_equal(
             np.log10(major_ticks),
-            np.arange(-20, 1, X_MAJOR_EXPONENT_STEP),
+            np.arange(-6, 1, X_MAJOR_EXPONENT_STEP),
         )
         np.testing.assert_array_equal(
             np.log10(minor_ticks),
-            np.arange(-21, 0, X_MAJOR_EXPONENT_STEP),
+            np.arange(-5, 0, X_MAJOR_EXPONENT_STEP),
         )
 
-    def test_fully_coincident_floor_strategies_are_identified(self):
-        scores = {strategy: np.array([1e-10]) for strategy in PLOT_STRATEGIES}
-        scores["CONSTANT"] = np.full(4, MIN_COMPATIBILITY_SCORE)
-        scores["PER_CONNECTION"] = np.full(4, MIN_COMPATIBILITY_SCORE)
+    def test_subminimum_only_strategies_are_identified(self):
+        scores = {strategy: np.array([1e-4]) for strategy in PLOT_STRATEGIES}
+        scores["CONSTANT"] = np.zeros(4)
+        scores["PER_CONNECTION"] = np.full(4, 1e-10)
 
         self.assertEqual(
-            _floor_only_strategies(scores),
+            _subminimum_only_strategies(scores),
             ["CONSTANT", "PER_CONNECTION"],
         )
+
+    def test_positive_panel_retains_subminimum_mass(self):
+        x_values, percentages = _positive_ecdf_coordinates(np.array([0.0, 0.0, 1e-10, 1e-4]))
+
+        np.testing.assert_array_equal(x_values, np.array([1e-4, 1e-4]))
+        np.testing.assert_array_equal(percentages, np.array([75.0, 100.0]))
 
     def test_score_is_a_finite_probability_like_value(self):
         rng = np.random.default_rng(23)
@@ -78,7 +83,7 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         )
 
         self.assertTrue(np.all(np.isfinite(scores)))
-        self.assertTrue(np.all((scores >= MIN_COMPATIBILITY_SCORE) & (scores <= 1.0)))
+        self.assertTrue(np.all((scores >= 0.0) & (scores <= 1.0)))
 
     def test_rendered_artifacts_and_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -154,6 +159,14 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             self.assertTrue(metadata["score"]["validation_only"])
             self.assertFalse(metadata["score"]["production_classifier_changed"])
             self.assertEqual(metadata["score"]["random_compatible_when"], "S >= tau")
+            self.assertEqual(
+                metadata["figure_axis"]["subminimum_scores"],
+                f"separate categorical panel for S < {POSITIVE_SCORE_AXIS_MINIMUM}",
+            )
+            self.assertEqual(
+                metadata["figure_axis"]["positive_display_minimum"],
+                POSITIVE_SCORE_AXIS_MINIMUM,
+            )
             self.assertNotIn("hard_rejections", metadata["score"])
             self.assertNotIn("hard_rejection_score", metadata["score"])
             self.assertNotIn("cache", metadata["threshold"])
