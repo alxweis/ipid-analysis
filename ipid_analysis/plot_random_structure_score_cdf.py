@@ -231,7 +231,7 @@ def plot_score_cdf(
     subminimum_ax.tick_params(axis="y", which="both", right=False)
     subminimum_ax.spines["right"].set_visible(False)
     ax.spines["left"].set_visible(False)
-    break_marker = [(-1.0, -0.55), (1.0, 0.55)]
+    break_marker = [(-0.55, -1.0), (0.55, 1.0)]
     break_style = {
         "marker": break_marker,
         "markersize": 9,
