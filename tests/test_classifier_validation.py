@@ -19,6 +19,7 @@ from ipid_analysis.classifier_validation import (
     RT_OUT_OF_SCOPE_STRATEGIES,
     RT_STRATEGIES,
     TRIVIAL_SAMPLES_PER_STRATEGY,
+    _confusion_metrics,
     _generate_multi_sequences,
     apply_fixed_interval_impairments,
     generate_fixed_sequences,
@@ -44,6 +45,23 @@ from ipid_analysis.strategies import (
 
 
 class ClassifierValidationTest(unittest.TestCase):
+    def test_multiclass_mcc_does_not_overflow_for_production_sized_counts(self):
+        expected = ["A"] * 50_000 + ["B"] * 50_000
+        detected = ["A"] * 40_000 + ["B"] * 10_000 + ["A"] * 10_000 + ["B"] * 40_000
+
+        metrics = _confusion_metrics(
+            expected,
+            detected,
+            generated_classes=("A", "B"),
+            detected_classes=("A", "B"),
+        )
+        mcc = metrics["multiclass_matthews_correlation_coefficient"]
+
+        self.assertTrue(np.isfinite(mcc))
+        self.assertGreaterEqual(mcc, -1.0)
+        self.assertLessEqual(mcc, 1.0)
+        self.assertAlmostEqual(mcc, 0.6)
+
     def test_generators_match_measurement_shapes_and_expected_classes(self):
         rt_config, rt_sequences = generate_rt_sequences(16, np.random.default_rng(1))
         self.assertEqual(tuple(rt_sequences), RT_STRATEGIES)
