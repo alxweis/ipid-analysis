@@ -1,4 +1,10 @@
-"""Plot minimum increment-subsequence Chi-square p-value CDFs."""
+"""Plot the candidate increment-uniformity component CDFs.
+
+The retained ``chi2-pvalue-cdf-*`` filenames are the stable paper artifact
+interface.  Their values now match the selected RANDOM candidate: Pearson
+statistics use transition-count-dependent bins, empirical discrete 16-bit null
+tables, and only originally adjacent present measurement positions.
+"""
 
 from __future__ import annotations
 
@@ -15,26 +21,36 @@ import typer
 
 matplotlib.use("Agg")
 
-from matplotlib.lines import Line2D  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter  # noqa: E402
+from matplotlib.lines import Line2D
+import matplotlib.pyplot as plt
+from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter
 
-from ipid_analysis.classifier_validation import (  # noqa: E402
+from ipid_analysis.classifier_validation import (
     REQUEST_IP_IDS,
     SYNTHETIC_GENERATOR_PARAMETERS,
     _generate_multi_sequences,
     apply_fixed_interval_impairments,
 )
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
-from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
-from ipid_analysis.strategies import (  # noqa: E402
-    CHI2_BINS,
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.paper_figures import configure_paper_style
+from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_NULL_TABLE_SAMPLES,
+    CANDIDATE_NULL_TABLE_SEED,
+    CANDIDATE_NULL_TABLE_VERSION,
+    CANDIDATE_RANDOM_SCORE_VERSION,
+)
+from ipid_analysis.random_classifier_evaluation import (
+    MAX_INCREMENT_BINS,
+    MIN_EXPECTED_INCREMENT_BIN_COUNT,
+    MIN_INCREMENT_TRANSITIONS,
+    EmpiricalNullTables,
+    increment_uniformity_pvalues,
+)
+from ipid_analysis.strategies import (
     MAX_INC,
     MODULUS,
-    RANDOM_MIN_P_VALUE,
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
-    chi2_uniformity_pvalues,
 )
 
 app = typer.Typer()
@@ -49,8 +65,8 @@ DEFAULT_SAMPLES_PER_STRATEGY = 100_000
 TRIVIAL_SAMPLES_PER_STRATEGY = 1_000
 DEFAULT_SEED = 42
 X_AXIS_MAXIMUM = 1.05
-X_MAJOR_EXPONENT_STEP = 20
-X_MINOR_EXPONENT_OFFSET = 10
+X_MAJOR_EXPONENT_STEP = 2
+X_MINOR_EXPONENT_OFFSET = 1
 RANDOM_MINIMUM_MARKER_COLOR = "#C62828"
 RANDOM_MINIMUM_MARKER_LABEL = "Minimum Random p-value"
 IDEAL_DATASET = "ideal"
@@ -83,7 +99,7 @@ P_VALUE_SCHEMA = pa.schema(
         ("DATASET", pa.string()),
         ("IPID_SELECTION_STRATEGY", pa.string()),
         ("SAMPLE_INDEX", pa.int32()),
-        ("MINIMUM_CHI2_P_VALUE", pa.float64()),
+        ("INCREMENT_UNIFORMITY_P_VALUE", pa.float64()),
     ]
 )
 
@@ -218,62 +234,30 @@ def apply_strategy_impairments(
     return loss_masks, lossy_sequences, reordered_sequences
 
 
-def _increment_pvalues(
-    values: np.ndarray,
-    present: np.ndarray,
-) -> np.ndarray:
-    """Chi-square p-values of modular increments between consecutive present values."""
-    sample_count, subsequence_length = values.shape
-    compacted = np.zeros((sample_count, subsequence_length), dtype=np.int64)
-    compacted_indices = np.cumsum(present, axis=1) - 1
-    row_indices = np.broadcast_to(np.arange(sample_count)[:, None], values.shape)
-    compacted[row_indices[present], compacted_indices[present]] = values[present]
-    present_lengths = present.sum(axis=1)
-    increments = (compacted[:, 1:] - compacted[:, :-1]) & 0xFFFF
-    increment_present = np.arange(subsequence_length - 1)[None, :] < (present_lengths[:, None] - 1)
-    return chi2_uniformity_pvalues(increments, increment_present)
-
-
 def calculate_minimum_increment_pvalues(
     values: np.ndarray,
     loss_mask: np.ndarray,
+    null_tables: EmpiricalNullTables,
 ) -> np.ndarray:
-    """Minimum p-value over full, destination, and connection increments."""
-    present = ~loss_mask
-    component_pvalues = [
-        _increment_pvalues(values, present),
-        _increment_pvalues(values[:, 0::2], present[:, 0::2]),
-        _increment_pvalues(values[:, 1::2], present[:, 1::2]),
-    ]
-    value_connections = values.reshape(
-        len(values),
-        REQUESTS_PER_CONNECTION,
-        CONNECTION_COUNT,
-    ).transpose(0, 2, 1)
-    present_connections = present.reshape(
-        len(values),
-        REQUESTS_PER_CONNECTION,
-        CONNECTION_COUNT,
-    ).transpose(0, 2, 1)
-    component_pvalues.extend(
-        _increment_pvalues(
-            value_connections[:, connection_index, :],
-            present_connections[:, connection_index, :],
-        )
-        for connection_index in range(CONNECTION_COUNT)
+    """Candidate p-value over full, destination, and connection increments."""
+    return increment_uniformity_pvalues(
+        values.astype(np.int64, copy=False),
+        ~loss_mask,
+        null_tables,
     )
-    return np.min(np.stack(component_pvalues, axis=1), axis=1)
 
 
 def calculate_strategy_pvalues(
     sequences: dict[str, np.ndarray],
     loss_masks: dict[str, np.ndarray],
+    null_tables: EmpiricalNullTables,
 ) -> dict[str, np.ndarray]:
-    """Calculate the minimum increment-subsequence p-value per sequence."""
+    """Calculate the candidate increment-uniformity p-value per sequence."""
     return {
         strategy: calculate_minimum_increment_pvalues(
-            sequences[strategy].astype(np.int64, copy=False),
+            sequences[strategy],
             loss_masks[strategy],
+            null_tables,
         )
         for strategy in PLOT_STRATEGIES
     }
@@ -348,7 +332,7 @@ def plot_chi2_pvalue_cdf(
     ax.set_ylim(0, 103)
     ax.yaxis.set_major_locator(MultipleLocator(20))
     ax.yaxis.set_minor_locator(MultipleLocator(10))
-    ax.set_xlabel(r"Chi$^2$ p-value [Minimum of all Subsequences]")
+    ax.set_xlabel("Increment-Uniformity p-value [Minimum of all Subsequences]")
     ax.set_ylabel("Cumulative Percentage [%]")
     ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
     ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
@@ -390,11 +374,11 @@ def plot_chi2_pvalue_cdf(
         bbox_inches="tight",
         metadata={
             "Title": (
-                "Minimum increment-subsequence Chi-square p-value distributions "
+                "Candidate increment-uniformity p-value distributions "
                 f"by IP-ID selection strategy ({dataset_label})"
             ),
             "Subject": (
-                "Synthetic 4x25 IP-ID increment-subsequence empirical CDFs "
+                "Empirically calibrated synthetic 4x25 increment-uniformity CDFs "
                 f"({dataset_label})"
             ),
             "Creator": "ipid-analysis",
@@ -413,7 +397,7 @@ def _write_pvalues(
             "DATASET": dataset,
             "IPID_SELECTION_STRATEGY": strategy,
             "SAMPLE_INDEX": sample_index,
-            "MINIMUM_CHI2_P_VALUE": float(pvalue),
+            "INCREMENT_UNIFORMITY_P_VALUE": float(pvalue),
         }
         for dataset, pvalues in datasets.items()
         for strategy in PLOT_STRATEGIES
@@ -441,12 +425,18 @@ def _write_json(value: dict, output_path: Path) -> Path:
 def render(
     *,
     samples_per_strategy: int = DEFAULT_SAMPLES_PER_STRATEGY,
+    null_table_samples: int = CANDIDATE_NULL_TABLE_SAMPLES,
+    null_table_seed: int = CANDIDATE_NULL_TABLE_SEED,
     seed: int = DEFAULT_SEED,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
 ) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
+    if null_table_samples < 1:
+        raise ValueError("null_table_samples must be positive")
+
+    null_tables = EmpiricalNullTables(null_table_samples, null_table_seed)
 
     seed_sequence = np.random.SeedSequence(seed)
     sequence_rng, impairment_rng = [
@@ -458,12 +448,23 @@ def render(
         impairment_rng,
     )
     ideal_loss_masks = {
-        strategy: np.zeros_like(values, dtype=bool)
-        for strategy, values in ideal_sequences.items()
+        strategy: np.zeros_like(values, dtype=bool) for strategy, values in ideal_sequences.items()
     }
-    ideal_pvalues = calculate_strategy_pvalues(ideal_sequences, ideal_loss_masks)
-    lossy_pvalues = calculate_strategy_pvalues(lossy_sequences, loss_masks)
-    reordered_pvalues = calculate_strategy_pvalues(reordered_sequences, loss_masks)
+    ideal_pvalues = calculate_strategy_pvalues(
+        ideal_sequences,
+        ideal_loss_masks,
+        null_tables,
+    )
+    lossy_pvalues = calculate_strategy_pvalues(
+        lossy_sequences,
+        loss_masks,
+        null_tables,
+    )
+    reordered_pvalues = calculate_strategy_pvalues(
+        reordered_sequences,
+        loss_masks,
+        null_tables,
+    )
 
     processed_dir = processed_root / "classifier-validation"
     figure_dir = figures_root / "classifier-validation"
@@ -490,9 +491,7 @@ def render(
         figure_dir / "chi2-pvalue-cdf-lossy-reordered.pdf",
         dataset_label="Lossy+Reordered Dataset",
     )
-    samples_by_strategy = {
-        strategy: int(len(ideal_pvalues[strategy])) for strategy in PLOT_STRATEGIES
-    }
+    samples_by_strategy = {strategy: len(ideal_pvalues[strategy]) for strategy in PLOT_STRATEGIES}
 
     def summarize(pvalues: dict[str, np.ndarray]) -> dict:
         summaries = {}
@@ -504,10 +503,6 @@ def render(
                 "median": float(np.median(values)),
                 "q75": float(np.quantile(values, 0.75)),
                 "maximum": float(values.max()),
-                "below_random_threshold_count": int((values < RANDOM_MIN_P_VALUE).sum()),
-                "below_random_threshold_percentage": float(
-                    100.0 * (values < RANDOM_MIN_P_VALUE).mean()
-                ),
             }
         return summaries
 
@@ -522,19 +517,32 @@ def render(
         "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
         "synthetic_generator_parameters": SYNTHETIC_GENERATOR_PARAMETERS,
         "samples_by_strategy": samples_by_strategy,
-        "chi2_uniformity_test": {
+        "increment_uniformity_test": {
+            "candidate_score_version": CANDIDATE_RANDOM_SCORE_VERSION,
             "scope": (
-                "modulo-2^16 increments between consecutive present values within each subsequence"
+                "modulo-2^16 increments between originally adjacent present positions "
+                "within each subsequence"
             ),
             "loss_handling": (
-                "drop missing values within each subsequence before taking differences"
+                "exclude every transition touching a missing position; do not bridge gaps"
             ),
             "subsequences": list(INCREMENT_SUBSEQUENCES),
             "subsequence_aggregation": "minimum",
             "increment_modulus": MODULUS,
-            "bins": CHI2_BINS,
-            "degrees_of_freedom": CHI2_BINS - 1,
-            "random_min_p_value": RANDOM_MIN_P_VALUE,
+            "minimum_transitions": MIN_INCREMENT_TRANSITIONS,
+            "maximum_bins": MAX_INCREMENT_BINS,
+            "minimum_expected_count_per_bin": MIN_EXPECTED_INCREMENT_BIN_COUNT,
+            "bin_rule": (
+                "largest power of two not exceeding min(maximum_bins, "
+                "transition_count / minimum_expected_count_per_bin)"
+            ),
+            "pvalue_calibration": "conservative empirical right tail with add-one correction",
+            "null_tables": {
+                "version": CANDIDATE_NULL_TABLE_VERSION,
+                "sample_count": null_table_samples,
+                "seed": null_table_seed,
+                "pvalue_resolution": 1.0 / (null_table_samples + 1.0),
+            },
             "order_invariant": False,
         },
         "x_axis_maximum": X_AXIS_MAXIMUM,
@@ -582,9 +590,7 @@ def render(
             "loss_fraction": LOSS_FRACTION,
             "lost_ipids_per_sequence": IDEAL_SEQUENCE_LENGTH - PRESENT_SEQUENCE_LENGTH,
             "reorder_fraction_of_present": REORDER_FRACTION,
-            "reordered_ipids_per_sequence": round(
-                PRESENT_SEQUENCE_LENGTH * REORDER_FRACTION
-            ),
+            "reordered_ipids_per_sequence": round(PRESENT_SEQUENCE_LENGTH * REORDER_FRACTION),
             "paired_loss_masks": True,
             "random_minimum_p_value_marker": float(reordered_pvalues["RANDOM"].min()),
             "figure": str(reordered_pdf_path),
@@ -612,6 +618,15 @@ def main(
             "synthetic sequences per nontrivial strategy; REFLECTION and CONSTANT always use 1000"
         ),
     ),
+    null_table_samples: int = typer.Option(
+        CANDIDATE_NULL_TABLE_SAMPLES,
+        min=1,
+        help="Monte Carlo samples per empirical increment null table",
+    ),
+    null_table_seed: int = typer.Option(
+        CANDIDATE_NULL_TABLE_SEED,
+        help="deterministic seed for empirical increment null tables",
+    ),
     seed: int = typer.Option(DEFAULT_SEED, help="deterministic random seed"),
 ) -> None:
     (
@@ -624,6 +639,8 @@ def main(
         aggregate_path,
     ) = render(
         samples_per_strategy=samples_per_strategy,
+        null_table_samples=null_table_samples,
+        null_table_seed=null_table_seed,
         seed=seed,
     )
     typer.echo(f"ideal_pdf: {ideal_pdf_path}")

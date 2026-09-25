@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pyarrow as pa
@@ -22,13 +23,18 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     X_AXIS_MAXIMUM,
     X_MAJOR_EXPONENT_STEP,
     X_MINOR_EXPONENT_OFFSET,
-    _increment_pvalues,
     _log_axis_parameters,
     apply_strategy_impairments,
+    calculate_minimum_increment_pvalues,
     calculate_strategy_pvalues,
     generate_chi2_sequences,
     render,
 )
+from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_NULL_TABLE_VERSION,
+    CANDIDATE_RANDOM_SCORE_VERSION,
+)
+from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 from ipid_analysis.strategies import (
     MAX_INC,
     IPIDStrategy,
@@ -94,45 +100,39 @@ class Chi2PvalueCDFTest(unittest.TestCase):
             sample_count // 2,
         )
 
-    def test_ideal_per_connection_subsequences_have_constant_pvalue(self):
-        sequences = generate_chi2_sequences(32, np.random.default_rng(9))[
-            "PER_CONNECTION"
-        ].astype(np.int64)
+    def test_candidate_increment_uniformity_detects_per_connection_counter(self):
+        sequences = generate_chi2_sequences(32, np.random.default_rng(9))["PER_CONNECTION"].astype(
+            np.int64
+        )
         connections = sequences.reshape(
             len(sequences),
             REQUESTS_PER_CONNECTION,
             CONNECTION_COUNT,
         ).transpose(0, 2, 1)
-        present = np.ones(
-            (len(sequences), REQUESTS_PER_CONNECTION),
-            dtype=bool,
-        )
-
         for connection_index in range(CONNECTION_COUNT):
-            increments = (
-                np.diff(connections[:, connection_index, :], axis=1) & 0xFFFF
-            )
+            increments = np.diff(connections[:, connection_index, :], axis=1) & 0xFFFF
             np.testing.assert_array_equal(increments, np.ones_like(increments))
-            pvalues = _increment_pvalues(
-                connections[:, connection_index, :],
-                present,
-            )
-            self.assertEqual(len(np.unique(pvalues)), 1)
+        pvalues = calculate_minimum_increment_pvalues(
+            sequences,
+            np.zeros_like(sequences, dtype=bool),
+            EmpiricalNullTables(256, seed=9),
+        )
+        self.assertTrue(np.all(pvalues <= 1.0 / 257.0))
 
-    def test_log_axis_has_one_minor_tick_between_twenty_decade_major_ticks(self):
+    def test_log_axis_has_one_minor_tick_between_two_decade_major_ticks(self):
         axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(
-            {"strategy": np.asarray([1e-185, 1.0])}
+            {"strategy": np.asarray([1e-5, 1.0])}
         )
 
-        self.assertEqual(axis_minimum, 1e-200)
+        self.assertEqual(axis_minimum, 1e-6)
         np.testing.assert_allclose(
             np.log10(major_ticks),
-            np.arange(-200, 1, X_MAJOR_EXPONENT_STEP),
+            np.arange(-6, 1, X_MAJOR_EXPONENT_STEP),
         )
         np.testing.assert_allclose(
             np.log10(minor_ticks),
             np.arange(
-                -200 + X_MINOR_EXPONENT_OFFSET,
+                -6 + X_MINOR_EXPONENT_OFFSET,
                 1,
                 X_MAJOR_EXPONENT_STEP,
             ),
@@ -145,8 +145,17 @@ class Chi2PvalueCDFTest(unittest.TestCase):
             sequences,
             np.random.default_rng(12),
         )
-        lossy_pvalues = calculate_strategy_pvalues(lossy_sequences, loss_masks)
-        reordered_pvalues = calculate_strategy_pvalues(reordered_sequences, loss_masks)
+        null_tables = EmpiricalNullTables(128, seed=13)
+        lossy_pvalues = calculate_strategy_pvalues(
+            lossy_sequences,
+            loss_masks,
+            null_tables,
+        )
+        reordered_pvalues = calculate_strategy_pvalues(
+            reordered_sequences,
+            loss_masks,
+            null_tables,
+        )
         changed_by_reordering = []
         for strategy, values in lossy_pvalues.items():
             self.assertTrue(np.all(loss_masks[strategy].sum(axis=1) == 20), strategy)
@@ -157,20 +166,23 @@ class Chi2PvalueCDFTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (
-                ideal_pdf_path,
-                ideal_json_path,
-                lossy_pdf_path,
-                lossy_json_path,
-                reordered_pdf_path,
-                reordered_json_path,
-                aggregate_path,
-            ) = render(
-                samples_per_strategy=sample_count,
-                seed=11,
-                processed_root=root / "processed",
-                figures_root=root / "figures",
-            )
+            with patch("ipid_analysis.plot_chi2_pvalue_cdf.configure_paper_style"):
+                (
+                    ideal_pdf_path,
+                    ideal_json_path,
+                    lossy_pdf_path,
+                    lossy_json_path,
+                    reordered_pdf_path,
+                    reordered_json_path,
+                    aggregate_path,
+                ) = render(
+                    samples_per_strategy=sample_count,
+                    null_table_samples=64,
+                    null_table_seed=13,
+                    seed=11,
+                    processed_root=root / "processed",
+                    figures_root=root / "figures",
+                )
             for path in (
                 ideal_pdf_path,
                 ideal_json_path,
@@ -199,7 +211,7 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                     "DATASET",
                     "IPID_SELECTION_STRATEGY",
                     "SAMPLE_INDEX",
-                    "MINIMUM_CHI2_P_VALUE",
+                    "INCREMENT_UNIFORMITY_P_VALUE",
                 ],
             )
 
@@ -235,23 +247,31 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 reordered_metadata["summary_by_strategy"]["RANDOM"]["minimum"],
             )
             self.assertEqual(
-                metadata["chi2_uniformity_test"]["scope"],
+                metadata["increment_uniformity_test"]["scope"],
                 (
-                    "modulo-2^16 increments between consecutive present values "
+                    "modulo-2^16 increments between originally adjacent present positions "
                     "within each subsequence"
                 ),
             )
-            self.assertFalse(metadata["chi2_uniformity_test"]["order_invariant"])
+            increment_test = metadata["increment_uniformity_test"]
             self.assertEqual(
-                metadata["chi2_uniformity_test"]["subsequence_aggregation"],
+                increment_test["candidate_score_version"],
+                CANDIDATE_RANDOM_SCORE_VERSION,
+            )
+            self.assertFalse(increment_test["order_invariant"])
+            self.assertEqual(
+                increment_test["subsequence_aggregation"],
                 "minimum",
             )
             self.assertEqual(
-                metadata["chi2_uniformity_test"]["subsequences"],
+                increment_test["subsequences"],
                 list(INCREMENT_SUBSEQUENCES),
             )
-            self.assertEqual(metadata["chi2_uniformity_test"]["bins"], 4)
-            self.assertEqual(metadata["chi2_uniformity_test"]["degrees_of_freedom"], 3)
+            self.assertEqual(
+                increment_test["null_tables"]["version"],
+                CANDIDATE_NULL_TABLE_VERSION,
+            )
+            self.assertEqual(increment_test["null_tables"]["sample_count"], 64)
             self.assertGreater(metadata["x_axis_maximum"], 1.0)
             self.assertEqual(metadata["x_axis_maximum"], X_AXIS_MAXIMUM)
             self.assertEqual(
