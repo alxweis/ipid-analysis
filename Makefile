@@ -95,17 +95,11 @@ test:
 .PHONY: validate-classifier
 validate-classifier:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.classifier_validation $(ARGS)
-	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_chi2_pvalue_cdf $(ARGS)
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_structure_score_cdf $(ARGS)
 
-## Plot candidate increment-uniformity p-value CDFs for synthetic 4x25 sequences
-.PHONY: plot-chi2-pvalue-cdf
-plot-chi2-pvalue-cdf:
-	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_chi2_pvalue_cdf $(ARGS)
-
-## Plot selected candidate RANDOM-score CDFs for synthetic 4x25 sequences
-.PHONY: plot-random-structure-score-cdf
-plot-random-structure-score-cdf:
+## Plot selected candidate RANDOM-score CDFs for synthetic Mass 4x25 sequences
+.PHONY: plot-mass-random-score-cdf
+plot-mass-random-score-cdf:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_structure_score_cdf $(ARGS)
 
 ## Evaluate all RANDOM-score metrics and their 63 non-empty combinations

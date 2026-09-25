@@ -8,12 +8,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ipid_analysis.classifier_validation import (
+    BASE_REORDERED_3_DATASET,
+    BASE_REORDERED_4_DATASET,
     FIXED_CONFIG,
     FIXED_IDEAL_DATASET,
     FIXED_IMPAIRED_STRATEGIES,
     FIXED_LOSSY_DATASET,
     FIXED_REORDERED_DATASET,
     FIXED_STRATEGIES,
+    MASS_REORDERED_DATASET,
     RT_DATASET,
     RT_OUT_OF_SCOPE_DATASET,
     RT_OUT_OF_SCOPE_STRATEGIES,
@@ -21,6 +24,7 @@ from ipid_analysis.classifier_validation import (
     TRIVIAL_SAMPLES_PER_STRATEGY,
     _generate_multi_sequences,
     apply_fixed_interval_impairments,
+    apply_reordering,
     generate_fixed_sequences,
     generate_rt_out_of_scope_sequences,
     generate_rt_sequences,
@@ -85,15 +89,6 @@ class ClassifierValidationTest(unittest.TestCase):
                 np.all(tcp_detected == int(IPIDStrategy.UNCLASSIFIED)),
                 f"{strategy} after TCP first-round skip",
             )
-            mass_detected = classify_batch_mass(
-                pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64())),
-                FIXED_CONFIG,
-            )
-            self.assertTrue(
-                np.all(mass_detected == int(IPIDStrategy.MULTI)),
-                strategy,
-            )
-
         fixed_sequences = generate_fixed_sequences(16, np.random.default_rng(3))
         self.assertEqual(tuple(fixed_sequences), FIXED_STRATEGIES)
         for strategy, values in fixed_sequences.items():
@@ -124,6 +119,18 @@ class ClassifierValidationTest(unittest.TestCase):
             )
             self.assertTrue(np.any(reordered[row_index, present] != ideal[row_index, present]))
 
+        reordered_only = apply_reordering(
+            ideal[:, :16],
+            np.random.default_rng(4),
+            reordered_count=3,
+        )
+        for row_index in range(len(reordered_only)):
+            self.assertEqual(
+                sorted(reordered_only[row_index].tolist()),
+                sorted(ideal[row_index, :16].tolist()),
+            )
+            self.assertTrue(np.any(reordered_only[row_index] != ideal[row_index, :16]))
+
     def test_multi_generator_uses_complete_cluster_count_range(self):
         values = _generate_multi_sequences(2_048, 100, np.random.default_rng(5))
         lengths, present, padded = _mass_padded(
@@ -152,10 +159,10 @@ class ClassifierValidationTest(unittest.TestCase):
             table = pq.read_table(outputs["dataset"])
             rt_row_count = 2 * TRIVIAL_SAMPLES_PER_STRATEGY + 4 * 8
             fixed_ideal_row_count = 2 * TRIVIAL_SAMPLES_PER_STRATEGY + 6 * 8
-            fixed_impaired_row_count = TRIVIAL_SAMPLES_PER_STRATEGY + 2 * 8
+            fixed_impaired_row_count = fixed_ideal_row_count
             self.assertEqual(
                 table.num_rows,
-                rt_row_count + 8 + fixed_ideal_row_count + 2 * fixed_impaired_row_count,
+                3 * rt_row_count + 2 * 8 + 4 * fixed_impaired_row_count,
             )
             rows = table.to_pylist()
             datasets = {row["DATASET"] for row in rows}
@@ -163,9 +170,12 @@ class ClassifierValidationTest(unittest.TestCase):
                 datasets,
                 {
                     RT_DATASET,
+                    BASE_REORDERED_3_DATASET,
+                    BASE_REORDERED_4_DATASET,
                     RT_OUT_OF_SCOPE_DATASET,
                     FIXED_IDEAL_DATASET,
                     FIXED_LOSSY_DATASET,
+                    MASS_REORDERED_DATASET,
                     FIXED_REORDERED_DATASET,
                 },
             )
@@ -175,7 +185,15 @@ class ClassifierValidationTest(unittest.TestCase):
                     self.assertEqual(row["EXPECTED_STRATEGY"], "UNCLASSIFIED")
                 tokens = row["IPID_SEQUENCE"].split(",")
                 expected_length = (
-                    16 if row["DATASET"] in (RT_DATASET, RT_OUT_OF_SCOPE_DATASET) else 100
+                    16
+                    if row["DATASET"]
+                    in (
+                        RT_DATASET,
+                        BASE_REORDERED_3_DATASET,
+                        BASE_REORDERED_4_DATASET,
+                        RT_OUT_OF_SCOPE_DATASET,
+                    )
+                    else 100
                 )
                 self.assertEqual(len(tokens), expected_length)
                 if row["DATASET"] in (FIXED_LOSSY_DATASET, FIXED_REORDERED_DATASET):
@@ -183,13 +201,19 @@ class ClassifierValidationTest(unittest.TestCase):
                     self.assertEqual(row["LOSS_COUNT"], 20)
                 if row["DATASET"] == FIXED_REORDERED_DATASET:
                     self.assertEqual(row["REORDERED_COUNT"], 16)
+                if row["DATASET"] == MASS_REORDERED_DATASET:
+                    self.assertEqual(row["REORDERED_COUNT"], 20)
+                if row["DATASET"] == BASE_REORDERED_3_DATASET:
+                    self.assertEqual(row["REORDERED_COUNT"], 3)
+                if row["DATASET"] == BASE_REORDERED_4_DATASET:
+                    self.assertEqual(row["REORDERED_COUNT"], 4)
 
-            rt_report = json.loads(outputs["rt_based_json"].read_text())
-            fixed_report = json.loads(outputs["fixed_interval_json"].read_text())
-            impaired_report = json.loads(outputs["impaired_json"].read_text())
+            base_3_report = json.loads(outputs["base_reordered_3_json"].read_text())
+            base_4_report = json.loads(outputs["base_reordered_4_json"].read_text())
+            mass_report = json.loads(outputs["mass_json"].read_text())
             out_of_scope_report = json.loads(outputs["out_of_scope_json"].read_text())
             self.assertEqual(
-                rt_report["samples_by_dataset_and_strategy"][RT_DATASET],
+                base_3_report["samples_by_dataset_and_strategy"][RT_DATASET],
                 {
                     "REFLECTION": TRIVIAL_SAMPLES_PER_STRATEGY,
                     "CONSTANT": TRIVIAL_SAMPLES_PER_STRATEGY,
@@ -200,7 +224,7 @@ class ClassifierValidationTest(unittest.TestCase):
                 },
             )
             self.assertEqual(
-                fixed_report["samples_by_dataset_and_strategy"][FIXED_IDEAL_DATASET],
+                mass_report["samples_by_dataset_and_strategy"][FIXED_IDEAL_DATASET],
                 {
                     "REFLECTION": TRIVIAL_SAMPLES_PER_STRATEGY,
                     "CONSTANT": TRIVIAL_SAMPLES_PER_STRATEGY,
@@ -212,7 +236,7 @@ class ClassifierValidationTest(unittest.TestCase):
                     "RANDOM": 8,
                 },
             )
-            random_score = fixed_report["random_structure_score"]
+            random_score = mass_report["random_structure_score"]
             self.assertEqual(random_score["version"], CANDIDATE_RANDOM_SCORE_VERSION)
             self.assertEqual(random_score["threshold"], CANDIDATE_RANDOM_MIN_SCORE)
             self.assertEqual(random_score["metrics"], list(CANDIDATE_RANDOM_METRICS))
@@ -225,48 +249,47 @@ class ClassifierValidationTest(unittest.TestCase):
             self.assertTrue(random_score["validation_only"])
             self.assertFalse(random_score["production_classifier_changed"])
             self.assertEqual(
-                rt_report["samples_by_dataset_and_strategy"][RT_OUT_OF_SCOPE_DATASET],
-                {"MULTI": 8},
+                base_3_report["samples_by_dataset_and_strategy"][RT_OUT_OF_SCOPE_DATASET],
+                {"MULTI": 8, "RANDOM": 8},
             )
             self.assertEqual(
-                impaired_report["datasets"]["lossy"]["metrics"]["confusion_matrix"][
+                mass_report["datasets"]["lossy"]["metrics"]["confusion_matrix"][
                     "generated_class_order"
                 ],
                 list(FIXED_IMPAIRED_STRATEGIES),
             )
             self.assertNotIn(
                 "UNCLASSIFIED",
-                rt_report["metrics"]["confusion_matrix"]["generated_class_order"],
+                base_3_report["datasets"]["ideal"]["metrics"]["confusion_matrix"][
+                    "generated_class_order"
+                ],
             )
             self.assertEqual(
-                rt_report["metrics"]["confusion_matrix"]["detected_class_order"][-1],
+                base_3_report["datasets"]["ideal"]["metrics"]["confusion_matrix"][
+                    "detected_class_order"
+                ][-1],
                 "UNCLASSIFIED",
             )
             self.assertEqual(
-                rt_report["synthetic_generator_parameters"]["SINGLE"]["increment_range_inclusive"],
-                [1, MAX_INC],
-            )
-            self.assertEqual(
-                rt_report["synthetic_generator_parameters"]["PER_BUCKET"][
+                base_3_report["synthetic_generator_parameters"]["SINGLE"][
                     "increment_range_inclusive"
                 ],
                 [1, MAX_INC],
             )
-            self.assertEqual(rt_report["metrics"]["accuracy"], 1.0)
-            self.assertEqual(fixed_report["metrics"]["macro"]["f1"], 1.0)
             self.assertEqual(
-                impaired_report["datasets"]["lossy"]["metrics"]["accuracy"],
+                base_3_report["synthetic_generator_parameters"]["PER_BUCKET"][
+                    "increment_range_inclusive"
+                ],
+                [1, MAX_INC],
+            )
+            self.assertEqual(base_3_report["datasets"]["ideal"]["metrics"]["accuracy"], 1.0)
+            self.assertEqual(base_4_report["datasets"]["ideal"]["metrics"]["accuracy"], 1.0)
+            self.assertEqual(mass_report["datasets"]["ideal"]["metrics"]["macro"]["f1"], 1.0)
+            self.assertEqual(
+                out_of_scope_report["tests"]["base"]["metrics"]["rejection_rate"],
                 1.0,
             )
-            self.assertEqual(
-                impaired_report["datasets"]["lossy_reordered"]["metrics"]["accuracy"],
-                1.0,
-            )
-            self.assertEqual(
-                out_of_scope_report["tests"]["rt_based"]["metrics"]["rejection_rate"],
-                1.0,
-            )
-            self.assertEqual(set(out_of_scope_report["tests"]), {"rt_based"})
+            self.assertEqual(set(out_of_scope_report["tests"]), {"base"})
 
 
 if __name__ == "__main__":

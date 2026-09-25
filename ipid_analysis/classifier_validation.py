@@ -73,11 +73,14 @@ FIXED_CONFIG = MeasurementConfig(
     request_ip_ids=REQUEST_IP_IDS,
 )
 
-RT_DATASET = "rt-based-4x4-ideal"
-RT_OUT_OF_SCOPE_DATASET = "rt-based-4x4-out-of-scope"
-FIXED_IDEAL_DATASET = "fixed-interval-4x25-ideal"
-FIXED_LOSSY_DATASET = "fixed-interval-4x25-lossy"
-FIXED_REORDERED_DATASET = "fixed-interval-4x25-lossy-reordered"
+RT_DATASET = "base-4x4-ideal"
+BASE_REORDERED_3_DATASET = "base-4x4-reordered-3"
+BASE_REORDERED_4_DATASET = "base-4x4-reordered-4"
+RT_OUT_OF_SCOPE_DATASET = "base-4x4-out-of-scope"
+FIXED_IDEAL_DATASET = "mass-4x25-ideal"
+FIXED_LOSSY_DATASET = "mass-4x25-lossy"
+MASS_REORDERED_DATASET = "mass-4x25-reordered"
+FIXED_REORDERED_DATASET = "mass-4x25-lossy-reordered"
 
 RT_STRATEGIES = (
     "REFLECTION",
@@ -90,9 +93,9 @@ RT_STRATEGIES = (
 RT_DETECTED_STRATEGIES = (*RT_STRATEGIES, "UNCLASSIFIED")
 FIXED_STRATEGIES = (*RT_STRATEGIES, "MULTI", "RANDOM")
 FIXED_DETECTED_STRATEGIES = (*FIXED_STRATEGIES, "UNCLASSIFIED")
-FIXED_IMPAIRED_STRATEGIES = ("CONSTANT", "MULTI", "RANDOM")
+FIXED_IMPAIRED_STRATEGIES = FIXED_STRATEGIES
 FIXED_IMPAIRED_DETECTED_STRATEGIES = (*FIXED_IMPAIRED_STRATEGIES, "UNCLASSIFIED")
-RT_OUT_OF_SCOPE_STRATEGIES = ("MULTI",)
+RT_OUT_OF_SCOPE_STRATEGIES = ("MULTI", "RANDOM")
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 SYNTHETIC_GENERATOR_PARAMETERS = {
     "sampling": "independent discrete uniform unless fixed by the strategy",
@@ -335,7 +338,10 @@ def generate_rt_out_of_scope_sequences(
 
     n = samples_per_strategy
     length = CONNECTION_COUNT * RT_REQUESTS_PER_CONNECTION
-    return {"MULTI": _generate_multi_sequences(n, length, rng)}
+    return {
+        "MULTI": _generate_multi_sequences(n, length, rng),
+        "RANDOM": rng.integers(0, MODULUS, size=(n, length), dtype=np.uint16),
+    }
 
 
 def generate_fixed_sequences(
@@ -394,6 +400,30 @@ def apply_fixed_interval_impairments(
         reordered[row_index, selected] = permutation
 
     return loss_mask, ideal.copy(), reordered
+
+
+def apply_reordering(
+    ideal: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    reordered_count: int,
+) -> np.ndarray:
+    """Permute exactly ``reordered_count`` selected positions in every row."""
+    if ideal.ndim != 2:
+        raise ValueError("ideal sequences must be a two-dimensional matrix")
+    if not 0 <= reordered_count <= ideal.shape[1]:
+        raise ValueError("reordered_count must lie within the sequence length")
+
+    reordered = ideal.copy()
+    if reordered_count < 2:
+        return reordered
+    for row_index in range(len(reordered)):
+        selected = rng.choice(ideal.shape[1], size=reordered_count, replace=False)
+        permutation = rng.permutation(reordered[row_index, selected])
+        if np.array_equal(permutation, reordered[row_index, selected]):
+            permutation = np.roll(permutation, 1)
+        reordered[row_index, selected] = permutation
+    return reordered
 
 
 def _classify_mass(
@@ -702,45 +732,52 @@ def plot_ideal_confusion_matrix(
     )
 
 
-def plot_impaired_confusion_matrices(
-    lossy_metrics: dict,
-    reordered_metrics: dict,
+def plot_confusion_matrix_grid(
+    panels: tuple[tuple[str, dict], ...],
+    generated_classes: tuple[str, ...],
+    detected_classes: tuple[str, ...],
     output_path: Path,
+    *,
+    nrows: int,
+    ncols: int,
+    title: str,
+    subject: str,
 ) -> Path:
+    """Render a compact shared-scale grid of classifier confusion matrices."""
+    if len(panels) != nrows * ncols:
+        raise ValueError("panel count must equal nrows * ncols")
     configure_paper_style()
     fig, axes = plt.subplots(
-        nrows=2,
+        nrows=nrows,
+        ncols=ncols,
         sharex=True,
         sharey=True,
-        figsize=(7.16, 5.4),
-        gridspec_kw={"hspace": 0.38},
+        figsize=(7.16, 3.35 if nrows == 1 else 6.4),
+        squeeze=False,
+        gridspec_kw={"hspace": 0.42, "wspace": 0.10},
     )
-    image = _draw_confusion_matrix(
-        axes[0],
-        lossy_metrics,
-        FIXED_IMPAIRED_STRATEGIES,
-        FIXED_IMPAIRED_DETECTED_STRATEGIES,
-        title="Lossy Dataset",
-    )
-    _draw_confusion_matrix(
-        axes[1],
-        reordered_metrics,
-        FIXED_IMPAIRED_STRATEGIES,
-        FIXED_IMPAIRED_DETECTED_STRATEGIES,
-        title="Lossy+Reordered Dataset",
-    )
-    axes[0].tick_params(axis="x", bottom=False, labelbottom=False)
-    axes[-1].set_xlabel("Detected IP-ID Selection Strategy")
-    fig.supylabel("Generating IP-ID Selection Strategy", x=0.025)
-    fig.subplots_adjust(left=0.20, right=0.86, bottom=0.22, top=0.95)
-    colorbar_axis = fig.add_axes([0.885, 0.30, 0.018, 0.48])
+    image = None
+    for axis, (panel_title, metrics) in zip(axes.flat, panels, strict=True):
+        image = _draw_confusion_matrix(
+            axis,
+            metrics,
+            generated_classes,
+            detected_classes,
+            title=panel_title,
+        )
+    for axis in axes[:-1, :].flat:
+        axis.tick_params(axis="x", bottom=False, labelbottom=False)
+    fig.supxlabel("Detected IP-ID Selection Strategy", y=0.005 if nrows == 1 else 0.015)
+    fig.supylabel("Generating IP-ID Selection Strategy", x=0.012)
+    fig.subplots_adjust(left=0.20, right=0.90, bottom=0.34 if nrows == 1 else 0.17, top=0.94)
+    colorbar_axis = fig.add_axes([0.93, 0.22, 0.016, 0.62])
     colorbar = fig.colorbar(image, cax=colorbar_axis, ticks=np.arange(0, 101, 20))
     colorbar.set_label("Percentage [%]")
     return _save_figure(
         fig,
         output_path,
-        title="Fixed-interval classifier validation under loss and reordering",
-        subject="Synthetic 4x25 IP-ID classifier confusion matrices",
+        title=title,
+        subject=subject,
     )
 
 
@@ -871,9 +908,15 @@ def validate_classifier(
     }
 
     seed_sequence = np.random.SeedSequence(seed)
-    rt_rng, rt_out_of_scope_rng, fixed_rng, impairment_rng = [
-        np.random.default_rng(child) for child in seed_sequence.spawn(4)
-    ]
+    (
+        rt_rng,
+        rt_out_of_scope_rng,
+        fixed_rng,
+        base_reorder_3_rng,
+        base_reorder_4_rng,
+        impairment_rng,
+        mass_reorder_rng,
+    ) = [np.random.default_rng(child) for child in seed_sequence.spawn(7)]
 
     generated_sample_count = max(samples_per_strategy, TRIVIAL_SAMPLES_PER_STRATEGY)
     rt_config, rt_sequences = generate_rt_sequences(generated_sample_count, rt_rng)
@@ -890,6 +933,37 @@ def validate_classifier(
     rt_detections = {
         strategy: _strategy_names(classify_batch(values, rt_config))
         for strategy, values in rt_sequences.items()
+    }
+    rt_matrix = np.concatenate([rt_sequences[strategy] for strategy in RT_STRATEGIES], axis=0)
+    rt_class_slices = {}
+    rt_class_offset = 0
+    for strategy in RT_STRATEGIES:
+        next_offset = rt_class_offset + len(rt_sequences[strategy])
+        rt_class_slices[strategy] = slice(rt_class_offset, next_offset)
+        rt_class_offset = next_offset
+    base_reordered_3_matrix = apply_reordering(
+        rt_matrix,
+        base_reorder_3_rng,
+        reordered_count=3,
+    )
+    base_reordered_4_matrix = apply_reordering(
+        rt_matrix,
+        base_reorder_4_rng,
+        reordered_count=4,
+    )
+    base_reordered_3_sequences = {
+        strategy: base_reordered_3_matrix[rt_class_slices[strategy]] for strategy in RT_STRATEGIES
+    }
+    base_reordered_4_sequences = {
+        strategy: base_reordered_4_matrix[rt_class_slices[strategy]] for strategy in RT_STRATEGIES
+    }
+    base_reordered_3_detections = {
+        strategy: _strategy_names(classify_batch(values, rt_config))
+        for strategy, values in base_reordered_3_sequences.items()
+    }
+    base_reordered_4_detections = {
+        strategy: _strategy_names(classify_batch(values, rt_config))
+        for strategy, values in base_reordered_4_sequences.items()
     }
     rt_out_of_scope_sequences = generate_rt_out_of_scope_sequences(
         samples_per_strategy,
@@ -923,6 +997,11 @@ def validate_classifier(
         fixed_matrix,
         impairment_rng,
     )
+    mass_reordered_matrix = apply_reordering(
+        fixed_matrix,
+        mass_reorder_rng,
+        reordered_count=20,
+    )
     class_slices = {}
     class_offset = 0
     for strategy in FIXED_IMPAIRED_STRATEGIES:
@@ -934,6 +1013,10 @@ def validate_classifier(
     }
     reordered_sequences = {
         strategy: reordered_matrix[class_slices[strategy]]
+        for strategy in FIXED_IMPAIRED_STRATEGIES
+    }
+    mass_reordered_sequences = {
+        strategy: mass_reordered_matrix[class_slices[strategy]]
         for strategy in FIXED_IMPAIRED_STRATEGIES
     }
     loss_masks = {
@@ -959,6 +1042,10 @@ def validate_classifier(
         )
         for strategy, values in reordered_sequences.items()
     }
+    mass_reordered_detections = {
+        strategy: _strategy_names(_classify_mass(values, **mass_classifier_kwargs))
+        for strategy, values in mass_reordered_sequences.items()
+    }
 
     def flatten_labels(
         detections: dict[str, list[str]],
@@ -969,6 +1056,14 @@ def validate_classifier(
         return expected, detected
 
     rt_expected, rt_detected = flatten_labels(rt_detections, RT_STRATEGIES)
+    base_reordered_3_expected, base_reordered_3_detected = flatten_labels(
+        base_reordered_3_detections,
+        RT_STRATEGIES,
+    )
+    base_reordered_4_expected, base_reordered_4_detected = flatten_labels(
+        base_reordered_4_detections,
+        RT_STRATEGIES,
+    )
     fixed_expected, fixed_detected = flatten_labels(fixed_detections, FIXED_STRATEGIES)
     lossy_expected, lossy_detected = flatten_labels(
         lossy_detections,
@@ -978,9 +1073,25 @@ def validate_classifier(
         reordered_detections,
         FIXED_IMPAIRED_STRATEGIES,
     )
+    mass_reordered_expected, mass_reordered_detected = flatten_labels(
+        mass_reordered_detections,
+        FIXED_IMPAIRED_STRATEGIES,
+    )
     rt_metrics = _confusion_metrics(
         rt_expected,
         rt_detected,
+        RT_STRATEGIES,
+        RT_DETECTED_STRATEGIES,
+    )
+    base_reordered_3_metrics = _confusion_metrics(
+        base_reordered_3_expected,
+        base_reordered_3_detected,
+        RT_STRATEGIES,
+        RT_DETECTED_STRATEGIES,
+    )
+    base_reordered_4_metrics = _confusion_metrics(
+        base_reordered_4_expected,
+        base_reordered_4_detected,
         RT_STRATEGIES,
         RT_DETECTED_STRATEGIES,
     )
@@ -1002,6 +1113,12 @@ def validate_classifier(
         FIXED_IMPAIRED_STRATEGIES,
         FIXED_IMPAIRED_DETECTED_STRATEGIES,
     )
+    mass_reordered_metrics = _confusion_metrics(
+        mass_reordered_expected,
+        mass_reordered_detected,
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
+    )
     out_of_scope_metrics = _rejection_metrics(rt_out_of_scope_detections)
 
     columns = _empty_validation_columns()
@@ -1020,7 +1137,25 @@ def validate_classifier(
         detections=rt_out_of_scope_detections,
         requests_per_connection=RT_REQUESTS_PER_CONNECTION,
         address_offset=next_address,
-        expected_strategies={"MULTI": "UNCLASSIFIED"},
+        expected_strategies={strategy: "UNCLASSIFIED" for strategy in RT_OUT_OF_SCOPE_STRATEGIES},
+    )
+    next_address = _append_dataset_rows(
+        columns,
+        dataset=BASE_REORDERED_3_DATASET,
+        sequences=base_reordered_3_sequences,
+        detections=base_reordered_3_detections,
+        requests_per_connection=RT_REQUESTS_PER_CONNECTION,
+        address_offset=next_address,
+        reordered_count=3,
+    )
+    next_address = _append_dataset_rows(
+        columns,
+        dataset=BASE_REORDERED_4_DATASET,
+        sequences=base_reordered_4_sequences,
+        detections=base_reordered_4_detections,
+        requests_per_connection=RT_REQUESTS_PER_CONNECTION,
+        address_offset=next_address,
+        reordered_count=4,
     )
     next_address = _append_dataset_rows(
         columns,
@@ -1039,6 +1174,15 @@ def validate_classifier(
         address_offset=next_address,
         loss_masks=loss_masks,
     )
+    next_address = _append_dataset_rows(
+        columns,
+        dataset=MASS_REORDERED_DATASET,
+        sequences=mass_reordered_sequences,
+        detections=mass_reordered_detections,
+        requests_per_connection=FIXED_REQUESTS_PER_CONNECTION,
+        address_offset=next_address,
+        reordered_count=20,
+    )
     reordered_count = round(CONNECTION_COUNT * FIXED_REQUESTS_PER_CONNECTION * (1.0 - 0.20) * 0.20)
     _append_dataset_rows(
         columns,
@@ -1053,6 +1197,15 @@ def validate_classifier(
 
     processed_dir = processed_root / "classifier-validation"
     figure_dir = figures_root / "classifier-validation"
+    for legacy_name in (
+        "rt-based-4x4-classifier-confusion.pdf",
+        "rt-based-4x4-classifier-confusion.json",
+        "fixed-interval-4x25-classifier-confusion.pdf",
+        "fixed-interval-4x25-classifier-confusion.json",
+        "fixed-interval-4x25-impaired-classifier-confusion.pdf",
+        "fixed-interval-4x25-impaired-classifier-confusion.json",
+    ):
+        (figure_dir / legacy_name).unlink(missing_ok=True)
     dataset_path = processed_dir / "synthetic-classifier-validation.pq"
     _write_parquet(pa.table(columns, schema=VALIDATION_SCHEMA), dataset_path)
 
@@ -1103,6 +1256,12 @@ def validate_classifier(
         "synthetic_generator_parameters": SYNTHETIC_GENERATOR_PARAMETERS,
         "samples_by_dataset_and_strategy": {
             RT_DATASET: {strategy: len(rt_sequences[strategy]) for strategy in RT_STRATEGIES},
+            BASE_REORDERED_3_DATASET: {
+                strategy: len(base_reordered_3_sequences[strategy]) for strategy in RT_STRATEGIES
+            },
+            BASE_REORDERED_4_DATASET: {
+                strategy: len(base_reordered_4_sequences[strategy]) for strategy in RT_STRATEGIES
+            },
             FIXED_IDEAL_DATASET: {
                 strategy: len(fixed_sequences[strategy]) for strategy in FIXED_STRATEGIES
             },
@@ -1119,27 +1278,39 @@ def validate_classifier(
         ),
         "synthetic_dataset": str(dataset_path),
     }
-    rt_json = figure_dir / "rt-based-4x4-classifier-confusion.json"
-    fixed_json = figure_dir / "fixed-interval-4x25-classifier-confusion.json"
-    impaired_json = figure_dir / "fixed-interval-4x25-impaired-classifier-confusion.json"
+    base_reordered_3_json = figure_dir / "base-4x4-classifier-confusion-reordered-3.json"
+    base_reordered_4_json = figure_dir / "base-4x4-classifier-confusion-reordered-4.json"
+    mass_json = figure_dir / "mass-4x25-classifier-confusion.json"
     out_of_scope_json = figure_dir / "out-of-scope-classifier-rejection.json"
     _write_json(
         {
             **common_metadata,
-            "dataset": RT_DATASET,
             "shape": "4x4",
-            "metrics": rt_metrics,
+            "reordered_ipids_per_sequence": 3,
+            "datasets": {
+                "ideal": {"name": RT_DATASET, "metrics": rt_metrics},
+                "reordered": {
+                    "name": BASE_REORDERED_3_DATASET,
+                    "metrics": base_reordered_3_metrics,
+                },
+            },
         },
-        rt_json,
+        base_reordered_3_json,
     )
     _write_json(
         {
             **common_metadata,
-            "dataset": FIXED_IDEAL_DATASET,
-            "shape": "4x25",
-            "metrics": fixed_metrics,
+            "shape": "4x4",
+            "reordered_ipids_per_sequence": 4,
+            "datasets": {
+                "ideal": {"name": RT_DATASET, "metrics": rt_metrics},
+                "reordered": {
+                    "name": BASE_REORDERED_4_DATASET,
+                    "metrics": base_reordered_4_metrics,
+                },
+            },
         },
-        fixed_json,
+        base_reordered_4_json,
     )
     _write_json(
         {
@@ -1151,24 +1322,29 @@ def validate_classifier(
             "reordered_fraction_of_present": 0.20,
             "reordered_ipids_per_sequence": reordered_count,
             "datasets": {
+                "ideal": {"name": FIXED_IDEAL_DATASET, "metrics": fixed_metrics},
                 "lossy": {"name": FIXED_LOSSY_DATASET, "metrics": lossy_metrics},
+                "reordered": {
+                    "name": MASS_REORDERED_DATASET,
+                    "metrics": mass_reordered_metrics,
+                },
                 "lossy_reordered": {
                     "name": FIXED_REORDERED_DATASET,
                     "metrics": reordered_metrics,
                 },
             },
         },
-        impaired_json,
+        mass_json,
     )
     _write_json(
         {
             **common_metadata,
             "purpose": (
-                "Validate that MULTI, which is outside the RT-based classifier's "
-                "supported label space, is rejected as UNCLASSIFIED."
+                "Validate that MULTI and RANDOM, which are outside the Base classifier's "
+                "supported label space, are rejected as UNCLASSIFIED."
             ),
             "tests": {
-                "rt_based": {
+                "base": {
                     "dataset": RT_OUT_OF_SCOPE_DATASET,
                     "generating_strategies": list(RT_OUT_OF_SCOPE_STRATEGIES),
                     "metrics": out_of_scope_metrics,
@@ -1178,33 +1354,53 @@ def validate_classifier(
         out_of_scope_json,
     )
 
-    rt_pdf = figure_dir / "rt-based-4x4-classifier-confusion.pdf"
-    fixed_pdf = figure_dir / "fixed-interval-4x25-classifier-confusion.pdf"
-    impaired_pdf = figure_dir / "fixed-interval-4x25-impaired-classifier-confusion.pdf"
-    plot_ideal_confusion_matrix(
-        rt_metrics,
+    base_reordered_3_pdf = figure_dir / "base-4x4-classifier-confusion-reordered-3.pdf"
+    base_reordered_4_pdf = figure_dir / "base-4x4-classifier-confusion-reordered-4.pdf"
+    mass_pdf = figure_dir / "mass-4x25-classifier-confusion.pdf"
+    plot_confusion_matrix_grid(
+        (("Ideal", rt_metrics), ("3 Reordered (18.75%)", base_reordered_3_metrics)),
         RT_STRATEGIES,
         RT_DETECTED_STRATEGIES,
-        rt_pdf,
-        title="RT-based 4x4 classifier validation",
+        base_reordered_3_pdf,
+        nrows=1,
+        ncols=2,
+        title="Base 4x4 classifier validation with 3 reordered IPIDs",
+        subject="Synthetic Base 4x4 IP-ID classifier confusion matrices",
     )
-    plot_ideal_confusion_matrix(
-        fixed_metrics,
-        FIXED_STRATEGIES,
-        FIXED_DETECTED_STRATEGIES,
-        fixed_pdf,
-        title="Fixed-interval 4x25 classifier validation",
+    plot_confusion_matrix_grid(
+        (("Ideal", rt_metrics), ("4 Reordered (25%)", base_reordered_4_metrics)),
+        RT_STRATEGIES,
+        RT_DETECTED_STRATEGIES,
+        base_reordered_4_pdf,
+        nrows=1,
+        ncols=2,
+        title="Base 4x4 classifier validation with 4 reordered IPIDs",
+        subject="Synthetic Base 4x4 IP-ID classifier confusion matrices",
     )
-    plot_impaired_confusion_matrices(lossy_metrics, reordered_metrics, impaired_pdf)
+    plot_confusion_matrix_grid(
+        (
+            ("Ideal", fixed_metrics),
+            ("20% Lossy", lossy_metrics),
+            ("20% Reordered", mass_reordered_metrics),
+            ("20% Lossy + 20% Reordered", reordered_metrics),
+        ),
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
+        mass_pdf,
+        nrows=2,
+        ncols=2,
+        title="Mass 4x25 classifier validation",
+        subject="Synthetic Mass 4x25 IP-ID classifier confusion matrices",
+    )
 
     return {
         "dataset": dataset_path,
-        "rt_based_pdf": rt_pdf,
-        "rt_based_json": rt_json,
-        "fixed_interval_pdf": fixed_pdf,
-        "fixed_interval_json": fixed_json,
-        "impaired_pdf": impaired_pdf,
-        "impaired_json": impaired_json,
+        "base_reordered_3_pdf": base_reordered_3_pdf,
+        "base_reordered_3_json": base_reordered_3_json,
+        "base_reordered_4_pdf": base_reordered_4_pdf,
+        "base_reordered_4_json": base_reordered_4_json,
+        "mass_pdf": mass_pdf,
+        "mass_json": mass_json,
         "out_of_scope_json": out_of_scope_json,
     }
 

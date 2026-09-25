@@ -8,9 +8,6 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from ipid_analysis.plot_chi2_pvalue_cdf import (
-    IDEAL_DATASET,
-    LOSSY_DATASET,
-    LOSSY_REORDERED_DATASET,
     PLOT_STRATEGIES,
     TRIVIAL_SAMPLES_PER_STRATEGY,
     generate_chi2_sequences,
@@ -19,6 +16,10 @@ from ipid_analysis.plot_random_structure_score_cdf import (
     DEFAULT_NULL_TABLE_SAMPLES,
     DEFAULT_RANDOM_FALSE_REJECTION_RATE,
     DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
+    MASS_IDEAL_DATASET,
+    MASS_LOSSY_DATASET,
+    MASS_LOSSY_REORDERED_DATASET,
+    MASS_REORDERED_DATASET,
     MIN_COMPATIBILITY_SCORE,
     SCORE_VERSION,
     X_MAJOR_EXPONENT_STEP,
@@ -95,14 +96,29 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             for path in outputs:
                 self.assertTrue(path.is_file(), path)
 
-            ideal_pdf, ideal_json, _, lossy_json, _, reordered_json, aggregate = outputs
+            (
+                ideal_pdf,
+                ideal_json,
+                _,
+                lossy_json,
+                _,
+                reordered_json,
+                _,
+                lossy_reordered_json,
+                aggregate,
+            ) = outputs
             self.assertEqual(ideal_pdf.suffix, ".pdf")
             table = pq.read_table(aggregate)
-            expected_rows = 3 * (2 * TRIVIAL_SAMPLES_PER_STRATEGY + 6 * 8)
+            expected_rows = 4 * (2 * TRIVIAL_SAMPLES_PER_STRATEGY + 6 * 8)
             self.assertEqual(table.num_rows, expected_rows)
             self.assertEqual(
                 set(table.column("DATASET").to_pylist()),
-                {IDEAL_DATASET, LOSSY_DATASET, LOSSY_REORDERED_DATASET},
+                {
+                    MASS_IDEAL_DATASET,
+                    MASS_LOSSY_DATASET,
+                    MASS_REORDERED_DATASET,
+                    MASS_LOSSY_REORDERED_DATASET,
+                },
             )
             self.assertEqual(
                 set(table.column("IPID_SELECTION_STRATEGY").to_pylist()),
@@ -112,11 +128,16 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             metadata = json.loads(ideal_json.read_text())
             lossy_metadata = json.loads(lossy_json.read_text())
             reordered_metadata = json.loads(reordered_json.read_text())
+            lossy_reordered_metadata = json.loads(lossy_reordered_json.read_text())
             self.assertEqual(metadata["threshold"]["tau"], CANDIDATE_RANDOM_MIN_SCORE)
             self.assertEqual(metadata["threshold"]["tau"], lossy_metadata["threshold"]["tau"])
             self.assertEqual(
                 metadata["threshold"]["tau"],
                 reordered_metadata["threshold"]["tau"],
+            )
+            self.assertEqual(
+                metadata["threshold"]["tau"],
+                lossy_reordered_metadata["threshold"]["tau"],
             )
             self.assertEqual(metadata["score"]["version"], SCORE_VERSION)
             self.assertEqual(SCORE_VERSION, CANDIDATE_RANDOM_SCORE_VERSION)
