@@ -52,10 +52,11 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             np.log10(major_ticks),
             np.arange(-6, 1, X_MAJOR_EXPONENT_STEP),
         )
-        np.testing.assert_array_equal(
-            np.log10(minor_ticks),
-            np.arange(-5, 0, X_MAJOR_EXPONENT_STEP),
-        )
+        self.assertEqual(len(minor_ticks), 51)
+        for expected in (2e-6, 9e-6, 1e-5, 5e-3, 9e-1):
+            self.assertTrue(np.any(np.isclose(minor_ticks, expected)), expected)
+        for major_tick in major_ticks:
+            self.assertFalse(np.any(np.isclose(minor_ticks, major_tick)), major_tick)
 
     def test_subminimum_only_strategies_are_identified(self):
         scores = {strategy: np.array([1e-4]) for strategy in PLOT_STRATEGIES}
@@ -70,8 +71,8 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
     def test_positive_panel_retains_subminimum_mass(self):
         x_values, percentages = _positive_ecdf_coordinates(np.array([0.0, 0.0, 1e-10, 1e-4]))
 
-        np.testing.assert_array_equal(x_values, np.array([1e-4, 1e-4]))
-        np.testing.assert_array_equal(percentages, np.array([75.0, 100.0]))
+        np.testing.assert_array_equal(x_values, np.array([1e-4, 1e-4, 1.05]))
+        np.testing.assert_array_equal(percentages, np.array([75.0, 100.0, 100.0]))
 
     def test_score_is_a_finite_probability_like_value(self):
         rng = np.random.default_rng(23)

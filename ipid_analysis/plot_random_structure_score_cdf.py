@@ -66,6 +66,7 @@ POSITIVE_SCORE_AXIS_MINIMUM = 1e-6
 X_AXIS_MAXIMUM = 1.05
 X_MAJOR_EXPONENT_STEP = 2
 THRESHOLD_COLOR = "#C62828"
+CDF_FONT_SIZE = 8.0
 MASS_IDEAL_DATASET = "ideal"
 MASS_LOSSY_DATASET = "lossy"
 MASS_REORDERED_DATASET = "reordered"
@@ -109,7 +110,15 @@ def _log_axis_parameters() -> tuple[float, np.ndarray, np.ndarray]:
     exponents = np.arange(axis_minimum_exponent, 1, dtype=int)
     major_mask = (exponents % X_MAJOR_EXPONENT_STEP) == 0
     major_ticks = np.power(10.0, exponents[major_mask].astype(float))
-    minor_ticks = np.power(10.0, exponents[~major_mask].astype(float))
+    minor_ticks = np.asarray(
+        [
+            multiplier * 10.0**exponent
+            for exponent in range(axis_minimum_exponent, 0)
+            for multiplier in range(1, 10)
+            if multiplier * 10.0**exponent not in major_ticks
+        ],
+        dtype=float,
+    )
     return 10.0**axis_minimum_exponent, major_ticks, minor_ticks
 
 
@@ -131,8 +140,8 @@ def _positive_ecdf_coordinates(values: np.ndarray) -> tuple[np.ndarray, np.ndarr
     censored_count = len(values) - len(visible)
     percentages = 100.0 * (censored_count + np.arange(1, len(ordered) + 1)) / len(values)
     return (
-        np.concatenate(([ordered[0]], ordered)),
-        np.concatenate(([100.0 * censored_count / len(values)], percentages)),
+        np.concatenate(([ordered[0]], ordered, [X_AXIS_MAXIMUM])),
+        np.concatenate(([100.0 * censored_count / len(values)], percentages, [100.0])),
     )
 
 
@@ -145,7 +154,7 @@ def plot_score_cdf(
 ) -> Path:
     configure_paper_style()
     fig = plt.figure(figsize=(6.75, 3.15))
-    grid = fig.add_gridspec(1, 2, width_ratios=(0.055, 0.945), wspace=0.065)
+    grid = fig.add_gridspec(1, 2, width_ratios=(0.055, 0.945), wspace=0.10)
     subminimum_ax = fig.add_subplot(grid[0, 0])
     ax = fig.add_subplot(grid[0, 1], sharey=subminimum_ax)
     subminimum_only_strategies = _subminimum_only_strategies(scores)
@@ -210,44 +219,40 @@ def plot_score_cdf(
     subminimum_ax.set_xlim(-0.5, 0.5)
     subminimum_exponent = int(np.log10(POSITIVE_SCORE_AXIS_MINIMUM))
     subminimum_ax.set_xticks([0.0], labels=[rf"$<10^{{{subminimum_exponent}}}$"])
-    subminimum_ax.get_xticklabels()[0].set_horizontalalignment("right")
-    ax.get_xticklabels()[0].set_horizontalalignment("left")
     for current_ax in (subminimum_ax, ax):
         current_ax.set_ylim(0, 103)
         current_ax.yaxis.set_major_locator(MultipleLocator(20))
         current_ax.yaxis.set_minor_locator(MultipleLocator(10))
-    subminimum_ax.set_ylabel("Cumulative Percentage [%]")
+        current_ax.tick_params(axis="both", which="major", labelsize=CDF_FONT_SIZE)
+    ax.tick_params(axis="x", which="major", length=3.5, width=0.7)
+    ax.tick_params(axis="x", which="minor", length=2.3, width=0.55)
+    subminimum_ax.set_ylabel("Cumulative Percentage [%]", fontsize=CDF_FONT_SIZE)
     ax.tick_params(axis="y", which="both", left=False, labelleft=False)
     subminimum_ax.tick_params(axis="y", which="both", right=False)
     subminimum_ax.spines["right"].set_visible(False)
     ax.spines["left"].set_visible(False)
-    break_size = 0.025
-    break_style = {"color": "black", "clip_on": False, "linewidth": 0.9}
+    break_marker = [(-1.0, -0.55), (1.0, 0.55)]
+    break_style = {
+        "marker": break_marker,
+        "markersize": 9,
+        "linestyle": "none",
+        "color": "black",
+        "markeredgewidth": 0.9,
+        "clip_on": False,
+    }
     subminimum_ax.plot(
-        (1.0 - break_size, 1.0 + break_size),
-        (-break_size, break_size),
-        transform=subminimum_ax.transAxes,
-        **break_style,
-    )
-    subminimum_ax.plot(
-        (1.0 - break_size, 1.0 + break_size),
-        (1.0 - break_size, 1.0 + break_size),
+        [1.0, 1.0],
+        [0.0, 1.0],
         transform=subminimum_ax.transAxes,
         **break_style,
     )
     ax.plot(
-        (-break_size, break_size),
-        (-break_size, break_size),
+        [0.0, 0.0],
+        [0.0, 1.0],
         transform=ax.transAxes,
         **break_style,
     )
-    ax.plot(
-        (-break_size, break_size),
-        (1.0 - break_size, 1.0 + break_size),
-        transform=ax.transAxes,
-        **break_style,
-    )
-    fig.supxlabel(r"Random-Compatibility Score $S$", y=0.045)
+    fig.supxlabel(r"Random-Compatibility Score $S$", y=0.045, fontsize=CDF_FONT_SIZE)
     subminimum_ax.grid(
         which="major", axis="y", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7
     )
@@ -285,8 +290,9 @@ def plot_score_cdf(
         frameon=False,
         columnspacing=0.85,
         handlelength=2.0,
+        fontsize=CDF_FONT_SIZE,
     )
-    fig.subplots_adjust(left=0.13, right=0.995, bottom=0.23, top=0.70)
+    fig.subplots_adjust(left=0.13, right=0.995, bottom=0.23, top=0.76)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(
         output_path,
