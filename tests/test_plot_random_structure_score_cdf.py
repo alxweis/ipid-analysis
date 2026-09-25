@@ -50,10 +50,11 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         self.assertEqual(axis_minimum, POSITIVE_SCORE_AXIS_MINIMUM)
         np.testing.assert_array_equal(
             np.log10(major_ticks),
-            np.arange(-6, 1, X_MAJOR_EXPONENT_STEP),
+            np.arange(-6, 1),
         )
-        self.assertEqual(len(minor_ticks), 51)
-        for expected in (2e-6, 9e-6, 1e-5, 5e-3, 9e-1):
+        self.assertEqual(X_MAJOR_EXPONENT_STEP, 1)
+        self.assertEqual(len(minor_ticks), 48)
+        for expected in (2e-6, 9e-6, 5e-5, 5e-3, 9e-1):
             self.assertTrue(np.any(np.isclose(minor_ticks, expected)), expected)
         for major_tick in major_ticks:
             self.assertFalse(np.any(np.isclose(minor_ticks, major_tick)), major_tick)
