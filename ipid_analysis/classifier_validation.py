@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import ipaddress
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib
 import numpy as np
@@ -21,20 +22,31 @@ import typer
 
 matplotlib.use("Agg")
 
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
-from ipid_analysis.paper_figures import (  # noqa: E402
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.paper_figures import (
     PERCENTAGE_CMAP,
     configure_paper_style,
     linux_libertine_font_properties,
 )
-from ipid_analysis.strategies import (  # noqa: E402
+from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_NULL_TABLE_SAMPLES,
+    CANDIDATE_NULL_TABLE_SEED,
+    CANDIDATE_NULL_TABLE_VERSION,
+    CANDIDATE_RANDOM_METRICS,
+    CANDIDATE_RANDOM_MIN_SCORE,
+    CANDIDATE_RANDOM_SCORE_VERSION,
+    CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
+    candidate_random_scores,
+)
+from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
     MAX_INC,
     MULTI_MAX_CLUSTERS,
     MULTI_MAX_INC,
     RANDOM_STRUCTURE_MIN_SCORE,
+    RANDOM_STRUCTURE_MIN_TEST_SAMPLES,
     RANDOM_STRUCTURE_SCORE_VERSION,
     STRATEGY_PRETTY,
     IPIDStrategy,
@@ -42,6 +54,9 @@ from ipid_analysis.strategies import (  # noqa: E402
     classify_batch,
     classify_batch_mass,
 )
+
+if TYPE_CHECKING:
+    from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 
 app = typer.Typer()
 
@@ -381,7 +396,13 @@ def apply_fixed_interval_impairments(
     return loss_mask, ideal.copy(), reordered
 
 
-def _classify_mass(values: np.ndarray, loss_mask: np.ndarray | None = None) -> np.ndarray:
+def _classify_mass(
+    values: np.ndarray,
+    loss_mask: np.ndarray | None = None,
+    *,
+    candidate_null_tables: EmpiricalNullTables | None = None,
+    candidate_threshold: float = CANDIDATE_RANDOM_MIN_SCORE,
+) -> np.ndarray:
     rows = []
     for row_index, row in enumerate(values):
         if loss_mask is None:
@@ -393,10 +414,37 @@ def _classify_mass(values: np.ndarray, loss_mask: np.ndarray | None = None) -> n
                     for column_index, value in enumerate(row)
                 ]
             )
-    return classify_batch_mass(
+    codes = classify_batch_mass(
         pa.array(rows, type=pa.list_(pa.int64())),
         FIXED_CONFIG,
     )
+    if candidate_null_tables is None:
+        return codes
+
+    # The established exact, CONSTANT, and MULTI decisions stay untouched.
+    # RANDOM is the final mass-classifier stage, so replacing both its current
+    # RANDOM and UNCLASSIFIED outputs precisely substitutes only that decision.
+    residual = (codes == int(IPIDStrategy.RANDOM)) | (codes == int(IPIDStrategy.UNCLASSIFIED))
+    if not residual.any():
+        return codes
+
+    present = (
+        np.ones(values.shape, dtype=bool)
+        if loss_mask is None
+        else ~np.asarray(loss_mask, dtype=bool)
+    )
+    scores = candidate_random_scores(
+        values[residual],
+        present[residual],
+        candidate_null_tables,
+    )
+    enough = present[residual].sum(axis=1) >= RANDOM_STRUCTURE_MIN_TEST_SAMPLES
+    codes[residual] = np.where(
+        (scores >= candidate_threshold) & enough,
+        int(IPIDStrategy.RANDOM),
+        int(IPIDStrategy.UNCLASSIFIED),
+    )
+    return codes
 
 
 def _strategy_names(codes: np.ndarray) -> list[str]:
@@ -794,12 +842,33 @@ def validate_classifier(
     *,
     samples_per_strategy: int = DEFAULT_SAMPLES_PER_STRATEGY,
     seed: int = 42,
+    candidate_random_score: bool = True,
+    candidate_null_table_samples: int = CANDIDATE_NULL_TABLE_SAMPLES,
+    candidate_null_table_seed: int = CANDIDATE_NULL_TABLE_SEED,
+    candidate_threshold: float = CANDIDATE_RANDOM_MIN_SCORE,
     processed_root: Path = PROCESSED_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
 ) -> dict[str, Path]:
     """Generate synthetic datasets, classify them, and write plots and metrics."""
     if samples_per_strategy < 1:
         raise ValueError("samples_per_strategy must be positive")
+    if candidate_null_table_samples < 1:
+        raise ValueError("candidate_null_table_samples must be positive")
+    if not 0.0 <= candidate_threshold <= 1.0:
+        raise ValueError("candidate_threshold must lie in [0, 1]")
+
+    candidate_null_tables = None
+    if candidate_random_score:
+        from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
+
+        candidate_null_tables = EmpiricalNullTables(
+            candidate_null_table_samples,
+            candidate_null_table_seed,
+        )
+    mass_classifier_kwargs = {
+        "candidate_null_tables": candidate_null_tables,
+        "candidate_threshold": candidate_threshold,
+    }
 
     seed_sequence = np.random.SeedSequence(seed)
     rt_rng, rt_out_of_scope_rng, fixed_rng, impairment_rng = [
@@ -843,7 +912,7 @@ def validate_classifier(
         for strategy, values in fixed_sequences.items()
     }
     fixed_detections = {
-        strategy: _strategy_names(_classify_mass(values))
+        strategy: _strategy_names(_classify_mass(values, **mass_classifier_kwargs))
         for strategy, values in fixed_sequences.items()
     }
     fixed_matrix = np.concatenate(
@@ -871,11 +940,23 @@ def validate_classifier(
         strategy: fixed_loss_mask[class_slices[strategy]] for strategy in FIXED_IMPAIRED_STRATEGIES
     }
     lossy_detections = {
-        strategy: _strategy_names(_classify_mass(values, loss_masks[strategy]))
+        strategy: _strategy_names(
+            _classify_mass(
+                values,
+                loss_masks[strategy],
+                **mass_classifier_kwargs,
+            )
+        )
         for strategy, values in lossy_sequences.items()
     }
     reordered_detections = {
-        strategy: _strategy_names(_classify_mass(values, loss_masks[strategy]))
+        strategy: _strategy_names(
+            _classify_mass(
+                values,
+                loss_masks[strategy],
+                **mass_classifier_kwargs,
+            )
+        )
         for strategy, values in reordered_sequences.items()
     }
 
@@ -975,22 +1056,45 @@ def validate_classifier(
     dataset_path = processed_dir / "synthetic-classifier-validation.pq"
     _write_parquet(pa.table(columns, schema=VALIDATION_SCHEMA), dataset_path)
 
+    if candidate_random_score:
+        random_score_metadata = {
+            "version": CANDIDATE_RANDOM_SCORE_VERSION,
+            "threshold": candidate_threshold,
+            "metrics": list(CANDIDATE_RANDOM_METRICS),
+            "combiner": "minimum",
+            "target_random_false_rejection_rate": (CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE),
+            "null_tables": {
+                "version": CANDIDATE_NULL_TABLE_VERSION,
+                "sample_count": candidate_null_table_samples,
+                "seed": candidate_null_table_seed,
+                "pvalue_resolution": 1.0 / (candidate_null_table_samples + 1.0),
+            },
+            "validation_only": True,
+            "production_classifier_changed": False,
+            "scope": "fixed-interval mass classifier only",
+        }
+    else:
+        random_score_metadata = {
+            "version": RANDOM_STRUCTURE_SCORE_VERSION,
+            "threshold": RANDOM_STRUCTURE_MIN_SCORE,
+            "validation_only": False,
+            "production_classifier_changed": False,
+            "scope": "fixed-interval mass classifier only",
+        }
+    random_score_metadata["applies_after"] = [
+        "REFLECTION",
+        "CONSTANT",
+        "PER_DESTINATION",
+        "PER_CONNECTION",
+        "SINGLE",
+        "PER_BUCKET",
+        "MULTI",
+    ]
+
     common_metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "classifier_version": CLASSIFIER_VERSION,
-        "random_structure_score": {
-            "version": RANDOM_STRUCTURE_SCORE_VERSION,
-            "threshold": RANDOM_STRUCTURE_MIN_SCORE,
-            "applies_after": [
-                "REFLECTION",
-                "CONSTANT",
-                "PER_DESTINATION",
-                "PER_CONNECTION",
-                "SINGLE",
-                "PER_BUCKET",
-                "MULTI",
-            ],
-        },
+        "random_structure_score": random_score_metadata,
         "synthetic_generator_version": "3",
         "seed": seed,
         "samples_per_strategy": samples_per_strategy,
@@ -1116,10 +1220,37 @@ def main(
         ),
     ),
     seed: int = typer.Option(42, help="deterministic random seed"),
+    candidate_random_score: bool = typer.Option(
+        True,
+        "--candidate-random-score/--production-random-score",
+        help=(
+            "render the established paper figures with the selected validation-only "
+            "RANDOM score, or reproduce the current production score"
+        ),
+    ),
+    candidate_null_table_samples: int = typer.Option(
+        CANDIDATE_NULL_TABLE_SAMPLES,
+        min=1,
+        help="Monte Carlo samples per candidate empirical null table",
+    ),
+    candidate_null_table_seed: int = typer.Option(
+        CANDIDATE_NULL_TABLE_SEED,
+        help="deterministic seed for candidate empirical null tables",
+    ),
+    candidate_threshold: float = typer.Option(
+        CANDIDATE_RANDOM_MIN_SCORE,
+        min=0.0,
+        max=1.0,
+        help="selected candidate minimum-score threshold",
+    ),
 ) -> None:
     outputs = validate_classifier(
         samples_per_strategy=samples_per_strategy,
         seed=seed,
+        candidate_random_score=candidate_random_score,
+        candidate_null_table_samples=candidate_null_table_samples,
+        candidate_null_table_seed=candidate_null_table_seed,
+        candidate_threshold=candidate_threshold,
     )
     for name, path in outputs.items():
         typer.echo(f"{name}: {path}")

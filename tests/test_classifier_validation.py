@@ -26,11 +26,15 @@ from ipid_analysis.classifier_validation import (
     generate_rt_sequences,
     validate_classifier,
 )
+from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_NULL_TABLE_VERSION,
+    CANDIDATE_RANDOM_METRICS,
+    CANDIDATE_RANDOM_MIN_SCORE,
+    CANDIDATE_RANDOM_SCORE_VERSION,
+)
 from ipid_analysis.strategies import (
     MAX_INC,
     MULTI_MAX_CLUSTERS,
-    RANDOM_STRUCTURE_MIN_SCORE,
-    RANDOM_STRUCTURE_SCORE_VERSION,
     IPIDStrategy,
     _cluster_counts_mass,
     _mass_padded,
@@ -137,6 +141,7 @@ class ClassifierValidationTest(unittest.TestCase):
             outputs = validate_classifier(
                 samples_per_strategy=8,
                 seed=42,
+                candidate_null_table_samples=64,
                 processed_root=root / "processed",
                 figures_root=root / "figures",
             )
@@ -207,22 +212,18 @@ class ClassifierValidationTest(unittest.TestCase):
                     "RANDOM": 8,
                 },
             )
+            random_score = fixed_report["random_structure_score"]
+            self.assertEqual(random_score["version"], CANDIDATE_RANDOM_SCORE_VERSION)
+            self.assertEqual(random_score["threshold"], CANDIDATE_RANDOM_MIN_SCORE)
+            self.assertEqual(random_score["metrics"], list(CANDIDATE_RANDOM_METRICS))
+            self.assertEqual(random_score["combiner"], "minimum")
             self.assertEqual(
-                fixed_report["random_structure_score"],
-                {
-                    "version": RANDOM_STRUCTURE_SCORE_VERSION,
-                    "threshold": RANDOM_STRUCTURE_MIN_SCORE,
-                    "applies_after": [
-                        "REFLECTION",
-                        "CONSTANT",
-                        "PER_DESTINATION",
-                        "PER_CONNECTION",
-                        "SINGLE",
-                        "PER_BUCKET",
-                        "MULTI",
-                    ],
-                },
+                random_score["null_tables"]["version"],
+                CANDIDATE_NULL_TABLE_VERSION,
             )
+            self.assertEqual(random_score["null_tables"]["sample_count"], 64)
+            self.assertTrue(random_score["validation_only"])
+            self.assertFalse(random_score["production_classifier_changed"])
             self.assertEqual(
                 rt_report["samples_by_dataset_and_strategy"][RT_OUT_OF_SCOPE_DATASET],
                 {"MULTI": 8},

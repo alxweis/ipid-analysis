@@ -8,15 +8,14 @@ does not modify the production classifier in :mod:`ipid_analysis.strategies`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ipid_analysis.random_classifier_evaluation import (
-    EmpiricalNullTables,
-    gap_uniformity_pvalues,
-    increment_uniformity_pvalues,
-)
 from ipid_analysis.strategies import random_structure_features
+
+if TYPE_CHECKING:
+    from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 
 CANDIDATE_RANDOM_SCORE_VERSION = "raw-increment-gap-min-v1"
 CANDIDATE_RANDOM_METRICS = (
@@ -52,6 +51,14 @@ def candidate_random_score_components(
     null_tables: EmpiricalNullTables,
 ) -> CandidateRandomScoreComponents:
     """Calculate the validation candidate without changing production state."""
+    # Imported lazily because the offline evaluator reuses the established
+    # classifier-validation generators. Keeping that dependency out of module
+    # initialization lets the established validator import this candidate.
+    from ipid_analysis.random_classifier_evaluation import (
+        gap_uniformity_pvalues,
+        increment_uniformity_pvalues,
+    )
+
     raw = random_structure_features(values, present).uniformity_pvalue
     increment = increment_uniformity_pvalues(values, present, null_tables)
     gap = gap_uniformity_pvalues(values, present, null_tables)

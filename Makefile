@@ -118,11 +118,6 @@ evaluate-random-classifier:
 evaluate-random-classifier-v2:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_evaluation_v2 $(ARGS)
 
-## Render validation-only paper figures for the selected RANDOM candidate
-.PHONY: validate-random-classifier-candidate
-validate-random-classifier-candidate:
-	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_candidate_validation $(ARGS)
-
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################
