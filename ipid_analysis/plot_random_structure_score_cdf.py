@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-import math
 from pathlib import Path
 
 import matplotlib
@@ -23,7 +22,7 @@ matplotlib.use("Agg")
 
 from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
-from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter
+from matplotlib.ticker import MultipleLocator, NullFormatter
 
 from ipid_analysis.classifier_validation import apply_fixed_interval_impairments, apply_reordering
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
@@ -39,7 +38,6 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     REQUESTS_PER_CONNECTION,
     TRIVIAL_SAMPLES_PER_STRATEGY,
     TRIVIAL_STRATEGIES,
-    _ecdf_coordinates,
     generate_chi2_sequences,
 )
 from ipid_analysis.random_classifier_candidate import (
@@ -64,9 +62,8 @@ SCORE_VERSION = CANDIDATE_RANDOM_SCORE_VERSION
 DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY = 100_000
 DEFAULT_NULL_TABLE_SAMPLES = CANDIDATE_NULL_TABLE_SAMPLES
 DEFAULT_RANDOM_FALSE_REJECTION_RATE = CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE
-MIN_COMPATIBILITY_SCORE = 1e-20
+POSITIVE_SCORE_AXIS_MINIMUM = 1e-6
 X_AXIS_MAXIMUM = 1.05
-X_AXIS_LEFT_PADDING_DECADES = 1
 X_MAJOR_EXPONENT_STEP = 2
 THRESHOLD_COLOR = "#C62828"
 MASS_IDEAL_DATASET = "ideal"
@@ -90,15 +87,11 @@ def calculate_scores(
     loss_mask: np.ndarray,
     null_tables: EmpiricalNullTables,
 ) -> np.ndarray:
-    """Candidate score, clipped only to make zero values visible on log axes."""
-    return np.clip(
-        candidate_random_scores(
-            values,
-            ~loss_mask,
-            null_tables,
-        ),
-        MIN_COMPATIBILITY_SCORE,
-        1.0,
+    """Return the uncensored candidate score, including exact zero values."""
+    return candidate_random_scores(
+        values,
+        ~loss_mask,
+        null_tables,
     )
 
 
@@ -111,19 +104,8 @@ def _write_json(value: dict, output_path: Path) -> Path:
     return output_path
 
 
-def _log_axis_parameters(
-    scores: dict[str, np.ndarray],
-    threshold: float,
-) -> tuple[float, np.ndarray, np.ndarray]:
-    positive_minimum = min(
-        threshold,
-        *(float(values[values > 0].min()) for values in scores.values()),
-    )
-    minimum_exponent = math.floor(math.log10(positive_minimum))
-    axis_minimum_exponent = min(
-        -1,
-        minimum_exponent - X_AXIS_LEFT_PADDING_DECADES,
-    )
+def _log_axis_parameters() -> tuple[float, np.ndarray, np.ndarray]:
+    axis_minimum_exponent = int(np.log10(POSITIVE_SCORE_AXIS_MINIMUM))
     exponents = np.arange(axis_minimum_exponent, 1, dtype=int)
     major_mask = (exponents % X_MAJOR_EXPONENT_STEP) == 0
     major_ticks = np.power(10.0, exponents[major_mask].astype(float))
@@ -131,13 +113,27 @@ def _log_axis_parameters(
     return 10.0**axis_minimum_exponent, major_ticks, minor_ticks
 
 
-def _floor_only_strategies(scores: dict[str, np.ndarray]) -> list[str]:
-    """Return strategies whose complete CDF is censored at the plotting floor."""
+def _subminimum_only_strategies(scores: dict[str, np.ndarray]) -> list[str]:
+    """Return strategies entirely below the positive log-axis boundary."""
     return [
         strategy
         for strategy in PLOT_STRATEGIES
-        if np.all(scores[strategy] <= MIN_COMPATIBILITY_SCORE)
+        if np.all(scores[strategy] < POSITIVE_SCORE_AXIS_MINIMUM)
     ]
+
+
+def _positive_ecdf_coordinates(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """ECDF coordinates above the log boundary, retaining censored mass."""
+    visible = values[values >= POSITIVE_SCORE_AXIS_MINIMUM]
+    if not len(visible):
+        return np.empty(0, dtype=float), np.empty(0, dtype=float)
+    ordered = np.sort(visible)
+    censored_count = len(values) - len(visible)
+    percentages = 100.0 * (censored_count + np.arange(1, len(ordered) + 1)) / len(values)
+    return (
+        np.concatenate(([ordered[0]], ordered)),
+        np.concatenate(([100.0 * censored_count / len(values)], percentages)),
+    )
 
 
 def plot_score_cdf(
@@ -148,31 +144,47 @@ def plot_score_cdf(
     dataset_label: str,
 ) -> Path:
     configure_paper_style()
-    fig, ax = plt.subplots(figsize=(7.16, 3.15))
-    floor_only_strategies = _floor_only_strategies(scores)
+    fig = plt.figure(figsize=(6.75, 3.15))
+    grid = fig.add_gridspec(1, 2, width_ratios=(0.055, 0.945), wspace=0.065)
+    subminimum_ax = fig.add_subplot(grid[0, 0])
+    ax = fig.add_subplot(grid[0, 1], sharey=subminimum_ax)
+    subminimum_only_strategies = _subminimum_only_strategies(scores)
     for strategy in PLOT_STRATEGIES:
-        x_values, cumulative_percentages = _ecdf_coordinates(scores[strategy])
-        ax.step(
-            x_values,
-            cumulative_percentages,
-            where="post",
-            color=STRATEGY_COLORS[strategy],
-            linewidth=1.7,
+        values = scores[strategy]
+        subminimum_percentage = (
+            100.0 * np.count_nonzero(values < POSITIVE_SCORE_AXIS_MINIMUM) / len(values)
         )
-    if floor_only_strategies:
-        marker_percentages = np.linspace(
-            15.0,
-            85.0,
-            len(floor_only_strategies),
+        if subminimum_percentage:
+            subminimum_ax.vlines(
+                0.0,
+                0.0,
+                subminimum_percentage,
+                color=STRATEGY_COLORS[strategy],
+                linewidth=1.7,
+            )
+        x_values, cumulative_percentages = _positive_ecdf_coordinates(values)
+        if len(x_values):
+            ax.step(
+                x_values,
+                cumulative_percentages,
+                where="post",
+                color=STRATEGY_COLORS[strategy],
+                linewidth=1.7,
+            )
+    if subminimum_only_strategies:
+        marker_positions = np.linspace(
+            -0.18,
+            0.18,
+            len(subminimum_only_strategies),
         )
-        for strategy, percentage in zip(
-            floor_only_strategies,
-            marker_percentages,
+        for strategy, position in zip(
+            subminimum_only_strategies,
+            marker_positions,
             strict=True,
         ):
-            ax.scatter(
-                [MIN_COMPATIBILITY_SCORE],
-                [percentage],
+            subminimum_ax.scatter(
+                [position],
+                [100.0],
                 color=STRATEGY_COLORS[strategy],
                 edgecolors="white",
                 linewidths=0.35,
@@ -187,18 +199,59 @@ def plot_score_cdf(
         zorder=1.5,
     )
 
-    axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(scores, threshold)
+    axis_minimum, major_ticks, minor_ticks = _log_axis_parameters()
     ax.set_xscale("log")
     ax.set_xlim(axis_minimum, X_AXIS_MAXIMUM)
-    ax.set_xticks(major_ticks)
+    major_exponents = np.log10(major_ticks).astype(int)
+    major_labels = [rf"$10^{{{exponent}}}$" for exponent in major_exponents]
+    ax.set_xticks(major_ticks, labels=major_labels)
     ax.set_xticks(minor_ticks, minor=True)
-    ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10))
     ax.xaxis.set_minor_formatter(NullFormatter())
-    ax.set_ylim(0, 103)
-    ax.yaxis.set_major_locator(MultipleLocator(20))
-    ax.yaxis.set_minor_locator(MultipleLocator(10))
-    ax.set_xlabel(r"Random-Compatibility Score $S$")
-    ax.set_ylabel("Cumulative Percentage [%]")
+    subminimum_ax.set_xlim(-0.5, 0.5)
+    subminimum_exponent = int(np.log10(POSITIVE_SCORE_AXIS_MINIMUM))
+    subminimum_ax.set_xticks([0.0], labels=[rf"$<10^{{{subminimum_exponent}}}$"])
+    subminimum_ax.get_xticklabels()[0].set_horizontalalignment("right")
+    ax.get_xticklabels()[0].set_horizontalalignment("left")
+    for current_ax in (subminimum_ax, ax):
+        current_ax.set_ylim(0, 103)
+        current_ax.yaxis.set_major_locator(MultipleLocator(20))
+        current_ax.yaxis.set_minor_locator(MultipleLocator(10))
+    subminimum_ax.set_ylabel("Cumulative Percentage [%]")
+    ax.tick_params(axis="y", which="both", left=False, labelleft=False)
+    subminimum_ax.tick_params(axis="y", which="both", right=False)
+    subminimum_ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    break_size = 0.025
+    break_style = {"color": "black", "clip_on": False, "linewidth": 0.9}
+    subminimum_ax.plot(
+        (1.0 - break_size, 1.0 + break_size),
+        (-break_size, break_size),
+        transform=subminimum_ax.transAxes,
+        **break_style,
+    )
+    subminimum_ax.plot(
+        (1.0 - break_size, 1.0 + break_size),
+        (1.0 - break_size, 1.0 + break_size),
+        transform=subminimum_ax.transAxes,
+        **break_style,
+    )
+    ax.plot(
+        (-break_size, break_size),
+        (-break_size, break_size),
+        transform=ax.transAxes,
+        **break_style,
+    )
+    ax.plot(
+        (-break_size, break_size),
+        (1.0 - break_size, 1.0 + break_size),
+        transform=ax.transAxes,
+        **break_style,
+    )
+    fig.supxlabel(r"Random-Compatibility Score $S$", y=0.045)
+    subminimum_ax.grid(
+        which="major", axis="y", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7
+    )
+    subminimum_ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
     ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
     ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
 
@@ -208,7 +261,7 @@ def plot_score_cdf(
             [0],
             color=STRATEGY_COLORS[strategy],
             linewidth=1.7,
-            marker="o" if strategy in floor_only_strategies else None,
+            marker="o" if strategy in subminimum_only_strategies else None,
             markersize=4,
             label=STRATEGY_PRETTY[strategy],
         )
@@ -224,16 +277,16 @@ def plot_score_cdf(
             label=r"Threshold $\tau$",
         )
     )
-    ax.legend(
+    fig.legend(
         handles=handles,
         ncol=5,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 1.015),
+        loc="upper center",
+        bbox_to_anchor=(0.53, 0.985),
         frameon=False,
-        columnspacing=1.0,
-        handlelength=2.2,
+        columnspacing=0.85,
+        handlelength=2.0,
     )
-    fig.subplots_adjust(left=0.12, right=0.995, bottom=0.22, top=0.70)
+    fig.subplots_adjust(left=0.13, right=0.995, bottom=0.23, top=0.70)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(
         output_path,
@@ -426,6 +479,14 @@ def render(
                 "selected_by": "independent held-out random-classifier evaluation v2",
             },
             "figure": str(pdf_path),
+            "figure_axis": {
+                "subminimum_scores": (
+                    f"separate categorical panel for S < {POSITIVE_SCORE_AXIS_MINIMUM}"
+                ),
+                "positive_scores": "logarithmic panel",
+                "positive_display_minimum": POSITIVE_SCORE_AXIS_MINIMUM,
+                "scores_below_display_minimum": "shown in the separate subminimum panel",
+            },
             "aggregate": str(aggregate_path),
             "summary_by_strategy": summaries,
         }
