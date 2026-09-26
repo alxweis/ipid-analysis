@@ -112,6 +112,11 @@ evaluate-random-classifier:
 evaluate-random-classifier-v2:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_evaluation_v2 $(ARGS)
 
+## Compare increment-uniformity bin rules without changing production
+.PHONY: evaluate-increment-bin-rules
+evaluate-increment-bin-rules:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.increment_bin_rule_evaluation $(ARGS)
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################

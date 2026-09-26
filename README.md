@@ -367,6 +367,65 @@ metric-step-sensitivity.pdf
 The ZIP is the preferred review artifact because it contains every compact
 table, the recommendations, the run log, and all three plots.
 
+### Increment-uniformity bin-rule ablation
+
+Before changing the selected validation candidate or production classifier,
+the bin-rule experiment holds `S = min(raw, increment, gap)` fixed and compares:
+
+- the current power-of-two rule with about five expected transitions per bin;
+- a finer power-of-two rule with about three expected transitions per bin;
+- fixed three-bin thirds;
+- adaptive `3/6/9/12` thirds with targets of five, three, and two expected
+  transitions per bin (always capped at 12 bins);
+- a jointly Monte-Carlo-calibrated multiscale test over usable resolutions from
+  `{3, 4, 8, 16}`.
+
+Ternary rules use the exact discrete probabilities induced by mapping all
+65,536 increments into bins; they do not assume that 65,536 is divisible by
+three. The multiscale candidate calibrates the minimum across scales against an
+independent joint null distribution, so it is not treated as an ordinary
+uncorrected p-value. Every complete Raw+Increment+Gap candidate receives its
+own threshold at the same true-RANDOM false-rejection target. Production code
+and constants remain unchanged.
+
+```bash
+# Fast end-to-end smoke run (not statistically conclusive)
+make evaluate-increment-bin-rules ARGS="--paper-samples-per-strategy 100 --selection-samples-per-strategy 100 --test-samples-per-strategy 100 --calibration-samples-per-condition 1000 --null-table-samples 5000 --target-random-frr 0.01 --batch-size 100 --seed 20260926"
+
+# Accuracy-first full run
+make evaluate-increment-bin-rules ARGS="--paper-samples-per-strategy 500000 --selection-samples-per-strategy 100000 --test-samples-per-strategy 500000 --calibration-samples-per-condition 1000000 --null-table-samples 1000000 --target-random-frr 0.0001 --batch-size 10000 --seed 20260926"
+```
+
+The `paper` profile explicitly includes the existing MAX_INC-bounded
+Per-Bucket generator. The independent `selection` and `heldout` profiles span
+the complete increment domain and broader jitter, drift, burst, and
+multi-counter behavior. All profiles are evaluated under ideal, random and
+concentrated loss, global reordering, and combined impairments.
+
+Compact review artifacts are written to
+`data/processed/classifier-validation/increment-bin-rule-evaluation/`:
+
+```text
+summary.json
+bin-rule-results.csv
+bin-rule-by-scenario.csv
+bin-rule-step-sensitivity.csv
+recommendations.txt
+run.log
+increment-bin-rule-review-bundle.zip
+```
+
+Plots are written to
+`reports/figures/classifier-validation/increment-bin-rule-evaluation/`:
+
+```text
+bin-rule-false-random-heatmap.pdf
+bin-rule-accuracy-summary.pdf
+```
+
+For review, send the ZIP. It contains all compact tables, both plots, the
+recommendations, and the generation log.
+
 ## Merging base and mass strategies
 
 The canonical no-connection RT-base and fixed-interval-mass results can be
