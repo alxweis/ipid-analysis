@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 import ipaddress
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import matplotlib
 import numpy as np
@@ -31,6 +30,9 @@ from ipid_analysis.paper_figures import (
     linux_libertine_font_properties,
 )
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_INCREMENT_BIN_COUNTS,
+    CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+    CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     CANDIDATE_NULL_TABLE_SAMPLES,
     CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_NULL_TABLE_VERSION,
@@ -38,7 +40,9 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SCORE_VERSION,
     CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
+    CandidateNullTables,
     candidate_random_scores,
+    create_candidate_null_tables,
 )
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
@@ -54,9 +58,6 @@ from ipid_analysis.strategies import (
     classify_batch,
     classify_batch_mass,
 )
-
-if TYPE_CHECKING:
-    from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 
 app = typer.Typer()
 
@@ -430,7 +431,7 @@ def _classify_mass(
     values: np.ndarray,
     loss_mask: np.ndarray | None = None,
     *,
-    candidate_null_tables: EmpiricalNullTables | None = None,
+    candidate_null_tables: CandidateNullTables | None = None,
     candidate_threshold: float = CANDIDATE_RANDOM_MIN_SCORE,
 ) -> np.ndarray:
     rows = []
@@ -905,9 +906,7 @@ def validate_classifier(
 
     candidate_null_tables = None
     if candidate_random_score:
-        from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
-
-        candidate_null_tables = EmpiricalNullTables(
+        candidate_null_tables = create_candidate_null_tables(
             candidate_null_table_samples,
             candidate_null_table_seed,
         )
@@ -1224,11 +1223,24 @@ def validate_classifier(
             "threshold": candidate_threshold,
             "metrics": list(CANDIDATE_RANDOM_METRICS),
             "combiner": "minimum",
+            "increment_uniformity": {
+                "bin_counts": list(CANDIDATE_INCREMENT_BIN_COUNTS),
+                "target_expected_transitions_per_bin": (
+                    CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN
+                ),
+                "minimum_transitions": CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+                "scale_aggregation": "jointly calibrated minimum",
+                "subsequence_aggregation": "minimum",
+            },
             "target_random_false_rejection_rate": (CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE),
             "null_tables": {
                 "version": CANDIDATE_NULL_TABLE_VERSION,
                 "sample_count": candidate_null_table_samples,
-                "seed": candidate_null_table_seed,
+                "base_seed": candidate_null_table_seed,
+                "component_seeds": {
+                    "increment_uniformity": candidate_null_table_seed + 1,
+                    "gap_uniformity": candidate_null_table_seed + 2,
+                },
                 "pvalue_resolution": 1.0 / (candidate_null_table_samples + 1.0),
             },
             "validation_only": True,

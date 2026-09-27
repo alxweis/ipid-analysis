@@ -9,6 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ipid_analysis.classifier_validation import REQUEST_IP_IDS
+from ipid_analysis.multiscale_increment_uniformity import MultiscaleIncrementNullTables
 from ipid_analysis.plot_chi2_pvalue_cdf import (
     CONNECTION_COUNT,
     IDEAL_DATASET,
@@ -31,10 +32,10 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     render,
 )
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_SCORE_VERSION,
 )
-from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 from ipid_analysis.strategies import (
     MAX_INC,
     IPIDStrategy,
@@ -115,9 +116,11 @@ class Chi2PvalueCDFTest(unittest.TestCase):
         pvalues = calculate_minimum_increment_pvalues(
             sequences,
             np.zeros_like(sequences, dtype=bool),
-            EmpiricalNullTables(256, seed=9),
+            MultiscaleIncrementNullTables(256, seed=10),
         )
-        self.assertTrue(np.all(pvalues <= 1.0 / 257.0))
+        # A jointly calibrated multiscale p-value need not equal the smallest
+        # single-table rank.  This exact counter remains clearly non-uniform.
+        self.assertTrue(np.all(pvalues < 0.05))
 
     def test_log_axis_has_one_minor_tick_between_two_decade_major_ticks(self):
         axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(
@@ -145,7 +148,7 @@ class Chi2PvalueCDFTest(unittest.TestCase):
             sequences,
             np.random.default_rng(12),
         )
-        null_tables = EmpiricalNullTables(128, seed=13)
+        null_tables = MultiscaleIncrementNullTables(128, seed=14)
         lossy_pvalues = calculate_strategy_pvalues(
             lossy_sequences,
             loss_masks,
@@ -272,6 +275,12 @@ class Chi2PvalueCDFTest(unittest.TestCase):
                 CANDIDATE_NULL_TABLE_VERSION,
             )
             self.assertEqual(increment_test["null_tables"]["sample_count"], 64)
+            self.assertEqual(
+                increment_test["bin_counts"],
+                list(CANDIDATE_INCREMENT_BIN_COUNTS),
+            )
+            self.assertEqual(increment_test["null_tables"]["base_seed"], 13)
+            self.assertEqual(increment_test["null_tables"]["seed"], 14)
             self.assertGreater(metadata["x_axis_maximum"], 1.0)
             self.assertEqual(metadata["x_axis_maximum"], X_AXIS_MAXIMUM)
             self.assertEqual(

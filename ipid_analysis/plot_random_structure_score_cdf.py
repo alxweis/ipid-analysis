@@ -1,9 +1,9 @@
 """Plot the selected validation-only RANDOM-candidate score CDFs.
 
 The ``mass-4x25-random-score-cdf-*`` artifacts exactly match the candidate selected by
-the independent v2 evaluation: the minimum of raw-IPID uniformity, empirical
-increment uniformity, and empirical circular gap uniformity. The production
-classifier remains unchanged.
+the full bin-rule evaluation: the minimum of raw-IPID uniformity, jointly calibrated
+multiscale increment uniformity, and empirical circular gap uniformity. The
+production classifier remains unchanged.
 """
 
 from __future__ import annotations
@@ -41,6 +41,9 @@ from ipid_analysis.plot_chi2_pvalue_cdf import (
     generate_chi2_sequences,
 )
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_INCREMENT_BIN_COUNTS,
+    CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+    CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     CANDIDATE_NULL_TABLE_SAMPLES,
     CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_NULL_TABLE_VERSION,
@@ -48,9 +51,10 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SCORE_VERSION,
     CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
+    CandidateNullTables,
     candidate_random_scores,
+    create_candidate_null_tables,
 )
-from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 from ipid_analysis.strategies import (
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
@@ -85,7 +89,7 @@ SCORE_SCHEMA = pa.schema(
 def calculate_scores(
     values: np.ndarray,
     loss_mask: np.ndarray,
-    null_tables: EmpiricalNullTables,
+    null_tables: CandidateNullTables,
 ) -> np.ndarray:
     """Return the uncensored candidate score, including exact zero values."""
     return candidate_random_scores(
@@ -363,7 +367,7 @@ def render(
             (figure_dir / f"{prefix}-{dataset}.pdf").unlink(missing_ok=True)
             (figure_dir / f"{prefix}-{dataset}.json").unlink(missing_ok=True)
         (processed_dir / f"{prefix}.pq").unlink(missing_ok=True)
-    null_tables = EmpiricalNullTables(null_table_samples, null_table_seed)
+    null_tables = create_candidate_null_tables(null_table_samples, null_table_seed)
 
     sequence_rng, impairment_rng, reorder_rng = [
         np.random.default_rng(child) for child in np.random.SeedSequence(seed).spawn(3)
@@ -467,11 +471,24 @@ def render(
                 "combiner": "minimum",
                 "raw_uniformity_bins": 16,
                 "increment_uniformity_order_invariant": False,
+                "increment_uniformity": {
+                    "bin_counts": list(CANDIDATE_INCREMENT_BIN_COUNTS),
+                    "target_expected_transitions_per_bin": (
+                        CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN
+                    ),
+                    "minimum_transitions": CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+                    "scale_aggregation": "jointly calibrated minimum",
+                    "subsequence_aggregation": "minimum",
+                },
                 "gap_uniformity_order_invariant": True,
                 "null_tables": {
                     "version": CANDIDATE_NULL_TABLE_VERSION,
                     "sample_count": null_table_samples,
-                    "seed": null_table_seed,
+                    "base_seed": null_table_seed,
+                    "component_seeds": {
+                        "increment_uniformity": null_table_seed + 1,
+                        "gap_uniformity": null_table_seed + 2,
+                    },
                     "pvalue_resolution": 1.0 / (null_table_samples + 1.0),
                 },
                 "validation_only": True,
@@ -481,7 +498,7 @@ def render(
             "threshold": {
                 "tau": threshold,
                 "target_global_random_false_rejection_rate": (DEFAULT_RANDOM_FALSE_REJECTION_RATE),
-                "selected_by": "independent held-out random-classifier evaluation v2",
+                "selected_by": "full seed-20260927 increment-bin-rule evaluation",
             },
             "figure": str(pdf_path),
             "figure_axis": {
