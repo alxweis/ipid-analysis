@@ -44,6 +44,18 @@ class IncrementBinRuleEvaluationTest(unittest.TestCase):
             selected_bin_counts(BIN_RULE_BY_NAME["multiscale-3-4-8-16"], 24),
             (3, 4, 8),
         )
+        self.assertEqual(
+            selected_bin_counts(BIN_RULE_BY_NAME["multiscale-3-6-9-12"], 10),
+            (3,),
+        )
+        self.assertEqual(
+            selected_bin_counts(BIN_RULE_BY_NAME["multiscale-3-6-9-12"], 18),
+            (3, 6, 9),
+        )
+        self.assertEqual(
+            selected_bin_counts(BIN_RULE_BY_NAME["multiscale-3-6-9-12"], 24),
+            (3, 6, 9, 12),
+        )
 
     def test_ternary_bins_use_exact_discrete_probabilities(self):
         probabilities = _discrete_bin_probabilities(3)
@@ -98,9 +110,16 @@ class IncrementBinRuleEvaluationTest(unittest.TestCase):
                 self.assertTrue(path.is_file(), path)
 
             summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
-            self.assertEqual(summary["experiment_version"], "2")
+            self.assertEqual(summary["experiment_version"], "3")
             self.assertFalse(summary["production_classifier_changed"])
             self.assertEqual(summary["thirds_bin_cap"], 12)
+            self.assertEqual(
+                summary["multiscale_bin_sets"],
+                {
+                    "multiscale-3-4-8-16": [3, 4, 8, 16],
+                    "multiscale-3-6-9-12": [3, 6, 9, 12],
+                },
+            )
             self.assertEqual(
                 [rule["name"] for rule in summary["bin_rules"]],
                 [rule.name for rule in BIN_RULES],
