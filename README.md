@@ -374,6 +374,8 @@ the bin-rule experiment holds `S = min(raw, increment, gap)` fixed and compares:
 
 - the current power-of-two rule with about five expected transitions per bin;
 - a finer power-of-two rule with about three expected transitions per bin;
+- both power-of-two rules with a three-bin fallback whenever the original
+  rule would select only two bins;
 - fixed three-bin thirds;
 - adaptive `3/6/9/12` thirds with targets of five, three, and two expected
   transitions per bin (always capped at 12 bins);
@@ -387,6 +389,14 @@ independent joint null distribution, so it is not treated as an ordinary
 uncorrected p-value. Every complete Raw+Increment+Gap candidate receives its
 own threshold at the same true-RANDOM false-rejection target. Production code
 and constants remain unchanged.
+
+The `power2-e5-min3` and `power2-e3-min3` candidates remain single-scale
+tests: they select exactly one resolution per view. They differ from their
+baselines only when the baseline would use two bins, in which case they use
+three. This deliberately permits fewer than the nominal `e5` or `e3` expected
+observations per bin for those short views. It is distinct from the multiscale
+candidate, which evaluates several resolutions simultaneously and applies a
+joint multiple-testing calibration.
 
 ```bash
 # Fast end-to-end smoke run (not statistically conclusive)
