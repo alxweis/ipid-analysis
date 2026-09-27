@@ -24,8 +24,19 @@ from ipid_analysis.random_classifier_evaluation import (
 
 class IncrementBinRuleEvaluationTest(unittest.TestCase):
     def test_bin_rules_cover_agreed_resolutions_and_cap_thirds_at_twelve(self):
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e5"], 10), (2,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e5-min3"], 10), (3,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e5"], 15), (2,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e5-min3"], 15), (3,))
         self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e5"], 24), (4,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e5-min3"], 24), (4,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e3"], 10), (2,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e3-min3"], 10), (3,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e3"], 12), (4,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e3-min3"], 12), (4,))
         self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e3"], 24), (8,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e3-min3"], 24), (8,))
+        self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["power2-e5-min3"], 9), ())
         self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["fixed-3"], 24), (3,))
         self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["thirds-e3"], 24), (6,))
         self.assertEqual(selected_bin_counts(BIN_RULE_BY_NAME["thirds-e2"], 99), (12,))
@@ -87,6 +98,7 @@ class IncrementBinRuleEvaluationTest(unittest.TestCase):
                 self.assertTrue(path.is_file(), path)
 
             summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
+            self.assertEqual(summary["experiment_version"], "2")
             self.assertFalse(summary["production_classifier_changed"])
             self.assertEqual(summary["thirds_bin_cap"], 12)
             self.assertEqual(

@@ -54,7 +54,7 @@ from ipid_analysis.strategies import MODULUS, random_structure_features
 app = typer.Typer(add_completion=False)
 LOGGER = logging.getLogger(__name__)
 
-EXPERIMENT_VERSION = "1"
+EXPERIMENT_VERSION = "2"
 DEFAULT_PAPER_SAMPLES_PER_STRATEGY = 100_000
 DEFAULT_SELECTION_SAMPLES_PER_STRATEGY = 50_000
 DEFAULT_TEST_SAMPLES_PER_STRATEGY = 100_000
@@ -78,6 +78,7 @@ class IncrementBinRule:
     family: str
     target_expected_per_bin: int | None = None
     description: str = ""
+    minimum_bin_count: int = 2
 
 
 BIN_RULES = (
@@ -88,10 +89,24 @@ BIN_RULES = (
         "current baseline: largest power of two with about five expected transitions/bin",
     ),
     IncrementBinRule(
+        "power2-e5-min3",
+        "power2",
+        5,
+        "power2-e5 with a three-bin fallback for otherwise two-bin views",
+        minimum_bin_count=3,
+    ),
+    IncrementBinRule(
         "power2-e3",
         "power2",
         3,
         "finer neutral rule: largest power of two with about three expected transitions/bin",
+    ),
+    IncrementBinRule(
+        "power2-e3-min3",
+        "power2",
+        3,
+        "power2-e3 with a three-bin fallback for otherwise two-bin views",
+        minimum_bin_count=3,
     ),
     IncrementBinRule(
         "fixed-3",
@@ -140,7 +155,8 @@ def selected_bin_counts(rule: IncrementBinRule, transition_count: int) -> tuple[
         )
         if maximum < 2:
             return ()
-        return (1 << math.floor(math.log2(maximum)),)
+        power_of_two = 1 << math.floor(math.log2(maximum))
+        return (max(rule.minimum_bin_count, power_of_two),)
     if rule.family == "thirds":
         maximum = min(
             MAX_THIRDS_BINS,
@@ -663,7 +679,7 @@ def _plot_heatmap(details: list[dict], output_path: Path) -> Path:
             for rule in BIN_RULES
         ]
     )
-    figure, axis = plt.subplots(figsize=(11.0, 4.2))
+    figure, axis = plt.subplots(figsize=(11.0, 4.8))
     image = axis.imshow(matrix * 100.0, aspect="auto", cmap="magma_r", vmin=0.0, vmax=100.0)
     axis.set_xticks(range(len(strategies)), [name.replace("_", " ").title() for name in strategies])
     axis.set_yticks(range(len(BIN_RULES)), [rule.name for rule in BIN_RULES])
@@ -685,7 +701,7 @@ def _plot_summary(summaries: list[dict], details: list[dict], output_path: Path)
     }
     paper = {row["bin_rule"]: row for row in summaries if row["profile"] == "paper"}
     x = np.arange(len(names))
-    figure, axes = plt.subplots(1, 3, figsize=(12.0, 3.5), sharex=True)
+    figure, axes = plt.subplots(1, 3, figsize=(14.0, 3.7), sharex=True)
     axes[0].bar(x, [100 * heldout[name]["structured_false_random_rate"] for name in names])
     axes[0].set_ylabel("False-RANDOM [%]")
     axes[0].set_title("Held-out aggregate")
