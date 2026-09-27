@@ -26,25 +26,27 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import LogFormatterMathtext, MultipleLocator, NullFormatter
 
 from ipid_analysis.classifier_validation import (
+    FIXED_CONFIG,
     REQUEST_IP_IDS,
     SYNTHETIC_GENERATOR_PARAMETERS,
     _generate_multi_sequences,
     apply_fixed_interval_impairments,
 )
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.multiscale_increment_uniformity import (
+    MultiscaleIncrementNullTables,
+    multiscale_increment_uniformity_pvalues,
+)
 from ipid_analysis.paper_figures import configure_paper_style
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_INCREMENT_BIN_COUNTS,
+    CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+    CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     CANDIDATE_NULL_TABLE_SAMPLES,
     CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_SCORE_VERSION,
-)
-from ipid_analysis.random_classifier_evaluation import (
-    MAX_INCREMENT_BINS,
-    MIN_EXPECTED_INCREMENT_BIN_COUNT,
-    MIN_INCREMENT_TRANSITIONS,
-    EmpiricalNullTables,
-    increment_uniformity_pvalues,
+    create_candidate_null_tables,
 )
 from ipid_analysis.strategies import (
     MAX_INC,
@@ -237,20 +239,23 @@ def apply_strategy_impairments(
 def calculate_minimum_increment_pvalues(
     values: np.ndarray,
     loss_mask: np.ndarray,
-    null_tables: EmpiricalNullTables,
+    null_tables: MultiscaleIncrementNullTables,
 ) -> np.ndarray:
     """Candidate p-value over full, destination, and connection increments."""
-    return increment_uniformity_pvalues(
+    return multiscale_increment_uniformity_pvalues(
         values.astype(np.int64, copy=False),
         ~loss_mask,
+        FIXED_CONFIG,
         null_tables,
+        bin_counts=CANDIDATE_INCREMENT_BIN_COUNTS,
+        target_expected_per_bin=CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     )
 
 
 def calculate_strategy_pvalues(
     sequences: dict[str, np.ndarray],
     loss_masks: dict[str, np.ndarray],
-    null_tables: EmpiricalNullTables,
+    null_tables: MultiscaleIncrementNullTables,
 ) -> dict[str, np.ndarray]:
     """Calculate the candidate increment-uniformity p-value per sequence."""
     return {
@@ -436,7 +441,10 @@ def render(
     if null_table_samples < 1:
         raise ValueError("null_table_samples must be positive")
 
-    null_tables = EmpiricalNullTables(null_table_samples, null_table_seed)
+    null_tables = create_candidate_null_tables(
+        null_table_samples,
+        null_table_seed,
+    ).increment
 
     seed_sequence = np.random.SeedSequence(seed)
     sequence_rng, impairment_rng = [
@@ -529,18 +537,20 @@ def render(
             "subsequences": list(INCREMENT_SUBSEQUENCES),
             "subsequence_aggregation": "minimum",
             "increment_modulus": MODULUS,
-            "minimum_transitions": MIN_INCREMENT_TRANSITIONS,
-            "maximum_bins": MAX_INCREMENT_BINS,
-            "minimum_expected_count_per_bin": MIN_EXPECTED_INCREMENT_BIN_COUNT,
-            "bin_rule": (
-                "largest power of two not exceeding min(maximum_bins, "
-                "transition_count / minimum_expected_count_per_bin)"
+            "minimum_transitions": CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+            "bin_counts": list(CANDIDATE_INCREMENT_BIN_COUNTS),
+            "target_expected_transitions_per_bin": (CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN),
+            "bin_rule": "all usable resolutions from 3/4/8/16",
+            "scale_aggregation": "jointly calibrated minimum",
+            "pvalue_calibration": (
+                "single-scale empirical right tails and an empirical joint minimum, "
+                "both with add-one correction"
             ),
-            "pvalue_calibration": "conservative empirical right tail with add-one correction",
             "null_tables": {
                 "version": CANDIDATE_NULL_TABLE_VERSION,
                 "sample_count": null_table_samples,
-                "seed": null_table_seed,
+                "base_seed": null_table_seed,
+                "seed": null_table_seed + 1,
                 "pvalue_resolution": 1.0 / (null_table_samples + 1.0),
             },
             "order_invariant": False,

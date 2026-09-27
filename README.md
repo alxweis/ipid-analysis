@@ -144,9 +144,11 @@ make validate-classifier ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
 The paper figures use the selected validation-only RANDOM candidate by default:
-the minimum of raw-IPID
-uniformity, increment uniformity, and circular gap uniformity. The calibrated
-threshold and empirical-null specification are recorded in each JSON sidecar.
+the minimum of raw-IPID uniformity, jointly calibrated multiscale increment
+uniformity, and circular gap uniformity. The increment component evaluates all
+usable resolutions from `{3, 4, 8, 16}` in every full, destination, and
+connection view. The calibrated threshold and empirical-null specification are
+recorded in each JSON sidecar.
 This replaces only the final RANDOM decision inside the synthetic validation;
 the production classifier remains unchanged. To reproduce the confusion
 matrices with the current production RANDOM score instead, run:
@@ -211,14 +213,18 @@ make plot-mass-random-score-cdf ARGS="--samples-per-strategy 100000 --seed 42"
 
 The candidate score is
 `S = min(raw_uniformity, increment_uniformity, gap_uniformity)`. Raw uniformity
-uses the established 16-bin Pearson test. Increment uniformity is the empirical,
-adaptive-bin test over the full, two destination, and four connection views; it
-uses only originally adjacent present positions and is order-dependent. Gap uniformity
-compares the complete circular spacing distribution of the present, sorted
+uses the established 16-bin Pearson test. Increment uniformity is the empirical
+multiscale test over the full, two destination, and four connection views. It
+uses every resolution from `{3, 4, 8, 16}` that retains about two expected
+transitions per bin, calibrates the minimum across those resolutions jointly,
+uses only originally adjacent present positions, and is order-dependent. Gap
+uniformity compares the complete circular spacing distribution of the present, sorted
 16-bit IP-ID values against the same versioned discrete empirical RANDOM null;
 it is order-independent. The fixed selected threshold is
-`tau = 8.999991223392587e-06`, calibrated at a target 0.01% RANDOM
-false-rejection rate on the independent held-out v2 evaluation. A sequence is
+`tau = 8.99999122339068e-06`, calibrated at a target 0.01% RANDOM
+false-rejection rate in the full seed-20260927 bin-rule evaluation. Increment
+and gap null tables use the independent seeds 20260928 and 20260929,
+respectively. A sequence is
 RANDOM-compatible when `S >= tau`.
 
 By default, the plotted nontrivial strategies use 100,000 sequences;

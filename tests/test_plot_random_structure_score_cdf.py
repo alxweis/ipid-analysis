@@ -30,12 +30,13 @@ from ipid_analysis.plot_random_structure_score_cdf import (
     render,
 )
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SCORE_VERSION,
+    create_candidate_null_tables,
 )
-from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 
 
 class RandomStructureScoreCDFTest(unittest.TestCase):
@@ -81,7 +82,7 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         scores = calculate_scores(
             values,
             np.zeros_like(values, dtype=bool),
-            EmpiricalNullTables(128, seed=17),
+            create_candidate_null_tables(128, seed=17),
         )
 
         self.assertTrue(np.all(np.isfinite(scores)))
@@ -158,6 +159,14 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
                 CANDIDATE_NULL_TABLE_VERSION,
             )
             self.assertEqual(metadata["score"]["null_tables"]["sample_count"], 64)
+            self.assertEqual(
+                metadata["score"]["increment_uniformity"]["bin_counts"],
+                list(CANDIDATE_INCREMENT_BIN_COUNTS),
+            )
+            self.assertEqual(
+                metadata["score"]["null_tables"]["component_seeds"],
+                {"increment_uniformity": 18, "gap_uniformity": 19},
+            )
             self.assertTrue(metadata["score"]["validation_only"])
             self.assertFalse(metadata["score"]["production_classifier_changed"])
             self.assertEqual(metadata["score"]["random_compatible_when"], "S >= tau")

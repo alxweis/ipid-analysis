@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pyarrow as pa
@@ -32,6 +33,8 @@ from ipid_analysis.classifier_validation import (
     validate_classifier,
 )
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_INCREMENT_BIN_COUNTS,
+    CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
@@ -163,13 +166,20 @@ class ClassifierValidationTest(unittest.TestCase):
     def test_validation_writes_sequences_metrics_and_figures(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            outputs = validate_classifier(
-                samples_per_strategy=8,
-                seed=42,
-                candidate_null_table_samples=64,
-                processed_root=root / "processed",
-                figures_root=root / "figures",
-            )
+            with (
+                patch("ipid_analysis.classifier_validation.configure_paper_style"),
+                patch(
+                    "ipid_analysis.classifier_validation.linux_libertine_font_properties",
+                    return_value=None,
+                ),
+            ):
+                outputs = validate_classifier(
+                    samples_per_strategy=8,
+                    seed=42,
+                    candidate_null_table_samples=64,
+                    processed_root=root / "processed",
+                    figures_root=root / "figures",
+                )
 
             for path in outputs.values():
                 self.assertTrue(path.is_file(), path)
@@ -264,6 +274,17 @@ class ClassifierValidationTest(unittest.TestCase):
                 CANDIDATE_NULL_TABLE_VERSION,
             )
             self.assertEqual(random_score["null_tables"]["sample_count"], 64)
+            self.assertEqual(
+                random_score["increment_uniformity"]["bin_counts"],
+                list(CANDIDATE_INCREMENT_BIN_COUNTS),
+            )
+            self.assertEqual(
+                random_score["null_tables"]["component_seeds"],
+                {
+                    "increment_uniformity": CANDIDATE_NULL_TABLE_SEED + 1,
+                    "gap_uniformity": CANDIDATE_NULL_TABLE_SEED + 2,
+                },
+            )
             self.assertTrue(random_score["validation_only"])
             self.assertFalse(random_score["production_classifier_changed"])
             self.assertEqual(
