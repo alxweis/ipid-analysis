@@ -54,7 +54,7 @@ from ipid_analysis.strategies import MODULUS, random_structure_features
 app = typer.Typer(add_completion=False)
 LOGGER = logging.getLogger(__name__)
 
-EXPERIMENT_VERSION = "2"
+EXPERIMENT_VERSION = "3"
 DEFAULT_PAPER_SAMPLES_PER_STRATEGY = 100_000
 DEFAULT_SELECTION_SAMPLES_PER_STRATEGY = 50_000
 DEFAULT_TEST_SAMPLES_PER_STRATEGY = 100_000
@@ -70,6 +70,7 @@ MIN_INCREMENT_TRANSITIONS = 10
 MAX_POWER_OF_TWO_BINS = 16
 MAX_THIRDS_BINS = 12
 MULTISCALE_BINS = (3, 4, 8, 16)
+THIRDS_MULTISCALE_BINS = (3, 6, 9, 12)
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class IncrementBinRule:
     target_expected_per_bin: int | None = None
     description: str = ""
     minimum_bin_count: int = 2
+    bin_counts: tuple[int, ...] = ()
 
 
 BIN_RULES = (
@@ -136,6 +138,14 @@ BIN_RULES = (
         "multiscale",
         2,
         "jointly calibrated minimum across usable 3/4/8/16-bin tests",
+        bin_counts=MULTISCALE_BINS,
+    ),
+    IncrementBinRule(
+        "multiscale-3-6-9-12",
+        "multiscale",
+        2,
+        "jointly calibrated minimum across usable 3/6/9/12-bin tests",
+        bin_counts=THIRDS_MULTISCALE_BINS,
     ),
 )
 BIN_RULE_BY_NAME = {rule.name: rule for rule in BIN_RULES}
@@ -165,8 +175,10 @@ def selected_bin_counts(rule: IncrementBinRule, transition_count: int) -> tuple[
         candidates = tuple(count for count in (3, 6, 9, 12) if count <= maximum)
         return candidates[-1:] if candidates else ()
     if rule.family == "multiscale":
+        if not rule.bin_counts:
+            raise ValueError(f"multiscale rule {rule.name} does not declare bin counts")
         maximum = transition_count // int(rule.target_expected_per_bin)
-        return tuple(count for count in MULTISCALE_BINS if count <= maximum)
+        return tuple(count for count in rule.bin_counts if count <= maximum)
     raise ValueError(f"unknown bin-rule family: {rule.family}")
 
 
@@ -679,7 +691,7 @@ def _plot_heatmap(details: list[dict], output_path: Path) -> Path:
             for rule in BIN_RULES
         ]
     )
-    figure, axis = plt.subplots(figsize=(11.0, 4.8))
+    figure, axis = plt.subplots(figsize=(11.0, 5.2))
     image = axis.imshow(matrix * 100.0, aspect="auto", cmap="magma_r", vmin=0.0, vmax=100.0)
     axis.set_xticks(range(len(strategies)), [name.replace("_", " ").title() for name in strategies])
     axis.set_yticks(range(len(BIN_RULES)), [rule.name for rule in BIN_RULES])
@@ -701,7 +713,7 @@ def _plot_summary(summaries: list[dict], details: list[dict], output_path: Path)
     }
     paper = {row["bin_rule"]: row for row in summaries if row["profile"] == "paper"}
     x = np.arange(len(names))
-    figure, axes = plt.subplots(1, 3, figsize=(14.0, 3.7), sharex=True)
+    figure, axes = plt.subplots(1, 3, figsize=(15.5, 4.0), sharex=True)
     axes[0].bar(x, [100 * heldout[name]["structured_false_random_rate"] for name in names])
     axes[0].set_ylabel("False-RANDOM [%]")
     axes[0].set_title("Held-out aggregate")
@@ -901,6 +913,11 @@ def evaluate_increment_bin_rules(
         "minimum_increment_transitions": MIN_INCREMENT_TRANSITIONS,
         "thirds_bin_cap": MAX_THIRDS_BINS,
         "multiscale_bins": list(MULTISCALE_BINS),
+        "multiscale_bin_sets": {
+            rule.name: list(rule.bin_counts)
+            for rule in BIN_RULES
+            if rule.family == "multiscale"
+        },
         "bin_rules": [rule.__dict__ for rule in BIN_RULES],
         "exact_discrete_bin_probabilities": True,
         "multiscale_calibration": (

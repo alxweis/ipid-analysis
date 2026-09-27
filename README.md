@@ -379,8 +379,8 @@ the bin-rule experiment holds `S = min(raw, increment, gap)` fixed and compares:
 - fixed three-bin thirds;
 - adaptive `3/6/9/12` thirds with targets of five, three, and two expected
   transitions per bin (always capped at 12 bins);
-- a jointly Monte-Carlo-calibrated multiscale test over usable resolutions from
-  `{3, 4, 8, 16}`.
+- jointly Monte-Carlo-calibrated multiscale tests over usable resolutions from
+  `{3, 4, 8, 16}` and `{3, 6, 9, 12}`.
 
 Ternary rules use the exact discrete probabilities induced by mapping all
 65,536 increments into bins; they do not assume that 65,536 is divisible by
@@ -390,21 +390,27 @@ uncorrected p-value. Every complete Raw+Increment+Gap candidate receives its
 own threshold at the same true-RANDOM false-rejection target. Production code
 and constants remain unchanged.
 
-The `power2-e5-min3` and `power2-e3-min3` candidates remain single-scale
-tests: they select exactly one resolution per view. They differ from their
-baselines only when the baseline would use two bins, in which case they use
-three. This deliberately permits fewer than the nominal `e5` or `e3` expected
-observations per bin for those short views. It is distinct from the multiscale
-candidate, which evaluates several resolutions simultaneously and applies a
-joint multiple-testing calibration.
+The two multiscale candidates provide a direct practice-oriented comparison
+between diverse dyadic resolutions and resolutions aligned with the one-third
+MAX_INC support. Each bin set receives its own joint empirical null
+distribution. The `power2-e5-min3` and `power2-e3-min3` candidates remain
+single-scale tests: they select exactly one resolution per view. They differ
+from their baselines only when the baseline would use two bins, in which case
+they use three. This deliberately permits fewer than the nominal `e5` or `e3`
+expected observations per bin for those short views. It is distinct from the
+multiscale candidates, which evaluate several resolutions simultaneously and
+apply a joint multiple-testing calibration.
 
 ```bash
 # Fast end-to-end smoke run (not statistically conclusive)
 make evaluate-increment-bin-rules ARGS="--paper-samples-per-strategy 100 --selection-samples-per-strategy 100 --test-samples-per-strategy 100 --calibration-samples-per-condition 1000 --null-table-samples 5000 --target-random-frr 0.01 --batch-size 100 --seed 20260926"
 
 # Accuracy-first full run
-make evaluate-increment-bin-rules ARGS="--paper-samples-per-strategy 500000 --selection-samples-per-strategy 100000 --test-samples-per-strategy 500000 --calibration-samples-per-condition 1000000 --null-table-samples 1000000 --target-random-frr 0.0001 --batch-size 10000 --seed 20260926"
+make evaluate-increment-bin-rules ARGS="--paper-samples-per-strategy 500000 --selection-samples-per-strategy 100000 --test-samples-per-strategy 500000 --calibration-samples-per-condition 1000000 --null-table-samples 1000000 --target-random-frr 0.0001 --batch-size 10000 --seed 20260927"
 ```
+
+The full command deliberately uses a fresh seed for the final multiscale-bin-set
+comparison because the earlier seed already informed the challenger design.
 
 The `paper` profile explicitly includes the existing MAX_INC-bounded
 Per-Bucket generator. The independent `selection` and `heldout` profiles span
