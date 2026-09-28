@@ -24,6 +24,7 @@ from ipid_analysis.classifier_validation import (
     RT_STRATEGIES,
     TRIVIAL_SAMPLES_PER_STRATEGY,
     _confusion_metrics,
+    _format_matrix_percentage,
     _generate_multi_sequences,
     apply_fixed_interval_impairments,
     apply_reordering,
@@ -52,6 +53,13 @@ from ipid_analysis.strategies import (
 
 
 class ClassifierValidationTest(unittest.TestCase):
+    def test_small_nonzero_confusion_percentages_are_not_rendered_as_zero(self):
+        self.assertEqual(_format_matrix_percentage(0.0), "-")
+        self.assertEqual(_format_matrix_percentage(0.001), "<0.1")
+        self.assertEqual(_format_matrix_percentage(0.099), "<0.1")
+        self.assertEqual(_format_matrix_percentage(0.1), "0.1")
+        self.assertEqual(_format_matrix_percentage(12.34), "12.3")
+
     def test_multiclass_mcc_does_not_overflow_for_production_sized_counts(self):
         expected = ["A"] * 50_000 + ["B"] * 50_000
         detected = ["A"] * 40_000 + ["B"] * 10_000 + ["A"] * 10_000 + ["B"] * 40_000

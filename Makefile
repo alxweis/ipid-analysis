@@ -102,6 +102,16 @@ validate-classifier:
 plot-mass-random-score-cdf:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_structure_score_cdf $(ARGS)
 
+## Plot the adapted NIST SP 800-22 short-IPID baseline
+.PHONY: plot-nist-short-sequence-baseline
+plot-nist-short-sequence-baseline:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_nist_short_sequence_baseline $(ARGS)
+
+## Plot held-out current/NIST/candidate RANDOM-classifier diagnostics
+.PHONY: plot-random-classifier-diagnostics
+plot-random-classifier-diagnostics:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_classifier_diagnostics $(ARGS)
+
 ## Evaluate all RANDOM-score metrics and their 63 non-empty combinations
 .PHONY: evaluate-random-classifier
 evaluate-random-classifier:

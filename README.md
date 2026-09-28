@@ -246,10 +246,84 @@ mass-4x25-random-score-cdf-lossy-reordered.pdf
 
 The
 logarithmic x-axis reserves one decade of space below the smallest score,
-labels every second power of ten as a major tick, and uses the intervening
-powers as minor ticks. Strategies whose complete CDF coincides at the numerical
-score floor are additionally marked in their strategy colors on that shared
-vertical line.
+labels every power of ten as a major tick, and uses the customary unlabeled
+logarithmic minor ticks. Strategies whose complete CDF coincides at the
+numerical score floor are additionally marked in their strategy colors on that
+shared vertical line.
+
+### Adapted NIST SP 800-22 short-sequence baseline
+
+Generate a reproducible comparison baseline derived from the established NIST
+SP 800-22 Rev. 1a tests:
+
+```bash
+make plot-nist-short-sequence-baseline
+# Fast smoke run, not paper-conclusive:
+make plot-nist-short-sequence-baseline ARGS="--samples-per-strategy 10 --null-table-samples 100 --batch-size 10"
+```
+
+This is explicitly an adapted comparison baseline, not a claim that the short
+IP-ID sequences have undergone NIST validation. Every present IP-ID is encoded
+as an unsigned, big-endian 16-bit word in measurement order. Missing replies
+are omitted and never replaced by artificial bits. Complete Mass sequences
+therefore contain 1,600 bits; the exact 20%-loss cases contain 1,280 bits.
+
+Only tests whose SP 800-22 input-size recommendations can be met at both
+lengths are included: Frequency, Block Frequency (M=32), Runs, Longest Run
+(M=8), Spectral DFT, both Serial outputs (m=4), Approximate Entropy (m=4), and
+forward/reverse Cumulative Sums. Rank, template, Universal, Linear Complexity,
+and excursion tests are recorded as not applicable with their exclusion reason
+in the JSON report.
+
+The minimum of the ten dependent component p-values is not treated as another
+ordinary p-value. It is calibrated against IID-bit Monte Carlo null tables for
+the exact 1,280- or 1,600-bit length, using an add-one correction. The combined
+compatibility score is classified RANDOM at the same target 0.01% true-RANDOM
+false-rejection rate used for the selected IP-ID-specific candidate. This keeps
+the comparison fair without changing the published component statistics.
+
+The command evaluates Ideal, 20% Loss, 20% Reordering, and 20% Loss plus 20%
+Reordering. It writes four score CDFs and a four-panel component-by-strategy
+heatmap below `reports/figures/classifier-validation/nist-baseline/`, plus a
+compact review bundle and the detailed Parquet score table below
+`data/processed/classifier-validation/nist-baseline/`:
+
+```text
+mass-4x25-nist-score-cdf-ideal.pdf
+mass-4x25-nist-score-cdf-lossy.pdf
+mass-4x25-nist-score-cdf-reordered.pdf
+mass-4x25-nist-score-cdf-lossy-reordered.pdf
+nist-test-strategy-heatmap.pdf
+nist-baseline-review-bundle.zip
+mass-4x25-nist-baseline-scores.pq
+```
+
+### Held-out RANDOM-classifier paper diagnostics
+
+Compare the current production score, the adapted NIST baseline, and the
+selected validation candidate on the independent held-out v2 generators:
+
+```bash
+make plot-random-classifier-diagnostics
+# Fast smoke run, not paper-conclusive:
+make plot-random-classifier-diagnostics ARGS="--samples-per-generator 10 --candidate-null-samples 100 --nist-null-samples 100 --batch-size 10"
+```
+
+The diagnostics use all four impairment conditions and do not change the
+production classifier. They write:
+
+```text
+random-classifier-candidate-confusion.pdf
+random-classifier-method-confusion.pdf
+random-classifier-candidate-by-generator.pdf
+```
+
+The first figure isolates the binary structured-versus-RANDOM decision. The
+second compares all three methods at their declared thresholds. The third
+retains each held-out generator separately so difficult jittered, drifting,
+bursty, per-scope, clustered, and multi-counter families are not hidden behind
+near-perfect aggregate accuracy. Non-zero confusion-matrix cells below 0.1%
+are rendered as `<0.1` rather than `0.0`.
 
 ### RANDOM metric-selection experiment
 

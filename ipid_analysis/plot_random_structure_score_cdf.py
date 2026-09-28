@@ -27,19 +27,6 @@ from matplotlib.ticker import MultipleLocator, NullFormatter
 from ipid_analysis.classifier_validation import apply_fixed_interval_impairments, apply_reordering
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
 from ipid_analysis.paper_figures import configure_paper_style
-from ipid_analysis.plot_chi2_pvalue_cdf import (
-    CONNECTION_COUNT,
-    DEFAULT_SEED,
-    IDEAL_SEQUENCE_LENGTH,
-    LOSS_FRACTION,
-    PLOT_STRATEGIES,
-    PRESENT_SEQUENCE_LENGTH,
-    REORDER_FRACTION,
-    REQUESTS_PER_CONNECTION,
-    TRIVIAL_SAMPLES_PER_STRATEGY,
-    TRIVIAL_STRATEGIES,
-    generate_chi2_sequences,
-)
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_INCREMENT_MIN_TRANSITIONS,
@@ -58,6 +45,19 @@ from ipid_analysis.random_classifier_candidate import (
 from ipid_analysis.strategies import (
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
+)
+from ipid_analysis.synthetic_mass_sequences import (
+    CONNECTION_COUNT,
+    DEFAULT_SEED,
+    IDEAL_SEQUENCE_LENGTH,
+    LOSS_FRACTION,
+    PLOT_STRATEGIES,
+    PRESENT_SEQUENCE_LENGTH,
+    REORDER_FRACTION,
+    REQUESTS_PER_CONNECTION,
+    TRIVIAL_SAMPLES_PER_STRATEGY,
+    TRIVIAL_STRATEGIES,
+    generate_mass_paper_sequences,
 )
 
 app = typer.Typer()
@@ -154,6 +154,8 @@ def plot_score_cdf(
     output_path: Path,
     *,
     dataset_label: str,
+    x_label: str = r"Random-Compatibility Score $S$",
+    method_title: str = "Selected RANDOM-candidate score",
 ) -> Path:
     configure_paper_style()
     fig = plt.figure(figsize=(7.16, 2.65))
@@ -253,7 +255,7 @@ def plot_score_cdf(
         **break_style,
     )
     fig.supxlabel(
-        r"Random-Compatibility Score $S$",
+        x_label,
         y=0.025,
         fontsize=plt.rcParams["axes.labelsize"],
     )
@@ -303,8 +305,7 @@ def plot_score_cdf(
         bbox_inches="tight",
         metadata={
             "Title": (
-                "Selected RANDOM-candidate score distributions "
-                f"by IP-ID selection strategy ({dataset_label})"
+                f"{method_title} distributions by IP-ID selection strategy ({dataset_label})"
             ),
             "Subject": f"Synthetic 4x25 candidate-score CDFs ({dataset_label})",
             "Creator": "ipid-analysis",
@@ -362,17 +363,12 @@ def render(
 
     processed_dir = processed_root / "classifier-validation"
     figure_dir = figures_root / "classifier-validation"
-    for prefix in ("chi2-pvalue-cdf", "random-structure-score-cdf"):
-        for dataset in ("ideal", "lossy", "lossy-reordered"):
-            (figure_dir / f"{prefix}-{dataset}.pdf").unlink(missing_ok=True)
-            (figure_dir / f"{prefix}-{dataset}.json").unlink(missing_ok=True)
-        (processed_dir / f"{prefix}.pq").unlink(missing_ok=True)
     null_tables = create_candidate_null_tables(null_table_samples, null_table_seed)
 
     sequence_rng, impairment_rng, reorder_rng = [
         np.random.default_rng(child) for child in np.random.SeedSequence(seed).spawn(3)
     ]
-    ideal_sequences = generate_chi2_sequences(samples_per_strategy, sequence_rng)
+    ideal_sequences = generate_mass_paper_sequences(samples_per_strategy, sequence_rng)
     datasets: dict[str, dict[str, np.ndarray]] = {
         MASS_IDEAL_DATASET: {},
         MASS_LOSSY_DATASET: {},
