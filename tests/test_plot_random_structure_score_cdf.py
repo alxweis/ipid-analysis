@@ -7,11 +7,6 @@ from unittest.mock import patch
 import numpy as np
 import pyarrow.parquet as pq
 
-from ipid_analysis.plot_chi2_pvalue_cdf import (
-    PLOT_STRATEGIES,
-    TRIVIAL_SAMPLES_PER_STRATEGY,
-    generate_chi2_sequences,
-)
 from ipid_analysis.plot_random_structure_score_cdf import (
     DEFAULT_NULL_TABLE_SAMPLES,
     DEFAULT_RANDOM_FALSE_REJECTION_RATE,
@@ -36,6 +31,11 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SCORE_VERSION,
     create_candidate_null_tables,
+)
+from ipid_analysis.synthetic_mass_sequences import (
+    PLOT_STRATEGIES,
+    TRIVIAL_SAMPLES_PER_STRATEGY,
+    generate_mass_paper_sequences,
 )
 
 
@@ -78,7 +78,7 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
 
     def test_score_is_a_finite_probability_like_value(self):
         rng = np.random.default_rng(23)
-        values = generate_chi2_sequences(32, rng)["RANDOM"]
+        values = generate_mass_paper_sequences(32, rng)["RANDOM"]
         scores = calculate_scores(
             values,
             np.zeros_like(values, dtype=bool),

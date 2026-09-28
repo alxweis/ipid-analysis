@@ -649,6 +649,15 @@ def _matrix_percentages(metrics: dict) -> np.ndarray:
     return np.asarray(metrics["confusion_matrix"]["row_percentages"], dtype=float)
 
 
+def _format_matrix_percentage(percentage: float) -> str:
+    """Format cells without presenting a small non-zero rate as zero."""
+    if percentage == 0:
+        return "-"
+    if percentage < 0.1:
+        return "<0.1"
+    return f"{percentage:.1f}"
+
+
 def _draw_confusion_matrix(
     ax,
     metrics: dict,
@@ -686,7 +695,7 @@ def _draw_confusion_matrix(
             ax.text(
                 column_index,
                 row_index,
-                "-" if percentage == 0 else f"{percentage:.1f}",
+                _format_matrix_percentage(percentage),
                 ha="center",
                 va="center",
                 color="white" if percentage >= 50 else "#222222",
