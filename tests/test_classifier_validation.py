@@ -191,6 +191,18 @@ class ClassifierValidationTest(unittest.TestCase):
 
             for path in outputs.values():
                 self.assertTrue(path.is_file(), path)
+            self.assertEqual(
+                {
+                    outputs["mass_ideal_pdf"].name,
+                    outputs["mass_lossy_vs_reordered_pdf"].name,
+                    outputs["mass_lossy_vs_lossy_reordered_pdf"].name,
+                },
+                {
+                    "mass-4x25-classifier-confusion-ideal.pdf",
+                    "mass-4x25-classifier-confusion-lossy-vs-reordered.pdf",
+                    "mass-4x25-classifier-confusion-lossy-vs-lossy-reordered.pdf",
+                },
+            )
 
             table = pq.read_table(outputs["dataset"])
             rt_row_count = 2 * TRIVIAL_SAMPLES_PER_STRATEGY + 4 * 8

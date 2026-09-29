@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
 from ipid_analysis.paper_figures import (
     PERCENTAGE_CMAP,
+    add_fixed_percentage_colorbar,
     configure_paper_style,
     linux_libertine_font_properties,
 )
@@ -685,6 +686,7 @@ def _draw_confusion_matrix(
         rotation_mode="anchor",
     )
     ax.set_yticks(np.arange(len(ylabels)), ylabels)
+    ax.set_box_aspect(0.50)
     if title:
         title_font = linux_libertine_font_properties("DR", size=11)
         ax.set_title(title, pad=6, fontproperties=title_font)
@@ -725,7 +727,7 @@ def plot_ideal_confusion_matrix(
     title: str,
 ) -> Path:
     configure_paper_style()
-    figure_height = 3.75 if len(generated_classes) > 4 else 3.25
+    figure_height = 3.55 if len(generated_classes) > 4 else 3.20
     fig, ax = plt.subplots(figsize=(7.16, figure_height))
     image = _draw_confusion_matrix(
         ax,
@@ -735,10 +737,9 @@ def plot_ideal_confusion_matrix(
     )
     ax.set_xlabel("Detected IP-ID Selection Strategy")
     ax.set_ylabel("Generating IP-ID\nSelection Strategy")
-    colorbar = fig.colorbar(image, ax=ax, pad=0.04, fraction=0.045, ticks=np.arange(0, 101, 20))
-    colorbar.set_label("Percentage [%]")
+    add_fixed_percentage_colorbar(fig, image)
     fig.subplots_adjust(
-        left=0.22 if len(generated_classes) > 4 else 0.19,
+        left=0.24 if len(generated_classes) > 4 else 0.20,
         right=0.88,
         bottom=0.32,
         top=0.98,
@@ -766,14 +767,22 @@ def plot_confusion_matrix_grid(
     if len(panels) != nrows * ncols:
         raise ValueError("panel count must equal nrows * ncols")
     configure_paper_style()
+    if (nrows, ncols) == (1, 2):
+        figure_size = (7.16, 3.35)
+    elif (nrows, ncols) == (2, 2):
+        figure_size = (7.16, 5.00)
+    elif (nrows, ncols) == (2, 1):
+        figure_size = (7.16, 5.85)
+    else:
+        figure_size = (7.16, 3.25 * nrows)
     fig, axes = plt.subplots(
         nrows=nrows,
         ncols=ncols,
         sharex=True,
         sharey=True,
-        figsize=(7.16, 3.35 if nrows == 1 else 6.4),
+        figsize=figure_size,
         squeeze=False,
-        gridspec_kw={"hspace": 0.42, "wspace": 0.10},
+        gridspec_kw={"hspace": 0.30, "wspace": 0.10},
     )
     image = None
     for axis, (panel_title, metrics) in zip(axes.flat, panels, strict=True):
@@ -786,12 +795,15 @@ def plot_confusion_matrix_grid(
         )
     for axis in axes[:-1, :].flat:
         axis.tick_params(axis="x", bottom=False, labelbottom=False)
-    fig.supxlabel("Detected IP-ID Selection Strategy", y=0.005 if nrows == 1 else 0.015)
+    fig.supxlabel("Detected IP-ID Selection Strategy", y=0.005 if nrows == 1 else 0.012)
     fig.supylabel("Generating IP-ID Selection Strategy", x=0.012)
-    fig.subplots_adjust(left=0.20, right=0.90, bottom=0.34 if nrows == 1 else 0.17, top=0.94)
-    colorbar_axis = fig.add_axes([0.93, 0.22, 0.016, 0.62])
-    colorbar = fig.colorbar(image, cax=colorbar_axis, ticks=np.arange(0, 101, 20))
-    colorbar.set_label("Percentage [%]")
+    if nrows == 1:
+        fig.subplots_adjust(left=0.20, right=0.88, bottom=0.34, top=0.94)
+    elif ncols == 1:
+        fig.subplots_adjust(left=0.25, right=0.88, bottom=0.17, top=0.96)
+    else:
+        fig.subplots_adjust(left=0.20, right=0.88, bottom=0.16, top=0.96)
+    add_fixed_percentage_colorbar(fig, image)
     return _save_figure(
         fig,
         output_path,
@@ -1387,6 +1399,13 @@ def validate_classifier(
     base_reordered_3_pdf = figure_dir / "base-4x4-classifier-confusion-reordered-3.pdf"
     base_reordered_4_pdf = figure_dir / "base-4x4-classifier-confusion-reordered-4.pdf"
     mass_pdf = figure_dir / "mass-4x25-classifier-confusion.pdf"
+    mass_ideal_pdf = figure_dir / "mass-4x25-classifier-confusion-ideal.pdf"
+    mass_lossy_vs_reordered_pdf = (
+        figure_dir / "mass-4x25-classifier-confusion-lossy-vs-reordered.pdf"
+    )
+    mass_lossy_vs_lossy_reordered_pdf = (
+        figure_dir / "mass-4x25-classifier-confusion-lossy-vs-lossy-reordered.pdf"
+    )
     plot_confusion_matrix_grid(
         (("Ideal", rt_metrics), ("3 Reordered (18.75%)", base_reordered_3_metrics)),
         RT_STRATEGIES,
@@ -1422,6 +1441,36 @@ def validate_classifier(
         title="Mass 4x25 classifier validation",
         subject="Synthetic Mass 4x25 IP-ID classifier confusion matrices",
     )
+    plot_ideal_confusion_matrix(
+        fixed_metrics,
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
+        mass_ideal_pdf,
+        title="Mass 4x25 ideal classifier validation",
+    )
+    plot_confusion_matrix_grid(
+        (("20% Lossy", lossy_metrics), ("20% Reordered", mass_reordered_metrics)),
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
+        mass_lossy_vs_reordered_pdf,
+        nrows=2,
+        ncols=1,
+        title="Mass 4x25 classifier validation: Lossy versus Reordered",
+        subject="Synthetic Mass 4x25 Lossy and Reordered confusion matrices",
+    )
+    plot_confusion_matrix_grid(
+        (
+            ("20% Lossy", lossy_metrics),
+            ("20% Lossy + 20% Reordered", reordered_metrics),
+        ),
+        FIXED_IMPAIRED_STRATEGIES,
+        FIXED_IMPAIRED_DETECTED_STRATEGIES,
+        mass_lossy_vs_lossy_reordered_pdf,
+        nrows=2,
+        ncols=1,
+        title="Mass 4x25 classifier validation: Lossy impairment comparison",
+        subject="Synthetic Mass 4x25 Lossy impairment confusion matrices",
+    )
 
     return {
         "dataset": dataset_path,
@@ -1430,6 +1479,9 @@ def validate_classifier(
         "base_reordered_4_pdf": base_reordered_4_pdf,
         "base_reordered_4_json": base_reordered_4_json,
         "mass_pdf": mass_pdf,
+        "mass_ideal_pdf": mass_ideal_pdf,
+        "mass_lossy_vs_reordered_pdf": mass_lossy_vs_reordered_pdf,
+        "mass_lossy_vs_lossy_reordered_pdf": mass_lossy_vs_lossy_reordered_pdf,
         "mass_json": mass_json,
         "out_of_scope_json": out_of_scope_json,
     }

@@ -74,6 +74,31 @@ PERCENTAGE_CMAP = LinearSegmentedColormap.from_list(
     "percentage_blues",
     ("#FFFFFF", "#DEEBF7", "#9ECAE1", "#4292C6", "#08519C", "#08306B"),
 )
+PERCENTAGE_COLORBAR_WIDTH_INCHES = 0.12
+PERCENTAGE_COLORBAR_HEIGHT_INCHES = 2.15
+
+
+def add_fixed_percentage_colorbar(
+    fig,
+    mappable,
+    *,
+    center_y: float = 0.56,
+    left: float = 0.92,
+    label: str = "Percentage [%]",
+):
+    """Add the same physically sized percentage colorbar to paper figures."""
+    figure_width, figure_height = fig.get_size_inches()
+    width = PERCENTAGE_COLORBAR_WIDTH_INCHES / figure_width
+    height = PERCENTAGE_COLORBAR_HEIGHT_INCHES / figure_height
+    colorbar_axis = fig.add_axes((left, center_y - height / 2.0, width, height))
+    colorbar = fig.colorbar(
+        mappable,
+        cax=colorbar_axis,
+        ticks=np.arange(0, 101, 20),
+    )
+    colorbar.set_label(label)
+    return colorbar
+
 
 INCREMENT_STRATEGIES = ("SINGLE", "PER_DESTINATION", "PER_CONNECTION", "PER_BUCKET")
 INCREMENT_LINEWIDTHS = {
@@ -147,9 +172,7 @@ def _register_linux_libertine_fonts() -> tuple[str, tuple[Path, ...]]:
     if configured_dir:
         font_dir = Path(configured_dir).expanduser()
         if not font_dir.is_dir():
-            raise RuntimeError(
-                f"{LINUX_LIBERTINE_FONT_DIR_ENV} is not a directory: {font_dir}"
-            )
+            raise RuntimeError(f"{LINUX_LIBERTINE_FONT_DIR_ENV} is not a directory: {font_dir}")
         discovered = font_manager.findSystemFonts([str(font_dir)], fontext="ttf")
     else:
         discovered = font_manager.findSystemFonts(fontext="ttf")

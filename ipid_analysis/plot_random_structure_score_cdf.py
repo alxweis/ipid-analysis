@@ -108,8 +108,10 @@ def _write_json(value: dict, output_path: Path) -> Path:
     return output_path
 
 
-def _log_axis_parameters() -> tuple[float, np.ndarray, np.ndarray]:
-    axis_minimum_exponent = int(np.log10(POSITIVE_SCORE_AXIS_MINIMUM))
+def _log_axis_parameters(
+    positive_axis_minimum: float = POSITIVE_SCORE_AXIS_MINIMUM,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    axis_minimum_exponent = int(np.floor(np.log10(positive_axis_minimum)))
     exponents = np.arange(axis_minimum_exponent, 1, dtype=int)
     major_mask = (exponents % X_MAJOR_EXPONENT_STEP) == 0
     major_ticks = np.power(10.0, exponents[major_mask].astype(float))
@@ -122,30 +124,51 @@ def _log_axis_parameters() -> tuple[float, np.ndarray, np.ndarray]:
         ],
         dtype=float,
     )
-    return 10.0**axis_minimum_exponent, major_ticks, minor_ticks
+    return positive_axis_minimum, major_ticks, minor_ticks
 
 
-def _subminimum_only_strategies(scores: dict[str, np.ndarray]) -> list[str]:
+def _subminimum_only_strategies(
+    scores: dict[str, np.ndarray],
+    positive_axis_minimum: float = POSITIVE_SCORE_AXIS_MINIMUM,
+) -> list[str]:
     """Return strategies entirely below the positive log-axis boundary."""
     return [
         strategy
         for strategy in PLOT_STRATEGIES
-        if np.all(scores[strategy] < POSITIVE_SCORE_AXIS_MINIMUM)
+        if np.all(scores[strategy] < positive_axis_minimum)
     ]
 
 
-def _positive_ecdf_coordinates(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _positive_ecdf_coordinates(
+    values: np.ndarray,
+    positive_axis_minimum: float = POSITIVE_SCORE_AXIS_MINIMUM,
+) -> tuple[np.ndarray, np.ndarray]:
     """ECDF coordinates above the log boundary, retaining censored mass."""
-    visible = values[values >= POSITIVE_SCORE_AXIS_MINIMUM]
+    visible = values[values >= positive_axis_minimum]
     if not len(visible):
         return np.empty(0, dtype=float), np.empty(0, dtype=float)
     ordered = np.sort(visible)
     censored_count = len(values) - len(visible)
     percentages = 100.0 * (censored_count + np.arange(1, len(ordered) + 1)) / len(values)
     return (
-        np.concatenate(([ordered[0]], ordered, [X_AXIS_MAXIMUM])),
-        np.concatenate(([100.0 * censored_count / len(values)], percentages, [100.0])),
+        np.concatenate(([ordered[0]], ordered)),
+        np.concatenate(([100.0 * censored_count / len(values)], percentages)),
     )
+
+
+def _ecdf_marker_coordinates(
+    values: np.ndarray,
+    percentages: np.ndarray,
+    positive_axis_minimum: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return actual ECDF sample points for sparse, non-displacing markers."""
+    ordered = np.sort(values)
+    indices = np.ceil(percentages * len(ordered) / 100.0).astype(int) - 1
+    indices = np.clip(indices, 0, len(ordered) - 1)
+    x_values = ordered[indices]
+    y_values = 100.0 * (indices + 1) / len(ordered)
+    visible = x_values >= positive_axis_minimum
+    return x_values[visible], y_values[visible]
 
 
 def plot_score_cdf(
@@ -156,19 +179,30 @@ def plot_score_cdf(
     dataset_label: str,
     x_label: str = r"Random-Compatibility Score $S$",
     method_title: str = "Selected RANDOM-candidate score",
+    positive_axis_minimum: float = POSITIVE_SCORE_AXIS_MINIMUM,
+    separate_subminimum_panel: bool = True,
+    show_curve_markers: bool = False,
 ) -> Path:
     configure_paper_style()
-    fig = plt.figure(figsize=(7.16, 2.65))
-    grid = fig.add_gridspec(1, 2, width_ratios=(0.055, 0.945), wspace=0.065)
-    subminimum_ax = fig.add_subplot(grid[0, 0])
-    ax = fig.add_subplot(grid[0, 1], sharey=subminimum_ax)
-    subminimum_only_strategies = _subminimum_only_strategies(scores)
-    for strategy in PLOT_STRATEGIES:
+    if separate_subminimum_panel:
+        fig = plt.figure(figsize=(7.16, 2.65))
+        grid = fig.add_gridspec(1, 2, width_ratios=(0.055, 0.945), wspace=0.065)
+        subminimum_ax = fig.add_subplot(grid[0, 0])
+        ax = fig.add_subplot(grid[0, 1], sharey=subminimum_ax)
+        subminimum_only_strategies = _subminimum_only_strategies(
+            scores,
+            positive_axis_minimum,
+        )
+    else:
+        fig, ax = plt.subplots(figsize=(7.16, 2.65))
+        subminimum_ax = None
+        subminimum_only_strategies = []
+    for strategy_index, strategy in enumerate(PLOT_STRATEGIES):
         values = scores[strategy]
         subminimum_percentage = (
-            100.0 * np.count_nonzero(values < POSITIVE_SCORE_AXIS_MINIMUM) / len(values)
+            100.0 * np.count_nonzero(values < positive_axis_minimum) / len(values)
         )
-        if subminimum_percentage:
+        if subminimum_ax is not None and subminimum_percentage:
             subminimum_ax.vlines(
                 0.0,
                 0.0,
@@ -176,7 +210,10 @@ def plot_score_cdf(
                 color=STRATEGY_COLORS[strategy],
                 linewidth=1.7,
             )
-        x_values, cumulative_percentages = _positive_ecdf_coordinates(values)
+        x_values, cumulative_percentages = _positive_ecdf_coordinates(
+            values,
+            positive_axis_minimum,
+        )
         if len(x_values):
             ax.step(
                 x_values,
@@ -185,7 +222,24 @@ def plot_score_cdf(
                 color=STRATEGY_COLORS[strategy],
                 linewidth=1.7,
             )
-    if subminimum_only_strategies:
+        if show_curve_markers:
+            marker_percentages = np.asarray([12.0, 32.0, 52.0, 72.0, 92.0])
+            marker_percentages += 1.5 * (strategy_index - (len(PLOT_STRATEGIES) - 1) / 2.0)
+            marker_x, marker_y = _ecdf_marker_coordinates(
+                values,
+                marker_percentages,
+                positive_axis_minimum,
+            )
+            ax.scatter(
+                marker_x,
+                marker_y,
+                color=STRATEGY_COLORS[strategy],
+                edgecolors="white",
+                linewidths=0.30,
+                s=12,
+                zorder=3,
+            )
+    if subminimum_ax is not None and subminimum_only_strategies:
         marker_positions = np.linspace(
             -0.18,
             0.18,
@@ -213,56 +267,74 @@ def plot_score_cdf(
         zorder=1.5,
     )
 
-    axis_minimum, major_ticks, minor_ticks = _log_axis_parameters()
+    axis_minimum, major_ticks, minor_ticks = _log_axis_parameters(positive_axis_minimum)
     ax.set_xscale("log")
-    ax.set_xlim(axis_minimum, X_AXIS_MAXIMUM)
     major_exponents = np.log10(major_ticks).astype(int)
     major_labels = [rf"$10^{{{exponent}}}$" for exponent in major_exponents]
     ax.set_xticks(major_ticks, labels=major_labels)
     ax.set_xticks(minor_ticks, minor=True)
     ax.xaxis.set_minor_formatter(NullFormatter())
-    subminimum_ax.set_xlim(-0.5, 0.5)
-    subminimum_exponent = int(np.log10(POSITIVE_SCORE_AXIS_MINIMUM))
-    subminimum_ax.set_xticks([0.0], labels=[rf"$<10^{{{subminimum_exponent}}}$"])
-    for current_ax in (subminimum_ax, ax):
+    # Matplotlib expands limits to include explicit ticks; restore the requested
+    # boundary afterwards so compact, non-decade NIST limits remain effective.
+    ax.set_xlim(axis_minimum, X_AXIS_MAXIMUM)
+    if subminimum_ax is not None:
+        subminimum_ax.set_xlim(-0.5, 0.5)
+        subminimum_exponent = int(np.log10(positive_axis_minimum))
+        subminimum_ax.set_xticks([0.0], labels=[rf"$<10^{{{subminimum_exponent}}}$"])
+    for current_ax in (subminimum_ax, ax) if subminimum_ax is not None else (ax,):
         current_ax.set_ylim(0, 103)
         current_ax.yaxis.set_major_locator(MultipleLocator(20))
         current_ax.yaxis.set_minor_locator(MultipleLocator(10))
-    subminimum_ax.set_ylabel("Cumulative Percentage [%]")
-    ax.tick_params(axis="y", which="both", left=False, labelleft=False)
-    subminimum_ax.tick_params(axis="y", which="both", right=False)
-    subminimum_ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_visible(False)
-    break_marker = [(-0.55, -1.0), (0.55, 1.0)]
-    break_style = {
-        "marker": break_marker,
-        "markersize": 9,
-        "linestyle": "none",
-        "color": "black",
-        "markeredgewidth": 0.9,
-        "clip_on": False,
-    }
-    subminimum_ax.plot(
-        [1.0, 1.0],
-        [0.0, 1.0],
-        transform=subminimum_ax.transAxes,
-        **break_style,
-    )
-    ax.plot(
-        [0.0, 0.0],
-        [0.0, 1.0],
-        transform=ax.transAxes,
-        **break_style,
-    )
+    if subminimum_ax is not None:
+        subminimum_ax.set_ylabel("Cumulative Percentage [%]")
+        ax.tick_params(axis="y", which="both", left=False, labelleft=False)
+        subminimum_ax.tick_params(axis="y", which="both", right=False)
+        subminimum_ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_visible(False)
+        break_marker = [(-0.55, -1.0), (0.55, 1.0)]
+        break_style = {
+            "marker": break_marker,
+            "markersize": 9,
+            "linestyle": "none",
+            "color": "black",
+            "markeredgewidth": 0.9,
+            "clip_on": False,
+        }
+        subminimum_ax.plot(
+            [1.0, 1.0],
+            [0.0, 1.0],
+            transform=subminimum_ax.transAxes,
+            **break_style,
+        )
+        ax.plot(
+            [0.0, 0.0],
+            [0.0, 1.0],
+            transform=ax.transAxes,
+            **break_style,
+        )
+    else:
+        ax.set_ylabel("Cumulative Percentage [%]")
     fig.supxlabel(
         x_label,
         y=0.025,
         fontsize=plt.rcParams["axes.labelsize"],
     )
-    subminimum_ax.grid(
-        which="major", axis="y", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7
-    )
-    subminimum_ax.grid(which="minor", axis="y", color="#D9D9D9", linestyle=":", linewidth=0.35)
+    if subminimum_ax is not None:
+        subminimum_ax.grid(
+            which="major",
+            axis="y",
+            color="#BDBDBD",
+            linestyle="--",
+            linewidth=0.5,
+            alpha=0.7,
+        )
+        subminimum_ax.grid(
+            which="minor",
+            axis="y",
+            color="#D9D9D9",
+            linestyle=":",
+            linewidth=0.35,
+        )
     ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
     ax.grid(which="minor", color="#D9D9D9", linestyle=":", linewidth=0.35, alpha=0.75)
 
@@ -272,7 +344,7 @@ def plot_score_cdf(
             [0],
             color=STRATEGY_COLORS[strategy],
             linewidth=1.7,
-            marker="o" if strategy in subminimum_only_strategies else None,
+            marker=("o" if show_curve_markers or strategy in subminimum_only_strategies else None),
             markersize=4,
             label=STRATEGY_PRETTY[strategy],
         )

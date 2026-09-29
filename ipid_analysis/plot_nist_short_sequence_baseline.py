@@ -34,7 +34,11 @@ from ipid_analysis.nist_short_sequence import (
     ShortNistNullTables,
     ipids_to_bitstreams,
 )
-from ipid_analysis.paper_figures import PERCENTAGE_CMAP, configure_paper_style
+from ipid_analysis.paper_figures import (
+    PERCENTAGE_CMAP,
+    add_fixed_percentage_colorbar,
+    configure_paper_style,
+)
 from ipid_analysis.plot_random_structure_score_cdf import plot_score_cdf
 from ipid_analysis.strategies import STRATEGY_PRETTY
 from ipid_analysis.synthetic_mass_sequences import (
@@ -61,13 +65,14 @@ NIST_COMPONENT_THRESHOLD = 0.01
 NIST_COMBINED_THRESHOLD = TARGET_RANDOM_FALSE_REJECTION_RATE
 DEFAULT_OUTPUT_DIR = PROCESSED_DATA_DIR / "classifier-validation" / "nist-baseline"
 DEFAULT_FIGURE_DIR = FIGURES_DIR / "classifier-validation" / "nist-baseline"
+NIST_SCORE_AXIS_MINIMUM = NIST_COMBINED_THRESHOLD / 2.0
 
 CONDITIONS = ("ideal", "lossy", "reordered", "lossy-reordered")
 CONDITION_LABELS = {
     "ideal": "Ideal",
-    "lossy": "20% loss",
-    "reordered": "20% reordering",
-    "lossy-reordered": "20% loss + 20% reordering",
+    "lossy": "20% Lossy",
+    "reordered": "20% Reordered",
+    "lossy-reordered": "20% Lossy + 20% Reordered",
 }
 HEATMAP_ROWS = ("combined", *NIST_TEST_NAMES)
 HEATMAP_LABELS = {"combined": "Combined baseline", **NIST_TEST_LABELS}
@@ -181,9 +186,12 @@ def _plot_test_heatmap(
     fig.supxlabel("Generating IP-ID process", y=0.02)
     fig.supylabel("Adapted NIST component", x=0.015)
     fig.subplots_adjust(left=0.20, right=0.88, bottom=0.18, top=0.96, hspace=0.16, wspace=0.08)
-    colorbar_axis = fig.add_axes((0.91, 0.25, 0.014, 0.50))
-    colorbar = fig.colorbar(image, cax=colorbar_axis)
-    colorbar.set_label("Classified RANDOM [%]")
+    add_fixed_percentage_colorbar(
+        fig,
+        image,
+        left=0.91,
+        label="Classified Random [%]",
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(
         output_path,
@@ -276,6 +284,9 @@ def render(
             dataset_label=CONDITION_LABELS[condition],
             x_label=r"Adapted NIST Compatibility Score $S_{\mathrm{NIST}}$",
             method_title="Adapted NIST SP 800-22 baseline score",
+            positive_axis_minimum=NIST_SCORE_AXIS_MINIMUM,
+            separate_subminimum_panel=False,
+            show_curve_markers=True,
         )
         condition_summary = {
             strategy: {
