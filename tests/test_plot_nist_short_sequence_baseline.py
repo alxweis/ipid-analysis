@@ -8,10 +8,27 @@ import zipfile
 import pyarrow.parquet as pq
 
 from ipid_analysis.nist_short_sequence import NIST_TEST_NAMES
-from ipid_analysis.plot_nist_short_sequence_baseline import CONDITIONS, render
+from ipid_analysis.plot_nist_short_sequence_baseline import (
+    CONDITION_LABELS,
+    CONDITIONS,
+    NIST_SCORE_AXIS_MINIMUM,
+    render,
+)
 
 
 class PlotNistShortSequenceBaselineTest(unittest.TestCase):
+    def test_paper_labels_and_compact_axis_are_stable(self):
+        self.assertEqual(NIST_SCORE_AXIS_MINIMUM, 5e-5)
+        self.assertEqual(
+            CONDITION_LABELS,
+            {
+                "ideal": "Ideal",
+                "lossy": "20% Lossy",
+                "reordered": "20% Reordered",
+                "lossy-reordered": "20% Lossy + 20% Reordered",
+            },
+        )
+
     def test_render_writes_four_cdfs_heatmap_metadata_and_scores(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

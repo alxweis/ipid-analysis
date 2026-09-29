@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from ipid_analysis.classifier_validation import FIXED_CONFIG, _format_matrix_percentage
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
 from ipid_analysis.nist_short_sequence import ShortNistNullTables, ipids_to_bitstreams
-from ipid_analysis.paper_figures import PERCENTAGE_CMAP
+from ipid_analysis.paper_figures import PERCENTAGE_CMAP, add_fixed_percentage_colorbar
 from ipid_analysis.plot_nist_short_sequence_baseline import (
     DEFAULT_NULL_TABLE_SEED as NIST_NULL_TABLE_SEED,
 )
@@ -61,9 +61,9 @@ DEFAULT_FIGURE_DIR = FIGURES_DIR / "classifier-validation"
 METHODS = ("current", "nist", "candidate")
 COMPACT_CONDITION_LABELS = {
     "ideal": "Ideal",
-    "loss-20-random": "20% loss",
-    "reorder-20": "20%\nreordering",
-    "loss-20-random-reorder-20": "20% loss +\n20% reordering",
+    "loss-20-random": "20% Lossy",
+    "reorder-20": "20%\nReordered",
+    "loss-20-random-reorder-20": "20% Lossy +\n20% Reordered",
 }
 METHOD_LABELS = {
     "current": "Current production score",
@@ -198,11 +198,12 @@ def _draw_binary(axis, metrics: dict, title: str | None = None):
         cmap=PERCENTAGE_CMAP,
         vmin=0,
         vmax=100,
-        aspect="equal",
+        aspect="auto",
         interpolation="nearest",
     )
-    axis.set_xticks(np.arange(2), ["Non-\nRANDOM", "RANDOM"])
-    axis.set_yticks(np.arange(2), ["Structured", "RANDOM"])
+    axis.set_box_aspect(0.72)
+    axis.set_xticks(np.arange(2), ["Non-\nRandom", "Random"])
+    axis.set_yticks(np.arange(2), ["Structured", "Random"])
     if title:
         axis.set_title(title, pad=4, fontsize=9)
     for row_index in range(2):
@@ -234,9 +235,7 @@ def _plot_candidate_confusion(metrics: dict, output_path: Path) -> Path:
     axes[0].set_ylabel("Generating process")
     fig.supxlabel("Candidate decision", y=0.02)
     fig.subplots_adjust(left=0.10, right=0.88, bottom=0.24, top=0.82, wspace=0.22)
-    colorbar_axis = fig.add_axes((0.91, 0.24, 0.014, 0.58))
-    colorbar = fig.colorbar(image, cax=colorbar_axis)
-    colorbar.set_label("Percentage [%]")
+    add_fixed_percentage_colorbar(fig, image, left=0.91, center_y=0.53)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
@@ -266,9 +265,7 @@ def _plot_method_confusion(metrics: dict, output_path: Path) -> Path:
         hspace=0.32,
         wspace=0.22,
     )
-    colorbar_axis = fig.add_axes((0.91, 0.22, 0.014, 0.56))
-    colorbar = fig.colorbar(image, cax=colorbar_axis)
-    colorbar.set_label("Percentage [%]")
+    add_fixed_percentage_colorbar(fig, image, left=0.91, center_y=0.50)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
@@ -323,9 +320,13 @@ def _plot_candidate_by_generator(rows: list[dict], output_path: Path) -> Path:
                 fontsize=7,
             )
     fig.subplots_adjust(left=0.30, right=0.87, bottom=0.16, top=0.98)
-    colorbar_axis = fig.add_axes((0.90, 0.25, 0.022, 0.50))
-    colorbar = fig.colorbar(image, cax=colorbar_axis)
-    colorbar.set_label("Classified RANDOM [%]")
+    add_fixed_percentage_colorbar(
+        fig,
+        image,
+        left=0.90,
+        center_y=0.50,
+        label="Classified Random [%]",
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)

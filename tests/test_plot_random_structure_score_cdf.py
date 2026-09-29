@@ -18,6 +18,7 @@ from ipid_analysis.plot_random_structure_score_cdf import (
     POSITIVE_SCORE_AXIS_MINIMUM,
     SCORE_VERSION,
     X_MAJOR_EXPONENT_STEP,
+    _ecdf_marker_coordinates,
     _log_axis_parameters,
     _positive_ecdf_coordinates,
     _subminimum_only_strategies,
@@ -60,6 +61,10 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
         for major_tick in major_ticks:
             self.assertFalse(np.any(np.isclose(minor_ticks, major_tick)), major_tick)
 
+        custom_minimum, custom_major_ticks, _ = _log_axis_parameters(5e-5)
+        self.assertEqual(custom_minimum, 5e-5)
+        self.assertTrue(np.any(np.isclose(custom_major_ticks, 1e-4)))
+
     def test_subminimum_only_strategies_are_identified(self):
         scores = {strategy: np.array([1e-4]) for strategy in PLOT_STRATEGIES}
         scores["CONSTANT"] = np.zeros(4)
@@ -73,8 +78,19 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
     def test_positive_panel_retains_subminimum_mass(self):
         x_values, percentages = _positive_ecdf_coordinates(np.array([0.0, 0.0, 1e-10, 1e-4]))
 
-        np.testing.assert_array_equal(x_values, np.array([1e-4, 1e-4, 1.05]))
-        np.testing.assert_array_equal(percentages, np.array([75.0, 100.0, 100.0]))
+        np.testing.assert_array_equal(x_values, np.array([1e-4, 1e-4]))
+        np.testing.assert_array_equal(percentages, np.array([75.0, 100.0]))
+
+    def test_marker_coordinates_are_unshifted_ecdf_samples(self):
+        values = np.asarray([1e-5, 2e-5, 4e-5, 8e-5, 1.6e-4])
+        x_values, percentages = _ecdf_marker_coordinates(
+            values,
+            np.asarray([20.0, 60.0, 100.0]),
+            1e-5,
+        )
+
+        np.testing.assert_array_equal(x_values, np.asarray([1e-5, 4e-5, 1.6e-4]))
+        np.testing.assert_array_equal(percentages, np.asarray([20.0, 60.0, 100.0]))
 
     def test_score_is_a_finite_probability_like_value(self):
         rng = np.random.default_rng(23)
