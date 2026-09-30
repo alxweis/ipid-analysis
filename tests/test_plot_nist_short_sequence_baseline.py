@@ -34,7 +34,10 @@ class PlotNistShortSequenceBaselineTest(unittest.TestCase):
             root = Path(directory)
             with (
                 patch("ipid_analysis.plot_nist_short_sequence_baseline.configure_paper_style"),
-                patch("ipid_analysis.plot_random_structure_score_cdf.configure_paper_style"),
+                patch(
+                    "ipid_analysis.plot_random_structure_score_cdf."
+                    "configure_compact_validation_style"
+                ),
             ):
                 outputs = render(
                     samples_per_strategy=2,

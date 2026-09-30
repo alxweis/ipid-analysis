@@ -8,6 +8,15 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from ipid_analysis.plot_random_structure_score_cdf import (
+    CDF_BREAK_MARKER_HALF_WIDTH,
+    CDF_BROKEN_AXIS_SPACE,
+    CDF_BROKEN_AXIS_WIDTH_RATIOS,
+    CDF_FIGURE_SIZE_INCHES,
+    CDF_GRID_BOTTOM,
+    CDF_GRID_LEFT,
+    CDF_GRID_RIGHT,
+    CDF_GRID_TOP,
+    CDF_XLABEL_Y,
     DEFAULT_NULL_TABLE_SAMPLES,
     DEFAULT_RANDOM_FALSE_REJECTION_RATE,
     DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY,
@@ -41,6 +50,17 @@ from ipid_analysis.synthetic_mass_sequences import (
 
 
 class RandomStructureScoreCDFTest(unittest.TestCase):
+    def test_paper_layout_constants_are_dimensioned_and_stable(self):
+        self.assertEqual(CDF_FIGURE_SIZE_INCHES, (7.0, 2.5))
+        self.assertEqual(CDF_BROKEN_AXIS_WIDTH_RATIOS, (0.052, 0.948))
+        self.assertEqual(CDF_BROKEN_AXIS_SPACE, 0.055)
+        self.assertEqual(
+            (CDF_GRID_LEFT, CDF_GRID_RIGHT, CDF_GRID_BOTTOM, CDF_GRID_TOP),
+            (0.075, 0.985, 0.215, 0.720),
+        )
+        self.assertEqual(CDF_BREAK_MARKER_HALF_WIDTH, 0.34)
+        self.assertEqual(CDF_XLABEL_Y, 0.070)
+
     def test_default_sample_budget(self):
         self.assertEqual(DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY, 100_000)
         self.assertEqual(DEFAULT_NULL_TABLE_SAMPLES, 1_000_000)
@@ -107,7 +127,9 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
     def test_rendered_artifacts_and_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch("ipid_analysis.plot_random_structure_score_cdf.configure_paper_style"):
+            with patch(
+                "ipid_analysis.plot_random_structure_score_cdf.configure_compact_validation_style"
+            ):
                 outputs = render(
                     samples_per_strategy=8,
                     null_table_samples=64,

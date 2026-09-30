@@ -22,13 +22,14 @@ import typer
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+from matplotlib.transforms import ScaledTranslation
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
 from ipid_analysis.paper_figures import (
+    COMPACT_PAPER_PDF_PADDING_INCHES,
+    COMPACT_PAPER_STROKE_WIDTH,
     PERCENTAGE_CMAP,
-    add_fixed_percentage_colorbar,
-    configure_paper_style,
-    linux_libertine_font_properties,
+    configure_compact_validation_style,
 )
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_INCREMENT_BIN_COUNTS,
@@ -98,6 +99,20 @@ FIXED_DETECTED_STRATEGIES = (*FIXED_STRATEGIES, "UNCLASSIFIED")
 FIXED_IMPAIRED_STRATEGIES = FIXED_STRATEGIES
 FIXED_IMPAIRED_DETECTED_STRATEGIES = (*FIXED_IMPAIRED_STRATEGIES, "UNCLASSIFIED")
 RT_OUT_OF_SCOPE_STRATEGIES = ("MULTI", "RANDOM")
+
+# Physical dimensions are fixed across all classifier-validation confusion
+# matrices so layouts remain comparable when placed in a two-column paper.
+CONFUSION_FIGURE_WIDTH_INCHES = 7.0
+CONFUSION_CELL_WIDTH_INCHES = 2.50 / 9.0
+CONFUSION_CELL_HEIGHT_INCHES = 1.40 / 8.0
+CONFUSION_COLORBAR_GAP_INCHES = 0.10
+CONFUSION_COLORBAR_WIDTH_INCHES = 0.065
+CONFUSION_HORIZONTAL_PANEL_GAP_INCHES = 0.25
+CONFUSION_VERTICAL_PANEL_GAP_INCHES = 0.40
+CONFUSION_TITLE_GAP_INCHES = 0.05
+CONFUSION_XLABEL_GAP_INCHES = 0.60
+CONFUSION_YLABEL_GAP_INCHES = 0.93
+CONFUSION_CELL_TEXT_DOWNWARD_OFFSET_POINTS = 0.50
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 SYNTHETIC_GENERATOR_PARAMETERS = {
     "sampling": "independent discrete uniform unless fixed by the strategy",
@@ -659,6 +674,39 @@ def _format_matrix_percentage(percentage: float) -> str:
     return f"{percentage:.1f}"
 
 
+def _style_confusion_axis(ax) -> None:
+    for spine in ax.spines.values():
+        spine.set_linewidth(COMPACT_PAPER_STROKE_WIDTH)
+    ax.tick_params(
+        which="major",
+        width=COMPACT_PAPER_STROKE_WIDTH,
+        length=3.0,
+        pad=1.5,
+    )
+
+
+def _normalize_title_gap(ax) -> None:
+    """Place a panel title at a fixed physical distance above its grid."""
+    figure = ax.figure
+    figure.canvas.draw()
+    renderer = figure.canvas.get_renderer()
+    dpi = figure.dpi
+    axis_box = ax.get_window_extent(renderer=renderer)
+    title_box = ax.title.get_window_extent(renderer=renderer)
+    current_gap_inches = (title_box.y0 - axis_box.y1) / dpi
+    title_x, title_y = ax.title.get_position()
+    ax.title.set_position(
+        (
+            title_x,
+            title_y + (CONFUSION_TITLE_GAP_INCHES - current_gap_inches) * dpi / axis_box.height,
+        )
+    )
+    figure.canvas.draw()
+    actual_gap = (ax.title.get_window_extent(renderer=renderer).y0 - axis_box.y1) / dpi
+    if not np.isclose(actual_gap, CONFUSION_TITLE_GAP_INCHES, atol=1e-4):
+        raise RuntimeError(f"confusion title gap mismatch: {actual_gap}")
+
+
 def _draw_confusion_matrix(
     ax,
     metrics: dict,
@@ -668,42 +716,144 @@ def _draw_confusion_matrix(
     title: str | None = None,
 ):
     matrix = _matrix_percentages(metrics)
-    image = ax.imshow(
+    rows, columns = matrix.shape
+    image = ax.pcolormesh(
+        np.arange(columns + 1),
+        np.arange(rows + 1),
         matrix,
         cmap=PERCENTAGE_CMAP,
         vmin=0,
         vmax=100,
-        aspect="auto",
-        interpolation="nearest",
+        edgecolors="white",
+        linewidth=0.40,
+        antialiased=False,
+        shading="flat",
     )
     xlabels = [STRATEGY_PRETTY[strategy] for strategy in detected_classes]
     ylabels = [STRATEGY_PRETTY[strategy] for strategy in generated_classes]
-    ax.set_xticks(
-        np.arange(len(xlabels)),
-        xlabels,
-        rotation=35,
-        ha="right",
-        rotation_mode="anchor",
-    )
-    ax.set_yticks(np.arange(len(ylabels)), ylabels)
-    ax.set_box_aspect(0.50)
+    ax.set_xlim(0, columns)
+    ax.set_ylim(rows, 0)
+    ax.set_xticks(np.arange(columns) + 0.5, xlabels)
+    ax.set_yticks(np.arange(rows) + 0.5, ylabels)
+    for label in ax.get_xticklabels():
+        label.set_rotation(30)
+        label.set_rotation_mode("anchor")
+        label.set_horizontalalignment("right")
+        label.set_verticalalignment("top")
+    for label in ax.get_yticklabels():
+        label.set_horizontalalignment("right")
+        label.set_verticalalignment("center")
     if title:
-        title_font = linux_libertine_font_properties("DR", size=11)
-        ax.set_title(title, pad=6, fontproperties=title_font)
+        ax.set_title(title, pad=0.0, y=1.0)
+        _normalize_title_gap(ax)
+    _style_confusion_axis(ax)
 
-    for row_index in range(matrix.shape[0]):
-        for column_index in range(matrix.shape[1]):
+    for row_index in range(rows):
+        for column_index in range(columns):
             percentage = matrix[row_index, column_index]
+            text_transform = ax.transData + ScaledTranslation(
+                0,
+                -CONFUSION_CELL_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
+                ax.figure.dpi_scale_trans,
+            )
             ax.text(
-                column_index,
-                row_index,
+                column_index + 0.5,
+                row_index + 0.5,
                 _format_matrix_percentage(percentage),
                 ha="center",
                 va="center",
                 color="white" if percentage >= 50 else "#222222",
-                fontsize=8,
+                transform=text_transform,
             )
     return image
+
+
+def _add_confusion_colorbar(
+    fig,
+    image,
+    *,
+    left_inches: float,
+    bottom_inches: float,
+    height_inches: float,
+):
+    figure_width, figure_height = fig.get_size_inches()
+    colorbar_axis = fig.add_axes(
+        (
+            left_inches / figure_width,
+            bottom_inches / figure_height,
+            CONFUSION_COLORBAR_WIDTH_INCHES / figure_width,
+            height_inches / figure_height,
+        )
+    )
+    colorbar = fig.colorbar(image, cax=colorbar_axis, ticks=np.arange(0, 101, 20))
+    colorbar.outline.set_linewidth(COMPACT_PAPER_STROKE_WIDTH)
+    colorbar.ax.tick_params(
+        width=COMPACT_PAPER_STROKE_WIDTH,
+        length=3.0,
+        pad=1.5,
+    )
+    colorbar.set_label("Percentage [%]", labelpad=2.5)
+    return colorbar
+
+
+def _add_normalized_confusion_labels(
+    fig,
+    *,
+    block_left_inches: float,
+    block_width_inches: float,
+    grid_bottom_inches: float,
+    content_center_y_inches: float,
+    ylabel: str,
+) -> None:
+    """Place shared labels at fixed physical distances from the matrix block."""
+    figure_width, figure_height = fig.get_size_inches()
+    xlabel = fig.text(
+        (block_left_inches + block_width_inches / 2.0) / figure_width,
+        0.05,
+        "Detected IP-ID Selection Strategy",
+        ha="center",
+        va="bottom",
+    )
+    ylabel_artist = fig.text(
+        0.05,
+        content_center_y_inches / figure_height,
+        ylabel,
+        ha="center",
+        va="center",
+        rotation=90,
+    )
+
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    dpi = fig.dpi
+    xlabel_box = xlabel.get_window_extent(renderer=renderer)
+    xlabel_x, xlabel_y = xlabel.get_position()
+    xlabel.set_position(
+        (
+            xlabel_x,
+            xlabel_y
+            + (grid_bottom_inches - CONFUSION_XLABEL_GAP_INCHES - xlabel_box.y1 / dpi)
+            / figure_height,
+        )
+    )
+    ylabel_box = ylabel_artist.get_window_extent(renderer=renderer)
+    ylabel_x, ylabel_y = ylabel_artist.get_position()
+    ylabel_artist.set_position(
+        (
+            ylabel_x
+            + (block_left_inches - CONFUSION_YLABEL_GAP_INCHES - ylabel_box.x1 / dpi)
+            / figure_width,
+            ylabel_y,
+        )
+    )
+
+    fig.canvas.draw()
+    actual_x_gap = grid_bottom_inches - xlabel.get_window_extent(renderer=renderer).y1 / dpi
+    actual_y_gap = block_left_inches - ylabel_artist.get_window_extent(renderer=renderer).x1 / dpi
+    if not np.isclose(actual_x_gap, CONFUSION_XLABEL_GAP_INCHES, atol=1e-4):
+        raise RuntimeError(f"confusion x-label gap mismatch: {actual_x_gap}")
+    if not np.isclose(actual_y_gap, CONFUSION_YLABEL_GAP_INCHES, atol=1e-4):
+        raise RuntimeError(f"confusion y-label gap mismatch: {actual_y_gap}")
 
 
 def _save_figure(fig, output_path: Path, *, title: str, subject: str) -> Path:
@@ -712,6 +862,7 @@ def _save_figure(fig, output_path: Path, *, title: str, subject: str) -> Path:
         output_path,
         format="pdf",
         bbox_inches="tight",
+        pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES,
         metadata={"Title": title, "Subject": subject, "Creator": "ipid-analysis"},
     )
     plt.close(fig)
@@ -726,23 +877,41 @@ def plot_ideal_confusion_matrix(
     *,
     title: str,
 ) -> Path:
-    configure_paper_style()
-    figure_height = 3.55 if len(generated_classes) > 4 else 3.20
-    fig, ax = plt.subplots(figsize=(7.16, figure_height))
+    configure_compact_validation_style()
+    figure_height = 2.95
+    block_left = 1.66
+    grid_bottom = 1.08
+    panel_width = len(detected_classes) * CONFUSION_CELL_WIDTH_INCHES
+    panel_height = len(generated_classes) * CONFUSION_CELL_HEIGHT_INCHES
+    fig = plt.figure(figsize=(CONFUSION_FIGURE_WIDTH_INCHES, figure_height))
+    ax = fig.add_axes(
+        (
+            block_left / CONFUSION_FIGURE_WIDTH_INCHES,
+            grid_bottom / figure_height,
+            panel_width / CONFUSION_FIGURE_WIDTH_INCHES,
+            panel_height / figure_height,
+        )
+    )
     image = _draw_confusion_matrix(
         ax,
         metrics,
         generated_classes,
         detected_classes,
     )
-    ax.set_xlabel("Detected IP-ID Selection Strategy")
-    ax.set_ylabel("Generating IP-ID\nSelection Strategy")
-    add_fixed_percentage_colorbar(fig, image)
-    fig.subplots_adjust(
-        left=0.24 if len(generated_classes) > 4 else 0.20,
-        right=0.88,
-        bottom=0.32,
-        top=0.98,
+    _add_normalized_confusion_labels(
+        fig,
+        block_left_inches=block_left,
+        block_width_inches=panel_width,
+        grid_bottom_inches=grid_bottom,
+        content_center_y_inches=grid_bottom + panel_height / 2.0,
+        ylabel="Generating IP-ID\nSelection Strategy",
+    )
+    _add_confusion_colorbar(
+        fig,
+        image,
+        left_inches=block_left + panel_width + CONFUSION_COLORBAR_GAP_INCHES,
+        bottom_inches=grid_bottom,
+        height_inches=panel_height,
     )
     return _save_figure(
         fig,
@@ -766,24 +935,31 @@ def plot_confusion_matrix_grid(
     """Render a compact shared-scale grid of classifier confusion matrices."""
     if len(panels) != nrows * ncols:
         raise ValueError("panel count must equal nrows * ncols")
-    configure_paper_style()
-    if (nrows, ncols) == (1, 2):
-        figure_size = (7.16, 3.35)
-    elif (nrows, ncols) == (2, 2):
-        figure_size = (7.16, 5.00)
-    elif (nrows, ncols) == (2, 1):
-        figure_size = (7.16, 5.85)
-    else:
-        figure_size = (7.16, 3.25 * nrows)
-    fig, axes = plt.subplots(
-        nrows=nrows,
-        ncols=ncols,
-        sharex=True,
-        sharey=True,
-        figsize=figure_size,
-        squeeze=False,
-        gridspec_kw={"hspace": 0.30, "wspace": 0.10},
+    configure_compact_validation_style()
+    panel_width = len(detected_classes) * CONFUSION_CELL_WIDTH_INCHES
+    panel_height = len(generated_classes) * CONFUSION_CELL_HEIGHT_INCHES
+    block_width = ncols * panel_width + (ncols - 1) * CONFUSION_HORIZONTAL_PANEL_GAP_INCHES
+    block_left = (
+        1.66 if ncols == 1 else max(1.0, (CONFUSION_FIGURE_WIDTH_INCHES - block_width) / 2.0)
     )
+    grid_bottom = 1.10 if nrows > 1 else 1.08
+    figure_height = 4.85 if nrows > 1 else 2.95
+    fig = plt.figure(figsize=(CONFUSION_FIGURE_WIDTH_INCHES, figure_height))
+    axes = np.empty((nrows, ncols), dtype=object)
+    for row in range(nrows):
+        for column in range(ncols):
+            left = block_left + column * (panel_width + CONFUSION_HORIZONTAL_PANEL_GAP_INCHES)
+            bottom = grid_bottom + (nrows - row - 1) * (
+                panel_height + CONFUSION_VERTICAL_PANEL_GAP_INCHES
+            )
+            axes[row, column] = fig.add_axes(
+                (
+                    left / CONFUSION_FIGURE_WIDTH_INCHES,
+                    bottom / figure_height,
+                    panel_width / CONFUSION_FIGURE_WIDTH_INCHES,
+                    panel_height / figure_height,
+                )
+            )
     image = None
     for axis, (panel_title, metrics) in zip(axes.flat, panels, strict=True):
         image = _draw_confusion_matrix(
@@ -794,16 +970,24 @@ def plot_confusion_matrix_grid(
             title=panel_title,
         )
     for axis in axes[:-1, :].flat:
-        axis.tick_params(axis="x", bottom=False, labelbottom=False)
-    fig.supxlabel("Detected IP-ID Selection Strategy", y=0.005 if nrows == 1 else 0.012)
-    fig.supylabel("Generating IP-ID Selection Strategy", x=0.012)
-    if nrows == 1:
-        fig.subplots_adjust(left=0.20, right=0.88, bottom=0.34, top=0.94)
-    elif ncols == 1:
-        fig.subplots_adjust(left=0.25, right=0.88, bottom=0.17, top=0.96)
-    else:
-        fig.subplots_adjust(left=0.20, right=0.88, bottom=0.16, top=0.96)
-    add_fixed_percentage_colorbar(fig, image)
+        axis.tick_params(axis="x", bottom=True, labelbottom=False)
+    block_height = nrows * panel_height + (nrows - 1) * CONFUSION_VERTICAL_PANEL_GAP_INCHES
+    block_center_y = grid_bottom + block_height / 2.0
+    _add_normalized_confusion_labels(
+        fig,
+        block_left_inches=block_left,
+        block_width_inches=block_width,
+        grid_bottom_inches=grid_bottom,
+        content_center_y_inches=block_center_y,
+        ylabel="Generating IP-ID Selection Strategy",
+    )
+    _add_confusion_colorbar(
+        fig,
+        image,
+        left_inches=block_left + block_width + CONFUSION_COLORBAR_GAP_INCHES,
+        bottom_inches=block_center_y - panel_height / 2.0,
+        height_inches=panel_height,
+    )
     return _save_figure(
         fig,
         output_path,

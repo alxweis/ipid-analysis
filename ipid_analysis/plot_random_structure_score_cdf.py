@@ -26,7 +26,12 @@ from matplotlib.ticker import MultipleLocator, NullFormatter
 
 from ipid_analysis.classifier_validation import apply_fixed_interval_impairments, apply_reordering
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
-from ipid_analysis.paper_figures import configure_paper_style
+from ipid_analysis.paper_figures import (
+    COMPACT_PAPER_MAJOR_TICK_LENGTH,
+    COMPACT_PAPER_PDF_PADDING_INCHES,
+    COMPACT_PAPER_STROKE_WIDTH,
+    configure_compact_validation_style,
+)
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_INCREMENT_MIN_TRANSITIONS,
@@ -70,6 +75,19 @@ POSITIVE_SCORE_AXIS_MINIMUM = 1e-6
 X_AXIS_MAXIMUM = 1.05
 X_MAJOR_EXPONENT_STEP = 1
 THRESHOLD_COLOR = "#C62828"
+CDF_FIGURE_SIZE_INCHES = (7.0, 2.50)
+CDF_GRID_LEFT = 0.075
+CDF_GRID_RIGHT = 0.985
+CDF_GRID_BOTTOM = 0.215
+CDF_GRID_TOP = 0.720
+CDF_BROKEN_AXIS_WIDTH_RATIOS = (0.052, 0.948)
+CDF_BROKEN_AXIS_SPACE = 0.055
+CDF_CURVE_LINEWIDTH = 1.35
+CDF_THRESHOLD_LINEWIDTH = 1.0
+CDF_BREAK_MARKER_HALF_WIDTH = 0.34
+CDF_XLABEL_X = 0.535
+CDF_XLABEL_Y = 0.070
+CDF_LEGEND_ANCHOR = (0.535, 0.735)
 MASS_IDEAL_DATASET = "ideal"
 MASS_LOSSY_DATASET = "lossy"
 MASS_REORDERED_DATASET = "reordered"
@@ -183,10 +201,15 @@ def plot_score_cdf(
     separate_subminimum_panel: bool = True,
     show_curve_markers: bool = False,
 ) -> Path:
-    configure_paper_style()
+    configure_compact_validation_style()
     if separate_subminimum_panel:
-        fig = plt.figure(figsize=(7.16, 2.65))
-        grid = fig.add_gridspec(1, 2, width_ratios=(0.055, 0.945), wspace=0.065)
+        fig = plt.figure(figsize=CDF_FIGURE_SIZE_INCHES)
+        grid = fig.add_gridspec(
+            1,
+            2,
+            width_ratios=CDF_BROKEN_AXIS_WIDTH_RATIOS,
+            wspace=CDF_BROKEN_AXIS_SPACE,
+        )
         subminimum_ax = fig.add_subplot(grid[0, 0])
         ax = fig.add_subplot(grid[0, 1], sharey=subminimum_ax)
         subminimum_only_strategies = _subminimum_only_strategies(
@@ -194,7 +217,7 @@ def plot_score_cdf(
             positive_axis_minimum,
         )
     else:
-        fig, ax = plt.subplots(figsize=(7.16, 2.65))
+        fig, ax = plt.subplots(figsize=CDF_FIGURE_SIZE_INCHES)
         subminimum_ax = None
         subminimum_only_strategies = []
     for strategy_index, strategy in enumerate(PLOT_STRATEGIES):
@@ -208,7 +231,7 @@ def plot_score_cdf(
                 0.0,
                 subminimum_percentage,
                 color=STRATEGY_COLORS[strategy],
-                linewidth=1.7,
+                linewidth=CDF_CURVE_LINEWIDTH,
             )
         x_values, cumulative_percentages = _positive_ecdf_coordinates(
             values,
@@ -220,7 +243,7 @@ def plot_score_cdf(
                 cumulative_percentages,
                 where="post",
                 color=STRATEGY_COLORS[strategy],
-                linewidth=1.7,
+                linewidth=CDF_CURVE_LINEWIDTH,
             )
         if show_curve_markers:
             marker_percentages = np.asarray([12.0, 32.0, 52.0, 72.0, 92.0])
@@ -263,7 +286,7 @@ def plot_score_cdf(
         threshold,
         color=THRESHOLD_COLOR,
         linestyle="--",
-        linewidth=1.2,
+        linewidth=CDF_THRESHOLD_LINEWIDTH,
         zorder=1.5,
     )
 
@@ -286,18 +309,21 @@ def plot_score_cdf(
         current_ax.yaxis.set_major_locator(MultipleLocator(20))
         current_ax.yaxis.set_minor_locator(MultipleLocator(10))
     if subminimum_ax is not None:
-        subminimum_ax.set_ylabel("Cumulative Percentage [%]")
+        subminimum_ax.set_ylabel("Cumulative Percentage [%]", labelpad=2.5)
         ax.tick_params(axis="y", which="both", left=False, labelleft=False)
         subminimum_ax.tick_params(axis="y", which="both", right=False)
         subminimum_ax.spines["right"].set_visible(False)
         ax.spines["left"].set_visible(False)
-        break_marker = [(-0.55, -1.0), (0.55, 1.0)]
+        break_marker = [
+            (-CDF_BREAK_MARKER_HALF_WIDTH, -1.0),
+            (CDF_BREAK_MARKER_HALF_WIDTH, 1.0),
+        ]
         break_style = {
             "marker": break_marker,
-            "markersize": 9,
+            "markersize": 2.0 * COMPACT_PAPER_MAJOR_TICK_LENGTH,
             "linestyle": "none",
             "color": "black",
-            "markeredgewidth": 0.9,
+            "markeredgewidth": COMPACT_PAPER_STROKE_WIDTH,
             "clip_on": False,
         }
         subminimum_ax.plot(
@@ -313,10 +339,11 @@ def plot_score_cdf(
             **break_style,
         )
     else:
-        ax.set_ylabel("Cumulative Percentage [%]")
+        ax.set_ylabel("Cumulative Percentage [%]", labelpad=2.5)
     fig.supxlabel(
         x_label,
-        y=0.025,
+        x=CDF_XLABEL_X,
+        y=CDF_XLABEL_Y,
         fontsize=plt.rcParams["axes.labelsize"],
     )
     if subminimum_ax is not None:
@@ -325,7 +352,7 @@ def plot_score_cdf(
             axis="y",
             color="#BDBDBD",
             linestyle="--",
-            linewidth=0.5,
+            linewidth=0.40,
             alpha=0.7,
         )
         subminimum_ax.grid(
@@ -333,17 +360,17 @@ def plot_score_cdf(
             axis="y",
             color="#D9D9D9",
             linestyle=":",
-            linewidth=0.35,
+            linewidth=0.25,
         )
-    ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7)
-    ax.grid(which="minor", color="#D9D9D9", linestyle=":", linewidth=0.35, alpha=0.75)
+    ax.grid(which="major", color="#BDBDBD", linestyle="--", linewidth=0.40, alpha=0.7)
+    ax.grid(which="minor", color="#D9D9D9", linestyle=":", linewidth=0.25, alpha=0.75)
 
     handles = [
         Line2D(
             [0],
             [0],
             color=STRATEGY_COLORS[strategy],
-            linewidth=1.7,
+            linewidth=CDF_CURVE_LINEWIDTH,
             marker=("o" if show_curve_markers or strategy in subminimum_only_strategies else None),
             markersize=4,
             label=STRATEGY_PRETTY[strategy],
@@ -356,7 +383,7 @@ def plot_score_cdf(
             [0],
             color=THRESHOLD_COLOR,
             linestyle="--",
-            linewidth=1.2,
+            linewidth=CDF_THRESHOLD_LINEWIDTH,
             label=r"Threshold $\tau$",
         )
     )
@@ -364,17 +391,26 @@ def plot_score_cdf(
         handles=handles,
         ncol=5,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.705),
+        bbox_to_anchor=CDF_LEGEND_ANCHOR,
         frameon=False,
-        columnspacing=1.4,
-        handlelength=2.7,
+        columnspacing=1.05,
+        handlelength=2.1,
+        handletextpad=0.45,
+        borderaxespad=0.0,
+        labelspacing=0.25,
     )
-    fig.subplots_adjust(left=0.095, right=0.995, bottom=0.22, top=0.70)
+    fig.subplots_adjust(
+        left=CDF_GRID_LEFT,
+        right=CDF_GRID_RIGHT,
+        bottom=CDF_GRID_BOTTOM,
+        top=CDF_GRID_TOP,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(
         output_path,
         format="pdf",
         bbox_inches="tight",
+        pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES,
         metadata={
             "Title": (
                 f"{method_title} distributions by IP-ID selection strategy ({dataset_label})"
