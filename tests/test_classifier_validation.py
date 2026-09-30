@@ -11,6 +11,16 @@ import pyarrow.parquet as pq
 from ipid_analysis.classifier_validation import (
     BASE_REORDERED_3_DATASET,
     BASE_REORDERED_4_DATASET,
+    CONFUSION_CELL_HEIGHT_INCHES,
+    CONFUSION_CELL_TEXT_DOWNWARD_OFFSET_POINTS,
+    CONFUSION_CELL_WIDTH_INCHES,
+    CONFUSION_COLORBAR_GAP_INCHES,
+    CONFUSION_COLORBAR_WIDTH_INCHES,
+    CONFUSION_FIGURE_WIDTH_INCHES,
+    CONFUSION_TITLE_GAP_INCHES,
+    CONFUSION_VERTICAL_PANEL_GAP_INCHES,
+    CONFUSION_XLABEL_GAP_INCHES,
+    CONFUSION_YLABEL_GAP_INCHES,
     FIXED_CONFIG,
     FIXED_IDEAL_DATASET,
     FIXED_IMPAIRED_STRATEGIES,
@@ -53,6 +63,18 @@ from ipid_analysis.strategies import (
 
 
 class ClassifierValidationTest(unittest.TestCase):
+    def test_confusion_matrix_layout_constants_are_dimensioned_and_stable(self):
+        self.assertEqual(CONFUSION_FIGURE_WIDTH_INCHES, 7.0)
+        self.assertEqual(CONFUSION_CELL_WIDTH_INCHES * 9, 2.50)
+        self.assertEqual(CONFUSION_CELL_HEIGHT_INCHES * 8, 1.40)
+        self.assertEqual(CONFUSION_COLORBAR_GAP_INCHES, 0.10)
+        self.assertEqual(CONFUSION_COLORBAR_WIDTH_INCHES, 0.065)
+        self.assertEqual(CONFUSION_VERTICAL_PANEL_GAP_INCHES, 0.40)
+        self.assertEqual(CONFUSION_TITLE_GAP_INCHES, 0.05)
+        self.assertEqual(CONFUSION_XLABEL_GAP_INCHES, 0.60)
+        self.assertEqual(CONFUSION_YLABEL_GAP_INCHES, 0.93)
+        self.assertEqual(CONFUSION_CELL_TEXT_DOWNWARD_OFFSET_POINTS, 0.50)
+
     def test_small_nonzero_confusion_percentages_are_not_rendered_as_zero(self):
         self.assertEqual(_format_matrix_percentage(0.0), "-")
         self.assertEqual(_format_matrix_percentage(0.001), "<0.1")
@@ -174,13 +196,7 @@ class ClassifierValidationTest(unittest.TestCase):
     def test_validation_writes_sequences_metrics_and_figures(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with (
-                patch("ipid_analysis.classifier_validation.configure_paper_style"),
-                patch(
-                    "ipid_analysis.classifier_validation.linux_libertine_font_properties",
-                    return_value=None,
-                ),
-            ):
+            with patch("ipid_analysis.classifier_validation.configure_compact_validation_style"):
                 outputs = validate_classifier(
                     samples_per_strategy=8,
                     seed=42,

@@ -76,6 +76,11 @@ PERCENTAGE_CMAP = LinearSegmentedColormap.from_list(
 )
 PERCENTAGE_COLORBAR_WIDTH_INCHES = 0.12
 PERCENTAGE_COLORBAR_HEIGHT_INCHES = 2.15
+COMPACT_PAPER_FONT_SIZE = 9.0
+COMPACT_PAPER_STROKE_WIDTH = 0.45
+COMPACT_PAPER_MAJOR_TICK_LENGTH = 3.0
+COMPACT_PAPER_MINOR_TICK_LENGTH = 1.8
+COMPACT_PAPER_PDF_PADDING_INCHES = 0.025
 
 
 def add_fixed_percentage_colorbar(
@@ -235,6 +240,32 @@ def configure_paper_style() -> None:
             "mathtext.tt": libertine_family,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
+        }
+    )
+
+
+def configure_compact_validation_style() -> None:
+    """Apply the dimensioned style shared by classifier-validation figures."""
+    configure_paper_style()
+    plt.rcParams.update(
+        {
+            "font.size": COMPACT_PAPER_FONT_SIZE,
+            "axes.labelsize": COMPACT_PAPER_FONT_SIZE,
+            "axes.titlesize": COMPACT_PAPER_FONT_SIZE,
+            "legend.fontsize": COMPACT_PAPER_FONT_SIZE,
+            "xtick.labelsize": COMPACT_PAPER_FONT_SIZE,
+            "ytick.labelsize": COMPACT_PAPER_FONT_SIZE,
+            "axes.linewidth": COMPACT_PAPER_STROKE_WIDTH,
+            "xtick.major.width": COMPACT_PAPER_STROKE_WIDTH,
+            "ytick.major.width": COMPACT_PAPER_STROKE_WIDTH,
+            "xtick.minor.width": COMPACT_PAPER_STROKE_WIDTH,
+            "ytick.minor.width": COMPACT_PAPER_STROKE_WIDTH,
+            "xtick.major.size": COMPACT_PAPER_MAJOR_TICK_LENGTH,
+            "ytick.major.size": COMPACT_PAPER_MAJOR_TICK_LENGTH,
+            "xtick.minor.size": COMPACT_PAPER_MINOR_TICK_LENGTH,
+            "ytick.minor.size": COMPACT_PAPER_MINOR_TICK_LENGTH,
+            "xtick.direction": "out",
+            "ytick.direction": "out",
         }
     )
 
