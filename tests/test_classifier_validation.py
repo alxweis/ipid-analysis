@@ -16,14 +16,13 @@ from ipid_analysis.classifier_validation import (
     CONFUSION_COLORBAR_GAP_INCHES,
     CONFUSION_COLORBAR_WIDTH_INCHES,
     CONFUSION_FIGURE_WIDTH_INCHES,
-    CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS,
+    CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS,
     CONFUSION_TITLE_GAP_INCHES,
     CONFUSION_VERTICAL_PANEL_GAP_INCHES,
     CONFUSION_XLABEL_GAP_INCHES,
     CONFUSION_YLABEL_GAP_INCHES,
     FIXED_CONFIG,
     FIXED_IDEAL_DATASET,
-    FIXED_IMPAIRED_STRATEGIES,
     FIXED_LOSSY_DATASET,
     FIXED_REORDERED_DATASET,
     FIXED_STRATEGIES,
@@ -73,7 +72,7 @@ class ClassifierValidationTest(unittest.TestCase):
         self.assertEqual(CONFUSION_TITLE_GAP_INCHES, 0.05)
         self.assertEqual(CONFUSION_XLABEL_GAP_INCHES, 0.60)
         self.assertEqual(CONFUSION_YLABEL_GAP_INCHES, 0.93)
-        self.assertEqual(CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS, 0.0)
+        self.assertEqual(CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS, 0.15)
 
     def test_small_nonzero_confusion_percentages_are_not_rendered_as_zero(self):
         self.assertEqual(_format_matrix_percentage(0.0), "-")
@@ -196,6 +195,13 @@ class ClassifierValidationTest(unittest.TestCase):
     def test_validation_writes_sequences_metrics_and_figures(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            figure_dir = root / "figures" / "classifier-validation"
+            figure_dir.mkdir(parents=True)
+            for legacy_name in (
+                "mass-4x25-classifier-confusion.pdf",
+                "mass-4x25-classifier-confusion.json",
+            ):
+                (figure_dir / legacy_name).write_text("obsolete", encoding="utf-8")
             with patch("ipid_analysis.classifier_validation.configure_compact_validation_style"):
                 outputs = validate_classifier(
                     samples_per_strategy=8,
@@ -208,14 +214,12 @@ class ClassifierValidationTest(unittest.TestCase):
             for path in outputs.values():
                 self.assertTrue(path.is_file(), path)
             self.assertNotIn("mass_pdf", outputs)
-            self.assertFalse(
-                (
-                    root
-                    / "figures"
-                    / "classifier-validation"
-                    / "mass-4x25-classifier-confusion.pdf"
-                ).exists()
-            )
+            self.assertNotIn("mass_json", outputs)
+            for legacy_name in (
+                "mass-4x25-classifier-confusion.pdf",
+                "mass-4x25-classifier-confusion.json",
+            ):
+                self.assertFalse((figure_dir / legacy_name).exists())
             self.assertEqual(
                 {
                     outputs["mass_ideal_pdf"].name,
@@ -283,7 +287,6 @@ class ClassifierValidationTest(unittest.TestCase):
 
             base_3_report = json.loads(outputs["base_reordered_3_json"].read_text())
             base_4_report = json.loads(outputs["base_reordered_4_json"].read_text())
-            mass_report = json.loads(outputs["mass_json"].read_text())
             out_of_scope_report = json.loads(outputs["out_of_scope_json"].read_text())
             self.assertEqual(
                 base_3_report["samples_by_dataset_and_strategy"][RT_DATASET],
@@ -297,7 +300,7 @@ class ClassifierValidationTest(unittest.TestCase):
                 },
             )
             self.assertEqual(
-                mass_report["samples_by_dataset_and_strategy"][FIXED_IDEAL_DATASET],
+                base_3_report["samples_by_dataset_and_strategy"][FIXED_IDEAL_DATASET],
                 {
                     "REFLECTION": TRIVIAL_SAMPLES_PER_STRATEGY,
                     "CONSTANT": TRIVIAL_SAMPLES_PER_STRATEGY,
@@ -309,7 +312,7 @@ class ClassifierValidationTest(unittest.TestCase):
                     "RANDOM": 8,
                 },
             )
-            random_score = mass_report["random_structure_score"]
+            random_score = base_3_report["random_structure_score"]
             self.assertEqual(random_score["version"], CANDIDATE_RANDOM_SCORE_VERSION)
             self.assertEqual(random_score["threshold"], CANDIDATE_RANDOM_MIN_SCORE)
             self.assertEqual(random_score["metrics"], list(CANDIDATE_RANDOM_METRICS))
@@ -335,12 +338,6 @@ class ClassifierValidationTest(unittest.TestCase):
             self.assertEqual(
                 base_3_report["samples_by_dataset_and_strategy"][RT_OUT_OF_SCOPE_DATASET],
                 {"MULTI": 8, "RANDOM": 8},
-            )
-            self.assertEqual(
-                mass_report["datasets"]["lossy"]["metrics"]["confusion_matrix"][
-                    "generated_class_order"
-                ],
-                list(FIXED_IMPAIRED_STRATEGIES),
             )
             self.assertNotIn(
                 "UNCLASSIFIED",
@@ -368,7 +365,6 @@ class ClassifierValidationTest(unittest.TestCase):
             )
             self.assertEqual(base_3_report["datasets"]["ideal"]["metrics"]["accuracy"], 1.0)
             self.assertEqual(base_4_report["datasets"]["ideal"]["metrics"]["accuracy"], 1.0)
-            self.assertEqual(mass_report["datasets"]["ideal"]["metrics"]["macro"]["f1"], 1.0)
             self.assertEqual(
                 out_of_scope_report["tests"]["base"]["metrics"]["rejection_rate"],
                 1.0,
