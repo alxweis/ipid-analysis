@@ -36,6 +36,7 @@ from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import MultipleLocator, NullLocator  # noqa: E402
+from matplotlib.transforms import ScaledTranslation  # noqa: E402
 
 from ipid_analysis.comparison import (  # noqa: E402
     BaseComparison,
@@ -81,6 +82,73 @@ COMPACT_PAPER_STROKE_WIDTH = 0.45
 COMPACT_PAPER_MAJOR_TICK_LENGTH = 3.0
 COMPACT_PAPER_MINOR_TICK_LENGTH = 1.8
 COMPACT_PAPER_PDF_PADDING_INCHES = 0.025
+
+
+def draw_percentage_colorbar_axis(
+    axis,
+    *,
+    label: str,
+    stroke_width: float = COMPACT_PAPER_STROKE_WIDTH,
+    tick_length: float = COMPACT_PAPER_MAJOR_TICK_LENGTH,
+    tick_pad: float = 1.5,
+    text_upward_offset_points: float = 0.0,
+):
+    """Draw a clipped percentage gradient with an independently stroked frame.
+
+    Matplotlib's standard colorbar uses a ``QuadMesh`` whose PDF rasterization
+    can protrude by a pixel at subpixel-aligned edges.  A clipped image plus
+    separately layered spines keeps the gradient exactly inside its frame.
+    """
+    gradient = np.linspace(0.0, 100.0, 1024, dtype=np.float64).reshape(-1, 1)
+    image = axis.imshow(
+        gradient,
+        cmap=PERCENTAGE_CMAP,
+        vmin=0,
+        vmax=100,
+        origin="lower",
+        extent=(0.0, 1.0, 0.0, 100.0),
+        aspect="auto",
+        interpolation="none",
+        zorder=0,
+    )
+    image.set_clip_path(axis.patch)
+    axis.set_xlim(0.0, 1.0)
+    axis.set_ylim(0.0, 100.0)
+    axis.set_xticks([])
+    axis.set_yticks(np.arange(0, 101, 20))
+    axis.yaxis.set_ticks_position("right")
+    axis.yaxis.set_label_position("right")
+    axis.tick_params(
+        axis="x",
+        bottom=False,
+        top=False,
+        labelbottom=False,
+    )
+    axis.tick_params(
+        axis="y",
+        left=False,
+        right=True,
+        labelleft=False,
+        labelright=True,
+        width=stroke_width,
+        length=tick_length,
+        pad=tick_pad,
+    )
+    for spine in axis.spines.values():
+        spine.set_linewidth(stroke_width)
+        spine.set_zorder(10)
+    for tick_label in axis.get_yticklabels():
+        tick_label.set_verticalalignment("center")
+        tick_label.set_transform(
+            tick_label.get_transform()
+            + ScaledTranslation(
+                0,
+                text_upward_offset_points / 72.0,
+                axis.figure.dpi_scale_trans,
+            )
+        )
+    axis.set_ylabel(label, labelpad=2.5)
+    return image
 
 
 def add_fixed_percentage_colorbar(

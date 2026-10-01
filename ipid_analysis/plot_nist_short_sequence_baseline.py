@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from matplotlib.transforms import ScaledTranslation
 
 from ipid_analysis.classifier_validation import (
-    CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS,
+    CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS,
     _format_matrix_percentage,
     apply_fixed_interval_impairments,
     apply_reordering,
@@ -42,6 +42,7 @@ from ipid_analysis.paper_figures import (
     COMPACT_PAPER_STROKE_WIDTH,
     PERCENTAGE_CMAP,
     configure_compact_validation_style,
+    draw_percentage_colorbar_axis,
 )
 from ipid_analysis.plot_random_structure_score_cdf import plot_score_cdf
 from ipid_analysis.strategies import STRATEGY_PRETTY
@@ -245,7 +246,6 @@ def _plot_test_heatmap(
                     panel_height / figure_height,
                 )
             )
-    image = None
     for condition_index, condition in enumerate(CONDITIONS):
         axis = axes.flat[condition_index]
         matrix = np.asarray(
@@ -257,7 +257,7 @@ def _plot_test_heatmap(
                 for row in HEATMAP_ROWS
             ]
         )
-        image = axis.pcolormesh(
+        axis.pcolormesh(
             np.arange(len(PLOT_STRATEGIES) + 1),
             np.arange(len(HEATMAP_ROWS) + 1),
             matrix,
@@ -289,7 +289,7 @@ def _plot_test_heatmap(
                 percentage = matrix[row_index, column_index]
                 text_transform = axis.transData + ScaledTranslation(
                     0,
-                    -CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
+                    CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS / 72.0,
                     fig.dpi_scale_trans,
                 )
                 axis.text(
@@ -333,24 +333,14 @@ def _plot_test_heatmap(
             panel_height / figure_height,
         )
     )
-    colorbar = fig.colorbar(image, cax=colorbar_axis, ticks=np.arange(0, 101, 20))
-    colorbar.outline.set_linewidth(COMPACT_PAPER_STROKE_WIDTH)
-    colorbar.ax.tick_params(
-        width=COMPACT_PAPER_STROKE_WIDTH,
-        length=3.0,
-        pad=1.5,
+    draw_percentage_colorbar_axis(
+        colorbar_axis,
+        label="Classified Random [%]",
+        stroke_width=COMPACT_PAPER_STROKE_WIDTH,
+        tick_length=3.0,
+        tick_pad=1.5,
+        text_upward_offset_points=CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS,
     )
-    for label in colorbar.ax.get_yticklabels():
-        label.set_verticalalignment("center")
-        label.set_transform(
-            label.get_transform()
-            + ScaledTranslation(
-                0,
-                -CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
-                fig.dpi_scale_trans,
-            )
-        )
-    colorbar.set_label("Classified Random [%]", labelpad=2.5)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(
         output_path,

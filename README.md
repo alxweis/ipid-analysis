@@ -192,10 +192,10 @@ F1 scores.
 
 The raw-format synthetic sequences and detected labels are written to
 `data/processed/classifier-validation/synthetic-classifier-validation.pq`.
-Five focused confusion-matrix PDFs and their metric JSON sidecars are written below
-`reports/figures/classifier-validation/`. The JSON reports include accuracy,
-balanced accuracy, per-class precision/recall/F1, macro and weighted averages,
-Cohen's kappa, and multiclass Matthews correlation coefficient.
+Five focused confusion-matrix PDFs are written below
+`reports/figures/classifier-validation/`. The two Base comparison JSONs retain
+their metrics and reproducibility metadata; the obsolete combined Mass PDF and
+JSON are removed because the three focused Mass PDFs replace them.
 
 ```text
 base-4x4-classifier-confusion-reordered-3.pdf

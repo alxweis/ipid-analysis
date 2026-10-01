@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import matplotlib.pyplot as plt
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -13,6 +14,7 @@ from ipid_analysis.paper_figures import (
     _ecdf_step_coordinates,
     aggregate_increment_distributions,
     aggregate_strategy_intersection,
+    draw_percentage_colorbar_axis,
     render_increment_comparison,
     render_probing_interval_comparison,
     render_strategy_intersection,
@@ -20,6 +22,18 @@ from ipid_analysis.paper_figures import (
 
 
 class PaperFiguresTest(unittest.TestCase):
+    def test_percentage_colorbar_gradient_is_clipped_inside_its_frame(self):
+        fig, axis = plt.subplots(figsize=(1, 2))
+        try:
+            image = draw_percentage_colorbar_axis(axis, label="Percentage [%]")
+            self.assertEqual(tuple(image.get_extent()), (0.0, 1.0, 0.0, 100.0))
+            self.assertTrue(image.get_clip_on())
+            self.assertEqual(len(axis.images), 1)
+            self.assertEqual(len(axis.collections), 0)
+            self.assertEqual(axis.get_ylim(), (0.0, 100.0))
+        finally:
+            plt.close(fig)
+
     def setUp(self):
         self.rt = IpidMeasurement(
             protocol="udp-dns",
@@ -222,9 +236,7 @@ class PaperFiguresTest(unittest.TestCase):
                 aggregate_strategy_intersection(root / "a", root / "b", root / "out")
 
     def test_single_increment_ecdf_includes_vertical_jump(self):
-        x, y = _ecdf_step_coordinates(
-            [{"INCREMENT": 1, "CUMULATIVE_PERCENTAGE": 100.0}]
-        )
+        x, y = _ecdf_step_coordinates([{"INCREMENT": 1, "CUMULATIVE_PERCENTAGE": 100.0}])
         self.assertEqual(x, [1, 1])
         self.assertEqual(y, [0.0, 100.0])
 

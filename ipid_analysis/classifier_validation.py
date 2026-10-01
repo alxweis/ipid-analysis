@@ -30,6 +30,7 @@ from ipid_analysis.paper_figures import (
     COMPACT_PAPER_STROKE_WIDTH,
     PERCENTAGE_CMAP,
     configure_compact_validation_style,
+    draw_percentage_colorbar_axis,
 )
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_INCREMENT_BIN_COUNTS,
@@ -112,10 +113,9 @@ CONFUSION_VERTICAL_PANEL_GAP_INCHES = 0.40
 CONFUSION_TITLE_GAP_INCHES = 0.05
 CONFUSION_XLABEL_GAP_INCHES = 0.60
 CONFUSION_YLABEL_GAP_INCHES = 0.93
-# Matplotlib's ``va="center"`` already places the numeric labels on the exact
-# geometric center.  Keep this explicit and shared with the colorbar/heatmap so
-# no backend-specific optical offset is reintroduced.
-CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS = 0.0
+# Linux Libertine's visible ink sits slightly below the geometric text anchor.
+# Apply the same measured optical correction to cell values and colorbar ticks.
+CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS = 0.15
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 SYNTHETIC_GENERATOR_PARAMETERS = {
     "sampling": "independent discrete uniform unless fixed by the strategy",
@@ -756,7 +756,7 @@ def _draw_confusion_matrix(
             percentage = matrix[row_index, column_index]
             text_transform = ax.transData + ScaledTranslation(
                 0,
-                -CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
+                CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS / 72.0,
                 ax.figure.dpi_scale_trans,
             )
             ax.text(
@@ -773,7 +773,6 @@ def _draw_confusion_matrix(
 
 def _add_confusion_colorbar(
     fig,
-    image,
     *,
     left_inches: float,
     bottom_inches: float,
@@ -788,25 +787,15 @@ def _add_confusion_colorbar(
             height_inches / figure_height,
         )
     )
-    colorbar = fig.colorbar(image, cax=colorbar_axis, ticks=np.arange(0, 101, 20))
-    colorbar.outline.set_linewidth(COMPACT_PAPER_STROKE_WIDTH)
-    colorbar.ax.tick_params(
-        width=COMPACT_PAPER_STROKE_WIDTH,
-        length=3.0,
-        pad=1.5,
+    draw_percentage_colorbar_axis(
+        colorbar_axis,
+        label="Percentage [%]",
+        stroke_width=COMPACT_PAPER_STROKE_WIDTH,
+        tick_length=3.0,
+        tick_pad=1.5,
+        text_upward_offset_points=CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS,
     )
-    for label in colorbar.ax.get_yticklabels():
-        label.set_verticalalignment("center")
-        label.set_transform(
-            label.get_transform()
-            + ScaledTranslation(
-                0,
-                -CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
-                fig.dpi_scale_trans,
-            )
-        )
-    colorbar.set_label("Percentage [%]", labelpad=2.5)
-    return colorbar
+    return colorbar_axis
 
 
 def _add_normalized_confusion_labels(
@@ -905,7 +894,7 @@ def plot_ideal_confusion_matrix(
             panel_height / figure_height,
         )
     )
-    image = _draw_confusion_matrix(
+    _draw_confusion_matrix(
         ax,
         metrics,
         generated_classes,
@@ -921,7 +910,6 @@ def plot_ideal_confusion_matrix(
     )
     _add_confusion_colorbar(
         fig,
-        image,
         left_inches=block_left + panel_width + CONFUSION_COLORBAR_GAP_INCHES,
         bottom_inches=grid_bottom,
         height_inches=panel_height,
@@ -973,9 +961,8 @@ def plot_confusion_matrix_grid(
                     panel_height / figure_height,
                 )
             )
-    image = None
     for axis, (panel_title, metrics) in zip(axes.flat, panels, strict=True):
-        image = _draw_confusion_matrix(
+        _draw_confusion_matrix(
             axis,
             metrics,
             generated_classes,
@@ -996,7 +983,6 @@ def plot_confusion_matrix_grid(
     )
     _add_confusion_colorbar(
         fig,
-        image,
         left_inches=block_left + block_width + CONFUSION_COLORBAR_GAP_INCHES,
         bottom_inches=block_center_y - panel_height / 2.0,
         height_inches=panel_height,
@@ -1431,6 +1417,7 @@ def validate_classifier(
         "fixed-interval-4x25-impaired-classifier-confusion.pdf",
         "fixed-interval-4x25-impaired-classifier-confusion.json",
         "mass-4x25-classifier-confusion.pdf",
+        "mass-4x25-classifier-confusion.json",
     ):
         (figure_dir / legacy_name).unlink(missing_ok=True)
     dataset_path = processed_dir / "synthetic-classifier-validation.pq"
@@ -1520,7 +1507,6 @@ def validate_classifier(
     }
     base_reordered_3_json = figure_dir / "base-4x4-classifier-confusion-reordered-3.json"
     base_reordered_4_json = figure_dir / "base-4x4-classifier-confusion-reordered-4.json"
-    mass_json = figure_dir / "mass-4x25-classifier-confusion.json"
     out_of_scope_json = figure_dir / "out-of-scope-classifier-rejection.json"
     _write_json(
         {
@@ -1551,30 +1537,6 @@ def validate_classifier(
             },
         },
         base_reordered_4_json,
-    )
-    _write_json(
-        {
-            **common_metadata,
-            "shape": "4x25",
-            "loss_fraction": 0.20,
-            "present_ipids_per_sequence": 80,
-            "paired_loss_masks": True,
-            "reordered_fraction_of_present": 0.20,
-            "reordered_ipids_per_sequence": reordered_count,
-            "datasets": {
-                "ideal": {"name": FIXED_IDEAL_DATASET, "metrics": fixed_metrics},
-                "lossy": {"name": FIXED_LOSSY_DATASET, "metrics": lossy_metrics},
-                "reordered": {
-                    "name": MASS_REORDERED_DATASET,
-                    "metrics": mass_reordered_metrics,
-                },
-                "lossy_reordered": {
-                    "name": FIXED_REORDERED_DATASET,
-                    "metrics": reordered_metrics,
-                },
-            },
-        },
-        mass_json,
     )
     _write_json(
         {
@@ -1663,7 +1625,6 @@ def validate_classifier(
         "mass_ideal_pdf": mass_ideal_pdf,
         "mass_lossy_vs_reordered_pdf": mass_lossy_vs_reordered_pdf,
         "mass_lossy_vs_lossy_reordered_pdf": mass_lossy_vs_lossy_reordered_pdf,
-        "mass_json": mass_json,
         "out_of_scope_json": out_of_scope_json,
     }
 
