@@ -192,7 +192,7 @@ F1 scores.
 
 The raw-format synthetic sequences and detected labels are written to
 `data/processed/classifier-validation/synthetic-classifier-validation.pq`.
-Three confusion-matrix PDFs and their metric JSON sidecars are written below
+Five focused confusion-matrix PDFs and their metric JSON sidecars are written below
 `reports/figures/classifier-validation/`. The JSON reports include accuracy,
 balanced accuracy, per-class precision/recall/F1, macro and weighted averages,
 Cohen's kappa, and multiclass Matthews correlation coefficient.
@@ -200,7 +200,9 @@ Cohen's kappa, and multiclass Matthews correlation coefficient.
 ```text
 base-4x4-classifier-confusion-reordered-3.pdf
 base-4x4-classifier-confusion-reordered-4.pdf
-mass-4x25-classifier-confusion.pdf
+mass-4x25-classifier-confusion-ideal.pdf
+mass-4x25-classifier-confusion-lossy-vs-reordered.pdf
+mass-4x25-classifier-confusion-lossy-vs-lossy-reordered.pdf
 ```
 
 The four Mass datasets also evaluate the selected RANDOM-compatibility score:
@@ -282,8 +284,9 @@ compatibility score is classified RANDOM at the same target 0.01% true-RANDOM
 false-rejection rate used for the selected IP-ID-specific candidate. This keeps
 the comparison fair without changing the published component statistics.
 
-The command evaluates Ideal, 20% Loss, 20% Reordering, and 20% Loss plus 20%
-Reordering. It writes four score CDFs and a four-panel component-by-strategy
+The command evaluates Ideal, 20% Lossy, 20% Reordered, and 20% Lossy plus 20%
+Reordered. Every CDF starts at the power of ten immediately below its smallest
+positive score. It writes four score CDFs and a four-panel component-by-strategy
 heatmap below `reports/figures/classifier-validation/nist-baseline/`, plus a
 compact review bundle and the detailed Parquet score table below
 `data/processed/classifier-validation/nist-baseline/`:
@@ -297,6 +300,12 @@ nist-test-strategy-heatmap.pdf
 nist-baseline-review-bundle.zip
 mass-4x25-nist-baseline-scores.pq
 ```
+
+In the heatmap, each named NIST component row reports the percentage of
+sequences whose component p-value is at least 0.01. The separated `Combined
+score` row is not another NIST component or an average: it reports the
+percentage whose empirically calibrated minimum-component score is at least
+the combined threshold of 0.0001.
 
 ### Held-out RANDOM-classifier paper diagnostics
 

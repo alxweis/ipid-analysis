@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import logging
+import math
 from pathlib import Path
 import zipfile
 
@@ -17,8 +18,10 @@ import typer
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+from matplotlib.transforms import ScaledTranslation
 
 from ipid_analysis.classifier_validation import (
+    CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS,
     _format_matrix_percentage,
     apply_fixed_interval_impairments,
     apply_reordering,
@@ -35,9 +38,10 @@ from ipid_analysis.nist_short_sequence import (
     ipids_to_bitstreams,
 )
 from ipid_analysis.paper_figures import (
+    COMPACT_PAPER_PDF_PADDING_INCHES,
+    COMPACT_PAPER_STROKE_WIDTH,
     PERCENTAGE_CMAP,
-    add_fixed_percentage_colorbar,
-    configure_paper_style,
+    configure_compact_validation_style,
 )
 from ipid_analysis.plot_random_structure_score_cdf import plot_score_cdf
 from ipid_analysis.strategies import STRATEGY_PRETTY
@@ -65,7 +69,20 @@ NIST_COMPONENT_THRESHOLD = 0.01
 NIST_COMBINED_THRESHOLD = TARGET_RANDOM_FALSE_REJECTION_RATE
 DEFAULT_OUTPUT_DIR = PROCESSED_DATA_DIR / "classifier-validation" / "nist-baseline"
 DEFAULT_FIGURE_DIR = FIGURES_DIR / "classifier-validation" / "nist-baseline"
-NIST_SCORE_AXIS_MINIMUM = NIST_COMBINED_THRESHOLD / 2.0
+
+NIST_HEATMAP_FIGURE_SIZE_INCHES = (7.0, 5.15)
+NIST_HEATMAP_LEFT_INCHES = 1.55
+NIST_HEATMAP_CELL_WIDTH_INCHES = 0.30
+NIST_HEATMAP_CELL_HEIGHT_INCHES = 0.155
+NIST_HEATMAP_HORIZONTAL_GAP_INCHES = 0.24
+NIST_HEATMAP_VERTICAL_GAP_INCHES = 0.38
+NIST_HEATMAP_BOTTOM_INCHES = 1.05
+NIST_HEATMAP_TITLE_GAP_INCHES = 0.05
+NIST_HEATMAP_XLABEL_GAP_INCHES = 0.60
+NIST_HEATMAP_YLABEL_GAP_INCHES = 1.20
+NIST_HEATMAP_COLORBAR_GAP_INCHES = 0.10
+NIST_HEATMAP_COLORBAR_WIDTH_INCHES = 0.065
+NIST_HEATMAP_CELL_FONT_SIZE = 8.0
 
 CONDITIONS = ("ideal", "lossy", "reordered", "lossy-reordered")
 CONDITION_LABELS = {
@@ -75,7 +92,7 @@ CONDITION_LABELS = {
     "lossy-reordered": "20% Lossy + 20% Reordered",
 }
 HEATMAP_ROWS = ("combined", *NIST_TEST_NAMES)
-HEATMAP_LABELS = {"combined": "Combined baseline", **NIST_TEST_LABELS}
+HEATMAP_LABELS = {"combined": "Combined score", **NIST_TEST_LABELS}
 
 SCORE_SCHEMA = pa.schema(
     [
@@ -130,12 +147,104 @@ def _create_bundle(paths: list[Path], output_path: Path) -> Path:
     return output_path
 
 
+def _next_lower_power_of_ten(scores: dict[str, np.ndarray]) -> float:
+    """Return the decade immediately below the smallest positive score."""
+    positive_minima = [
+        float(values[values > 0].min()) for values in scores.values() if np.any(values > 0)
+    ]
+    if not positive_minima:
+        raise ValueError("NIST CDF requires at least one positive score")
+    exponent = math.ceil(math.log10(min(positive_minima))) - 1
+    return 10.0**exponent
+
+
+def _normalize_heatmap_title_gap(axis) -> None:
+    figure = axis.figure
+    figure.canvas.draw()
+    renderer = figure.canvas.get_renderer()
+    dpi = figure.dpi
+    axis_box = axis.get_window_extent(renderer=renderer)
+    title_box = axis.title.get_window_extent(renderer=renderer)
+    current_gap_inches = (title_box.y0 - axis_box.y1) / dpi
+    title_x, title_y = axis.title.get_position()
+    axis.title.set_position(
+        (
+            title_x,
+            title_y + (NIST_HEATMAP_TITLE_GAP_INCHES - current_gap_inches) * dpi / axis_box.height,
+        )
+    )
+
+
+def _add_heatmap_shared_labels(fig, *, panel_width: float, panel_height: float) -> None:
+    figure_width, figure_height = fig.get_size_inches()
+    block_width = 2 * panel_width + NIST_HEATMAP_HORIZONTAL_GAP_INCHES
+    block_height = 2 * panel_height + NIST_HEATMAP_VERTICAL_GAP_INCHES
+    xlabel = fig.text(
+        (NIST_HEATMAP_LEFT_INCHES + block_width / 2.0) / figure_width,
+        0.05,
+        "Generating IP-ID process",
+        ha="center",
+        va="bottom",
+    )
+    ylabel = fig.text(
+        0.05,
+        (NIST_HEATMAP_BOTTOM_INCHES + block_height / 2.0) / figure_height,
+        "Adapted NIST component",
+        ha="center",
+        va="center",
+        rotation=90,
+    )
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    dpi = fig.dpi
+    xlabel_box = xlabel.get_window_extent(renderer=renderer)
+    xlabel_x, xlabel_y = xlabel.get_position()
+    xlabel.set_position(
+        (
+            xlabel_x,
+            xlabel_y
+            + (NIST_HEATMAP_BOTTOM_INCHES - NIST_HEATMAP_XLABEL_GAP_INCHES - xlabel_box.y1 / dpi)
+            / figure_height,
+        )
+    )
+    ylabel_box = ylabel.get_window_extent(renderer=renderer)
+    ylabel_x, ylabel_y = ylabel.get_position()
+    ylabel.set_position(
+        (
+            ylabel_x
+            + (NIST_HEATMAP_LEFT_INCHES - NIST_HEATMAP_YLABEL_GAP_INCHES - ylabel_box.x1 / dpi)
+            / figure_width,
+            ylabel_y,
+        )
+    )
+
+
 def _plot_test_heatmap(
     acceptance_percentages: dict[tuple[str, str, str], float],
     output_path: Path,
 ) -> Path:
-    configure_paper_style()
-    fig, axes = plt.subplots(2, 2, figsize=(7.16, 6.3), sharex=True, sharey=True)
+    configure_compact_validation_style()
+    figure_width, figure_height = NIST_HEATMAP_FIGURE_SIZE_INCHES
+    panel_width = len(PLOT_STRATEGIES) * NIST_HEATMAP_CELL_WIDTH_INCHES
+    panel_height = len(HEATMAP_ROWS) * NIST_HEATMAP_CELL_HEIGHT_INCHES
+    fig = plt.figure(figsize=NIST_HEATMAP_FIGURE_SIZE_INCHES)
+    axes = np.empty((2, 2), dtype=object)
+    for row in range(2):
+        for column in range(2):
+            left = NIST_HEATMAP_LEFT_INCHES + column * (
+                panel_width + NIST_HEATMAP_HORIZONTAL_GAP_INCHES
+            )
+            bottom = NIST_HEATMAP_BOTTOM_INCHES + (1 - row) * (
+                panel_height + NIST_HEATMAP_VERTICAL_GAP_INCHES
+            )
+            axes[row, column] = fig.add_axes(
+                (
+                    left / figure_width,
+                    bottom / figure_height,
+                    panel_width / figure_width,
+                    panel_height / figure_height,
+                )
+            )
     image = None
     for condition_index, condition in enumerate(CONDITIONS):
         axis = axes.flat[condition_index]
@@ -148,55 +257,106 @@ def _plot_test_heatmap(
                 for row in HEATMAP_ROWS
             ]
         )
-        image = axis.imshow(
+        image = axis.pcolormesh(
+            np.arange(len(PLOT_STRATEGIES) + 1),
+            np.arange(len(HEATMAP_ROWS) + 1),
             matrix,
             cmap=PERCENTAGE_CMAP,
             vmin=0,
             vmax=100,
-            aspect="auto",
-            interpolation="nearest",
+            edgecolors="white",
+            linewidth=0.40,
+            antialiased=False,
+            shading="flat",
         )
-        axis.set_title(CONDITION_LABELS[condition], pad=5)
-        axis.axhline(0.5, color="#555555", linewidth=0.55)
+        axis.set_xlim(0, len(PLOT_STRATEGIES))
+        axis.set_ylim(len(HEATMAP_ROWS), 0)
+        axis.set_xticks(np.arange(len(PLOT_STRATEGIES)) + 0.5)
+        axis.set_yticks(np.arange(len(HEATMAP_ROWS)) + 0.5)
+        axis.set_title(CONDITION_LABELS[condition], pad=0.0, y=1.0)
+        _normalize_heatmap_title_gap(axis)
+        axis.axhline(1.0, color="#555555", linewidth=0.65)
+        for spine in axis.spines.values():
+            spine.set_linewidth(COMPACT_PAPER_STROKE_WIDTH)
+        axis.tick_params(
+            which="major",
+            width=COMPACT_PAPER_STROKE_WIDTH,
+            length=3.0,
+            pad=1.5,
+        )
         for row_index in range(len(HEATMAP_ROWS)):
             for column_index in range(len(PLOT_STRATEGIES)):
                 percentage = matrix[row_index, column_index]
+                text_transform = axis.transData + ScaledTranslation(
+                    0,
+                    -CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
+                    fig.dpi_scale_trans,
+                )
                 axis.text(
-                    column_index,
-                    row_index,
+                    column_index + 0.5,
+                    row_index + 0.5,
                     _format_matrix_percentage(float(percentage)),
                     ha="center",
                     va="center",
                     color="white" if percentage >= 50 else "#222222",
-                    fontsize=5.2,
+                    fontsize=NIST_HEATMAP_CELL_FONT_SIZE,
+                    transform=text_transform,
                 )
-    for axis in axes[-1, :]:
-        axis.set_xticks(
-            np.arange(len(PLOT_STRATEGIES)),
-            [STRATEGY_PRETTY[strategy] for strategy in PLOT_STRATEGIES],
-            rotation=45,
-            ha="right",
-            rotation_mode="anchor",
+    xlabels = [STRATEGY_PRETTY[strategy] for strategy in PLOT_STRATEGIES]
+    ylabels = [HEATMAP_LABELS[name] for name in HEATMAP_ROWS]
+    for row, axis_row in enumerate(axes):
+        for column, axis in enumerate(axis_row):
+            if row == 1:
+                axis.set_xticklabels(
+                    xlabels,
+                    rotation=30,
+                    ha="right",
+                    va="top",
+                    rotation_mode="anchor",
+                )
+            else:
+                axis.tick_params(axis="x", bottom=True, labelbottom=False)
+            if column == 0:
+                axis.set_yticklabels(ylabels, ha="right", va="center")
+            else:
+                axis.tick_params(axis="y", left=True, labelleft=False)
+
+    _add_heatmap_shared_labels(fig, panel_width=panel_width, panel_height=panel_height)
+    block_width = 2 * panel_width + NIST_HEATMAP_HORIZONTAL_GAP_INCHES
+    block_height = 2 * panel_height + NIST_HEATMAP_VERTICAL_GAP_INCHES
+    colorbar_axis = fig.add_axes(
+        (
+            (NIST_HEATMAP_LEFT_INCHES + block_width + NIST_HEATMAP_COLORBAR_GAP_INCHES)
+            / figure_width,
+            (NIST_HEATMAP_BOTTOM_INCHES + block_height / 2.0 - panel_height / 2.0) / figure_height,
+            NIST_HEATMAP_COLORBAR_WIDTH_INCHES / figure_width,
+            panel_height / figure_height,
         )
-    for axis in axes[:, 0]:
-        axis.set_yticks(
-            np.arange(len(HEATMAP_ROWS)),
-            [HEATMAP_LABELS[name] for name in HEATMAP_ROWS],
-        )
-    fig.supxlabel("Generating IP-ID process", y=0.02)
-    fig.supylabel("Adapted NIST component", x=0.015)
-    fig.subplots_adjust(left=0.20, right=0.88, bottom=0.18, top=0.96, hspace=0.16, wspace=0.08)
-    add_fixed_percentage_colorbar(
-        fig,
-        image,
-        left=0.91,
-        label="Classified Random [%]",
     )
+    colorbar = fig.colorbar(image, cax=colorbar_axis, ticks=np.arange(0, 101, 20))
+    colorbar.outline.set_linewidth(COMPACT_PAPER_STROKE_WIDTH)
+    colorbar.ax.tick_params(
+        width=COMPACT_PAPER_STROKE_WIDTH,
+        length=3.0,
+        pad=1.5,
+    )
+    for label in colorbar.ax.get_yticklabels():
+        label.set_verticalalignment("center")
+        label.set_transform(
+            label.get_transform()
+            + ScaledTranslation(
+                0,
+                -CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
+                fig.dpi_scale_trans,
+            )
+        )
+    colorbar.set_label("Classified Random [%]", labelpad=2.5)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(
         output_path,
         format="pdf",
         bbox_inches="tight",
+        pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES,
         metadata={
             "Title": "Adapted NIST SP 800-22 baseline by component and IP-ID strategy",
             "Subject": "Short IP-ID-derived bitstream comparison under four impairments",
@@ -277,6 +437,7 @@ def render(
     outputs: dict[str, Path] = {"aggregate": aggregate_path}
     summary_by_condition = {}
     for condition in CONDITIONS:
+        axis_minimum = _next_lower_power_of_ten(scores[condition])
         pdf_path = plot_score_cdf(
             scores[condition],
             NIST_COMBINED_THRESHOLD,
@@ -284,7 +445,7 @@ def render(
             dataset_label=CONDITION_LABELS[condition],
             x_label=r"Adapted NIST Compatibility Score $S_{\mathrm{NIST}}$",
             method_title="Adapted NIST SP 800-22 baseline score",
-            positive_axis_minimum=NIST_SCORE_AXIS_MINIMUM,
+            positive_axis_minimum=axis_minimum,
             separate_subminimum_panel=False,
             show_curve_markers=True,
         )
@@ -310,6 +471,10 @@ def render(
                 "baseline_version": NIST_BASELINE_VERSION,
                 "not_a_nist_validation_claim": True,
                 "threshold": NIST_COMBINED_THRESHOLD,
+                "figure_axis": {
+                    "positive_display_minimum": axis_minimum,
+                    "rule": "next lower power of ten below the minimum positive score",
+                },
                 "summary_by_strategy": condition_summary,
             },
             figure_dir / f"mass-4x25-nist-score-cdf-{condition}.json",
@@ -339,6 +504,10 @@ def render(
         "excluded_tests": NIST_EXCLUDED_TESTS,
         "component_threshold": NIST_COMPONENT_THRESHOLD,
         "combined_score": "empirical left-tail p-value of the dependent minimum component p-value",
+        "heatmap_combined_score_row": (
+            "percentage of sequences whose empirically calibrated combined score is at least "
+            "the combined threshold"
+        ),
         "combined_threshold": NIST_COMBINED_THRESHOLD,
         "target_random_false_rejection_rate": TARGET_RANDOM_FALSE_REJECTION_RATE,
         "null_tables": {
