@@ -112,7 +112,10 @@ CONFUSION_VERTICAL_PANEL_GAP_INCHES = 0.40
 CONFUSION_TITLE_GAP_INCHES = 0.05
 CONFUSION_XLABEL_GAP_INCHES = 0.60
 CONFUSION_YLABEL_GAP_INCHES = 0.93
-CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS = 1.0
+# Matplotlib's ``va="center"`` already places the numeric labels on the exact
+# geometric center.  Keep this explicit and shared with the colorbar/heatmap so
+# no backend-specific optical offset is reintroduced.
+CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS = 0.0
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 SYNTHETIC_GENERATOR_PARAMETERS = {
     "sampling": "independent discrete uniform unless fixed by the strategy",

@@ -73,7 +73,7 @@ class ClassifierValidationTest(unittest.TestCase):
         self.assertEqual(CONFUSION_TITLE_GAP_INCHES, 0.05)
         self.assertEqual(CONFUSION_XLABEL_GAP_INCHES, 0.60)
         self.assertEqual(CONFUSION_YLABEL_GAP_INCHES, 0.93)
-        self.assertEqual(CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS, 1.0)
+        self.assertEqual(CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS, 0.0)
 
     def test_small_nonzero_confusion_percentages_are_not_rendered_as_zero(self):
         self.assertEqual(_format_matrix_percentage(0.0), "-")
