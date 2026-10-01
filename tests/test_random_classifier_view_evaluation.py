@@ -17,9 +17,13 @@ from ipid_analysis.random_classifier_view_evaluation import (
     ALL_CANDIDATES,
     BASELINE_NAME,
     CORE_CONDITIONS,
+    PRESETS,
     EvaluationPreset,
     _calibrate,
     _evaluate,
+    _required_rules,
+    _requires_gap_aggregate,
+    _score_schema,
     _summaries,
     fisher_compatibility,
     gap_view_pvalues,
@@ -103,6 +107,23 @@ class RandomClassifierViewEvaluationTest(unittest.TestCase):
         self.assertIn("multiscale-e2", BASELINE_NAME)
         self.assertEqual(len(ALL_CANDIDATES), 63)
         self.assertTrue(any(candidate.name == "raw-only" for candidate in ALL_CANDIDATES))
+        self.assertEqual(PRESETS["confirmation"].null_samples, 1_000_000)
+
+    def test_confirmation_plan_computes_only_selected_rules_and_gap_views(self):
+        names = {
+            BASELINE_NAME,
+            "raw+singlescale-e3:inc-aggregate:gap-full",
+        }
+        candidates = tuple(candidate for candidate in ALL_CANDIDATES if candidate.name in names)
+        rules = _required_rules(candidates)
+        self.assertEqual([rule.name for rule in rules], ["multiscale-e2", "singlescale-e3"])
+        self.assertFalse(_requires_gap_aggregate(candidates))
+        schema_names = _score_schema(rules, include_gap_aggregate=False).names
+        self.assertIn("GAP_FULL", schema_names)
+        self.assertNotIn("GAP_DST0", schema_names)
+        self.assertTrue(any(name.startswith("INC_MULTISCALE_E2_") for name in schema_names))
+        self.assertTrue(any(name.startswith("INC_SINGLESCALE_E3_") for name in schema_names))
+        self.assertFalse(any(name.startswith("INC_FIXED_3_") for name in schema_names))
 
     def test_tiny_end_to_end_run_writes_reusable_view_scores(self):
         candidates = tuple(
@@ -111,7 +132,7 @@ class RandomClassifierViewEvaluationTest(unittest.TestCase):
             if candidate.name
             in {
                 BASELINE_NAME,
-                "raw+multiscale-e2:inc-aggregate:gap-aggregate",
+                "raw+singlescale-e3:inc-aggregate:gap-full",
             }
         )
         increment_tables = IncrementBinNullTables(100, 7)
