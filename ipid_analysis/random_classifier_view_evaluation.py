@@ -88,7 +88,7 @@ class EvaluationPreset:
 
 PRESETS = {
     "screening": EvaluationPreset(5_000, 5_000, 50_000, 100_000, 5_000),
-    "confirmation": EvaluationPreset(100_000, 100_000, 250_000, 500_000, 10_000),
+    "confirmation": EvaluationPreset(100_000, 100_000, 250_000, 1_000_000, 10_000),
 }
 
 
@@ -204,6 +204,20 @@ ALL_CANDIDATES = _candidates()
 BASELINE_NAME = "raw+multiscale-e2:inc-minimum:gap-full"
 
 
+def _required_rules(candidates: tuple[Candidate, ...]) -> tuple[IncrementBinRule, ...]:
+    required_names = {
+        candidate.rule_name for candidate in candidates if candidate.include_increment
+    }
+    return tuple(rule for rule in BIN_RULES if rule.name in required_names)
+
+
+def _requires_gap_aggregate(candidates: tuple[Candidate, ...]) -> bool:
+    return any(
+        candidate.include_gap and candidate.gap_mode == "aggregate"
+        for candidate in candidates
+    )
+
+
 def _view_arrays(
     values: np.ndarray,
     present: np.ndarray,
@@ -309,16 +323,21 @@ def _primitive_scores(
     present: np.ndarray,
     increment_tables: IncrementBinNullTables,
     spacing_tables: EmpiricalNullTables,
+    rules: tuple[IncrementBinRule, ...] = BIN_RULES,
+    include_gap_aggregate: bool = True,
 ) -> dict[str, np.ndarray]:
-    result = {
-        "raw": random_structure_features(values, present).uniformity_pvalue,
-        "gap_views": gap_view_pvalues(values, present, spacing_tables),
-    }
-    gap_valid = _gap_valid_views(present)
-    result["gap_minimum"] = result["gap_views"].min(axis=1)
+    result = {"raw": random_structure_features(values, present).uniformity_pvalue}
+    if include_gap_aggregate:
+        result["gap_views"] = gap_view_pvalues(values, present, spacing_tables)
+    else:
+        result["gap_views"] = _gap_view_pvalues(values, present, spacing_tables)[:, None]
     result["gap_full"] = result["gap_views"][:, 0]
-    result["gap_aggregate"] = hierarchical_score(result["gap_views"], gap_valid)
-    for rule in BIN_RULES:
+    if include_gap_aggregate:
+        result["gap_aggregate"] = hierarchical_score(
+            result["gap_views"],
+            _gap_valid_views(present),
+        )
+    for rule in rules:
         views = increment_view_pvalues_for_rule(values, present, rule, increment_tables)
         valid = _increment_valid_views(present, rule)
         result[f"inc_views:{rule.name}"] = views
@@ -383,7 +402,15 @@ def _calibrate(
     candidates: tuple[Candidate, ...],
     increment_tables: IncrementBinNullTables,
     spacing_tables: EmpiricalNullTables,
+    rules: tuple[IncrementBinRule, ...] | None = None,
+    include_gap_aggregate: bool | None = None,
 ) -> dict[str, dict]:
+    rules = rules if rules is not None else _required_rules(candidates)
+    include_gap_aggregate = (
+        include_gap_aggregate
+        if include_gap_aggregate is not None
+        else _requires_gap_aggregate(candidates)
+    )
     by_condition: list[list[np.ndarray]] = [[] for _ in CORE_CONDITIONS]
     for condition_index, condition in enumerate(CORE_CONDITIONS):
         LOGGER.info("Calibrating %s (%d RANDOM sequences)", condition.name, sample_count)
@@ -400,7 +427,14 @@ def _calibrate(
                 condition,
                 _stable_rng(seed, 102, condition_index, offset),
             )
-            primitive = _primitive_scores(values, present, increment_tables, spacing_tables)
+            primitive = _primitive_scores(
+                values,
+                present,
+                increment_tables,
+                spacing_tables,
+                rules,
+                include_gap_aggregate,
+            )
             by_condition[condition_index].append(
                 candidate_scores(primitive, candidates).astype(np.float32)
             )
@@ -426,7 +460,10 @@ def _calibrate(
     return calibrated
 
 
-def _score_schema() -> pa.Schema:
+def _score_schema(
+    rules: tuple[IncrementBinRule, ...] = BIN_RULES,
+    include_gap_aggregate: bool = True,
+) -> pa.Schema:
     fields = [
         ("PROFILE", pa.string()),
         ("CONDITION", pa.string()),
@@ -435,8 +472,9 @@ def _score_schema() -> pa.Schema:
         ("PRESENT_COUNT", pa.int16()),
         ("RAW", pa.float32()),
     ]
-    fields.extend((f"GAP_{name.upper()}", pa.float32()) for name in VIEW_NAMES)
-    for rule in BIN_RULES:
+    gap_names = VIEW_NAMES if include_gap_aggregate else VIEW_NAMES[:1]
+    fields.extend((f"GAP_{name.upper()}", pa.float32()) for name in gap_names)
+    for rule in rules:
         fields.extend(
             (f"INC_{rule.name.upper().replace('-', '_')}_{name.upper()}", pa.float32())
             for name in VIEW_NAMES
@@ -452,6 +490,8 @@ def _write_score_batch(
     sample_offset: int,
     present: np.ndarray,
     primitive: dict[str, np.ndarray],
+    rules: tuple[IncrementBinRule, ...] = BIN_RULES,
+    include_gap_aggregate: bool = True,
 ) -> None:
     size = len(present)
     columns: dict[str, object] = {
@@ -462,9 +502,10 @@ def _write_score_batch(
         "PRESENT_COUNT": present.sum(axis=1).astype(np.int16),
         "RAW": primitive["raw"].astype(np.float32),
     }
-    for index, name in enumerate(VIEW_NAMES):
+    gap_names = VIEW_NAMES if include_gap_aggregate else VIEW_NAMES[:1]
+    for index, name in enumerate(gap_names):
         columns[f"GAP_{name.upper()}"] = primitive["gap_views"][:, index].astype(np.float32)
-    for rule in BIN_RULES:
+    for rule in rules:
         key = rule.name.upper().replace("-", "_")
         views = primitive[f"inc_views:{rule.name}"]
         for index, name in enumerate(VIEW_NAMES):
@@ -480,10 +521,18 @@ def _evaluate(
     increment_tables: IncrementBinNullTables,
     spacing_tables: EmpiricalNullTables,
     score_path: Path,
+    rules: tuple[IncrementBinRule, ...] | None = None,
+    include_gap_aggregate: bool | None = None,
 ) -> tuple[list[dict], list[dict]]:
+    rules = rules if rules is not None else _required_rules(candidates)
+    include_gap_aggregate = (
+        include_gap_aggregate
+        if include_gap_aggregate is not None
+        else _requires_gap_aggregate(candidates)
+    )
     counts: dict[tuple[str, str, str, str], list[int]] = {}
     catches: dict[tuple[str, str, str, str, str], int] = {}
-    schema = _score_schema()
+    schema = _score_schema(rules, include_gap_aggregate)
     with pq.ParquetWriter(score_path, schema, compression="zstd") as writer:
         for profile_index, profile in enumerate(PROFILE_NAMES):
             sample_count = preset.paper_samples if profile == "paper" else preset.heldout_samples
@@ -514,6 +563,8 @@ def _evaluate(
                             present,
                             increment_tables,
                             spacing_tables,
+                            rules,
+                            include_gap_aggregate,
                         )
                         _write_score_batch(
                             writer,
@@ -523,6 +574,8 @@ def _evaluate(
                             offset,
                             present,
                             primitive,
+                            rules,
+                            include_gap_aggregate,
                         )
                         scores = candidate_scores(primitive, candidates)
                         for candidate_index, candidate in enumerate(candidates):
@@ -887,6 +940,8 @@ def main(
         raise typer.BadParameter("at least one candidate is required")
 
     config = PRESETS[preset]
+    required_rules = _required_rules(selected)
+    include_gap_aggregate = _requires_gap_aggregate(selected)
     output_dir = output_dir / preset
     figure_dir = figure_dir / preset
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -902,6 +957,11 @@ def main(
         force=True,
     )
     LOGGER.info("Starting view-evidence evaluation preset=%s candidates=%d", preset, len(selected))
+    LOGGER.info(
+        "Required increment rules=%s; gap views=%s",
+        ",".join(rule.name for rule in required_rules),
+        "full+subsequences" if include_gap_aggregate else "full-only",
+    )
     expected_tail = config.calibration_samples * TARGET_RANDOM_FALSE_REJECTION_RATE
     if expected_tail < 20:
         LOGGER.warning(
@@ -918,6 +978,8 @@ def main(
         selected,
         increment_tables,
         spacing_tables,
+        required_rules,
+        include_gap_aggregate,
     )
     detail_rows, catch_rows = _evaluate(
         config,
@@ -927,6 +989,8 @@ def main(
         increment_tables,
         spacing_tables,
         output_dir / "view-scores.pq",
+        required_rules,
+        include_gap_aggregate,
     )
     runtimes = _benchmark(seed, selected, increment_tables, spacing_tables)
     summary_rows = _summaries(detail_rows, calibrated, runtimes, selected)
@@ -952,7 +1016,10 @@ def main(
         "expected_calibration_tail_observations_per_condition": expected_tail,
         "exploratory_tail_calibration": expected_tail < 20,
         "conditions": [condition.__dict__ for condition in CORE_CONDITIONS],
-        "bin_rules": [rule.__dict__ for rule in BIN_RULES],
+        "bin_rules": [rule.__dict__ for rule in required_rules],
+        "gap_views_computed": "full+subsequences"
+        if include_gap_aggregate
+        else "full-only",
         "candidates": [candidate.__dict__ for candidate in selected],
         "calibration": calibrated,
         "accuracy_first_shortlist": shortlist,

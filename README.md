@@ -904,7 +904,12 @@ make evaluate-random-classifier-views ARGS="--preset confirmation --variants '<c
 ```
 
 Both presets calibrate every complete score at the same target RANDOM
-false-rejection rate.  This command never changes the production classifier.
+false-rejection rate. The confirmation preset uses one million null samples per
+null table so its lower-tail resolution is appropriate for the final threshold.
+It computes only the increment-bin rules and gap views required by the selected
+variants; the current baseline is added automatically. This keeps a focused
+confirmation run practical without changing its statistical specification.
+The command never changes the production classifier.
 
 --------
 
