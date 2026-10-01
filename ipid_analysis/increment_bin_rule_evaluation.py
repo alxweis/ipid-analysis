@@ -81,6 +81,7 @@ class IncrementBinRule:
     description: str = ""
     minimum_bin_count: int = 2
     bin_counts: tuple[int, ...] = ()
+    minimum_transition_count: int = MIN_INCREMENT_TRANSITIONS
 
 
 BIN_RULES = (
@@ -154,7 +155,7 @@ PROFILE_NAMES = ("paper", "selection", "heldout")
 
 def selected_bin_counts(rule: IncrementBinRule, transition_count: int) -> tuple[int, ...]:
     """Return the test resolutions used by ``rule`` for one increment view."""
-    if transition_count < MIN_INCREMENT_TRANSITIONS:
+    if transition_count < rule.minimum_transition_count:
         return ()
     if rule.family == "fixed3":
         return (3,)
@@ -173,6 +174,12 @@ def selected_bin_counts(rule: IncrementBinRule, transition_count: int) -> tuple[
             transition_count // int(rule.target_expected_per_bin),
         )
         candidates = tuple(count for count in (3, 6, 9, 12) if count <= maximum)
+        return candidates[-1:] if candidates else ()
+    if rule.family == "single":
+        if not rule.bin_counts:
+            raise ValueError(f"single-scale rule {rule.name} does not declare bin counts")
+        maximum = transition_count // int(rule.target_expected_per_bin)
+        candidates = tuple(count for count in rule.bin_counts if count <= maximum)
         return candidates[-1:] if candidates else ()
     if rule.family == "multiscale":
         if not rule.bin_counts:
@@ -347,6 +354,20 @@ def increment_uniformity_pvalues_for_rule(
     null_tables: IncrementBinNullTables,
 ) -> np.ndarray:
     """Minimum calibrated view p-value for one candidate bin rule."""
+    return increment_view_pvalues_for_rule(values, present, rule, null_tables).min(axis=1)
+
+
+def increment_view_pvalues_for_rule(
+    values: np.ndarray,
+    present: np.ndarray,
+    rule: IncrementBinRule,
+    null_tables: IncrementBinNullTables,
+) -> np.ndarray:
+    """Calibrated p-values for full, destination, and connection views.
+
+    The stable column order is ``full, dst0, dst1, con0, con1, con2, con3``.
+    Invalid short views retain the neutral value one.
+    """
     if values.shape[1] != FIXED_CONFIG.sequence_length:
         raise ValueError(
             f"expected {FIXED_CONFIG.sequence_length} fixed positions, got {values.shape[1]}"
@@ -375,7 +396,7 @@ def increment_uniformity_pvalues_for_rule(
         )
         for connection in range(FIXED_CONFIG.connection_count)
     )
-    return np.minimum.reduce(components)
+    return np.column_stack(components)
 
 
 def candidate_scores_by_bin_rule(

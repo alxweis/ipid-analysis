@@ -880,3 +880,31 @@ reports/figures/<zmap-id>/no-connection/fixed-interval-mass/n-fi-m_strategies.js
 
 --------
 
+## Offline RANDOM view-evidence evaluation
+
+The production-independent evaluator compares the current validation candidate
+against increment evidence aggregation, circular-gap subsequences, and several
+single-/multiscale increment-bin rules.  Its primary impairment model uses global
+reordering. Component-only candidates are calibrated separately so the catch
+attribution and redundancy comparison remain fair. Start with the bounded
+screening preset:
+
+```bash
+make evaluate-random-classifier-views ARGS="--preset screening"
+```
+
+The run stores reusable primitive full/destination/connection scores in
+`data/processed/classifier-validation/random-classifier-view-evaluation/screening/view-scores.pq`.
+CSV/JSON summaries, plots, logs, and a compact review ZIP are written beside it.
+`recommendations.txt` prints the accuracy-first shortlist.  Confirm only that
+shortlist with the larger preset and a comma-separated `--variants` value:
+
+```bash
+make evaluate-random-classifier-views ARGS="--preset confirmation --variants '<candidate-a>,<candidate-b>'"
+```
+
+Both presets calibrate every complete score at the same target RANDOM
+false-rejection rate.  This command never changes the production classifier.
+
+--------
+

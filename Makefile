@@ -127,6 +127,11 @@ evaluate-random-classifier-v2:
 evaluate-increment-bin-rules:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.increment_bin_rule_evaluation $(ARGS)
 
+## Screen/confirm RANDOM-classifier view aggregation without changing production
+.PHONY: evaluate-random-classifier-views
+evaluate-random-classifier-views:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_view_evaluation $(ARGS)
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################
