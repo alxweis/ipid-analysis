@@ -112,7 +112,7 @@ CONFUSION_VERTICAL_PANEL_GAP_INCHES = 0.40
 CONFUSION_TITLE_GAP_INCHES = 0.05
 CONFUSION_XLABEL_GAP_INCHES = 0.60
 CONFUSION_YLABEL_GAP_INCHES = 0.93
-CONFUSION_CELL_TEXT_DOWNWARD_OFFSET_POINTS = 0.50
+CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS = 1.0
 TRIVIAL_STRATEGIES = frozenset({"REFLECTION", "CONSTANT"})
 SYNTHETIC_GENERATOR_PARAMETERS = {
     "sampling": "independent discrete uniform unless fixed by the strategy",
@@ -753,7 +753,7 @@ def _draw_confusion_matrix(
             percentage = matrix[row_index, column_index]
             text_transform = ax.transData + ScaledTranslation(
                 0,
-                -CONFUSION_CELL_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
+                -CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
                 ax.figure.dpi_scale_trans,
             )
             ax.text(
@@ -792,6 +792,16 @@ def _add_confusion_colorbar(
         length=3.0,
         pad=1.5,
     )
+    for label in colorbar.ax.get_yticklabels():
+        label.set_verticalalignment("center")
+        label.set_transform(
+            label.get_transform()
+            + ScaledTranslation(
+                0,
+                -CONFUSION_NUMERIC_TEXT_DOWNWARD_OFFSET_POINTS / 72.0,
+                fig.dpi_scale_trans,
+            )
+        )
     colorbar.set_label("Percentage [%]", labelpad=2.5)
     return colorbar
 
@@ -1417,6 +1427,7 @@ def validate_classifier(
         "fixed-interval-4x25-classifier-confusion.json",
         "fixed-interval-4x25-impaired-classifier-confusion.pdf",
         "fixed-interval-4x25-impaired-classifier-confusion.json",
+        "mass-4x25-classifier-confusion.pdf",
     ):
         (figure_dir / legacy_name).unlink(missing_ok=True)
     dataset_path = processed_dir / "synthetic-classifier-validation.pq"
@@ -1582,7 +1593,6 @@ def validate_classifier(
 
     base_reordered_3_pdf = figure_dir / "base-4x4-classifier-confusion-reordered-3.pdf"
     base_reordered_4_pdf = figure_dir / "base-4x4-classifier-confusion-reordered-4.pdf"
-    mass_pdf = figure_dir / "mass-4x25-classifier-confusion.pdf"
     mass_ideal_pdf = figure_dir / "mass-4x25-classifier-confusion-ideal.pdf"
     mass_lossy_vs_reordered_pdf = (
         figure_dir / "mass-4x25-classifier-confusion-lossy-vs-reordered.pdf"
@@ -1609,21 +1619,6 @@ def validate_classifier(
         ncols=2,
         title="Base 4x4 classifier validation with 4 reordered IPIDs",
         subject="Synthetic Base 4x4 IP-ID classifier confusion matrices",
-    )
-    plot_confusion_matrix_grid(
-        (
-            ("Ideal", fixed_metrics),
-            ("20% Lossy", lossy_metrics),
-            ("20% Reordered", mass_reordered_metrics),
-            ("20% Lossy + 20% Reordered", reordered_metrics),
-        ),
-        FIXED_IMPAIRED_STRATEGIES,
-        FIXED_IMPAIRED_DETECTED_STRATEGIES,
-        mass_pdf,
-        nrows=2,
-        ncols=2,
-        title="Mass 4x25 classifier validation",
-        subject="Synthetic Mass 4x25 IP-ID classifier confusion matrices",
     )
     plot_ideal_confusion_matrix(
         fixed_metrics,
@@ -1662,7 +1657,6 @@ def validate_classifier(
         "base_reordered_3_json": base_reordered_3_json,
         "base_reordered_4_pdf": base_reordered_4_pdf,
         "base_reordered_4_json": base_reordered_4_json,
-        "mass_pdf": mass_pdf,
         "mass_ideal_pdf": mass_ideal_pdf,
         "mass_lossy_vs_reordered_pdf": mass_lossy_vs_reordered_pdf,
         "mass_lossy_vs_lossy_reordered_pdf": mass_lossy_vs_lossy_reordered_pdf,
