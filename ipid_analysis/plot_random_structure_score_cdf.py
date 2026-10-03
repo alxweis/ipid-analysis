@@ -1,9 +1,9 @@
 """Plot the selected validation-only RANDOM-candidate score CDFs.
 
 The ``mass-4x25-random-score-cdf-*`` artifacts exactly match the candidate selected by
-the view-evidence confirmation: the minimum of raw-IPID uniformity, hierarchically
-aggregated multiscale increment evidence, and empirical circular gap uniformity.
-The production classifier remains unchanged.
+the final operating-point confirmation: the minimum of raw-IPID uniformity,
+hierarchically aggregated multiscale increment evidence, and empirical circular gap
+uniformity. The production classifier remains unchanged.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
+    CANDIDATE_RANDOM_SELECTION,
     CANDIDATE_RANDOM_SCORE_VERSION,
     CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
     CandidateNullTables,
@@ -615,7 +616,7 @@ def render(
             "threshold": {
                 "tau": threshold,
                 "target_global_random_false_rejection_rate": (DEFAULT_RANDOM_FALSE_REJECTION_RATE),
-                "selected_by": "seed-20260927 view-evidence confirmation",
+                "selected_by": CANDIDATE_RANDOM_SELECTION,
             },
             "figure": str(pdf_path),
             "figure_axis": {
