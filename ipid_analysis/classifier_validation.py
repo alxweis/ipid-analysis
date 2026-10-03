@@ -33,8 +33,10 @@ from ipid_analysis.paper_figures import (
     draw_percentage_colorbar_axis,
 )
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+    CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
     CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     CANDIDATE_NULL_TABLE_SAMPLES,
@@ -1451,8 +1453,13 @@ def validate_classifier(
                 "sample_count": candidate_null_table_samples,
                 "base_seed": candidate_null_table_seed,
                 "component_seeds": {
-                    "increment_uniformity": candidate_null_table_seed + 1,
-                    "gap_uniformity": candidate_null_table_seed + 2,
+                    "increment_uniformity": (
+                        candidate_null_table_seed
+                        + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
+                    ),
+                    "gap_uniformity": (
+                        candidate_null_table_seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
+                    ),
                 },
                 "pvalue_resolution": 1.0 / (candidate_null_table_samples + 1.0),
             },

@@ -21,6 +21,7 @@ import matplotlib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+from scipy.special import gammaincc
 import typer
 
 matplotlib.use("Agg")
@@ -34,7 +35,16 @@ from ipid_analysis.increment_bin_rule_evaluation import (
     increment_view_pvalues_for_rule,
     selected_bin_counts,
 )
-from ipid_analysis.multiscale_increment_uniformity import aggregate_increment_view_evidence
+from ipid_analysis.multiscale_increment_uniformity import (
+    aggregate_increment_view_evidence,
+    discrete_bin_probabilities,
+    pearson_statistics,
+)
+from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
+    CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
+    CANDIDATE_NULL_TABLE_SEED,
+)
 from ipid_analysis.random_classifier_evaluation import (
     EmpiricalNullTables,
     ImpairmentCondition,
@@ -53,14 +63,14 @@ from ipid_analysis.random_classifier_evaluation_v2 import (
 from ipid_analysis.strategies import (
     MODULUS,
     RANDOM_STRUCTURE_MIN_TEST_SAMPLES,
-    random_structure_features,
 )
 
 app = typer.Typer(add_completion=False)
 LOGGER = logging.getLogger(__name__)
 
-EXPERIMENT_VERSION = "1"
+EXPERIMENT_VERSION = "2"
 VIEW_NAMES = ("full", "dst0", "dst1", "con0", "con1", "con2", "con3")
+RAW_BIN_COUNTS = (8, 10, 12, 16)
 CORE_CONDITIONS = (
     ImpairmentCondition("ideal"),
     ImpairmentCondition("lossy", loss_fraction=0.20),
@@ -69,6 +79,7 @@ CORE_CONDITIONS = (
 )
 PROFILE_NAMES = ("paper", "heldout")
 TARGET_RANDOM_FALSE_REJECTION_RATE = 0.0001
+TARGET_RANDOM_FALSE_REJECTION_RATES = (0.0001, 0.00025, 0.0005, 0.001)
 DEFAULT_OUTPUT_DIR = (
     PROCESSED_DATA_DIR / "classifier-validation" / "random-classifier-view-evaluation"
 )
@@ -149,6 +160,7 @@ class Candidate:
     include_raw: bool
     include_increment: bool
     include_gap: bool
+    raw_bin_count: int = 16
 
 
 def _candidates() -> tuple[Candidate, ...]:
@@ -196,12 +208,32 @@ def _candidates() -> tuple[Candidate, ...]:
                     True,
                     False,
                 )
-            )
+                )
+    selected = "multiscale-e2:inc-aggregate:gap-full"
+    candidates.extend(
+        Candidate(
+            f"raw{bin_count}+{selected}",
+            "multiscale-e2",
+            "aggregate",
+            "full",
+            True,
+            True,
+            True,
+            raw_bin_count=bin_count,
+        )
+        for bin_count in RAW_BIN_COUNTS
+        if bin_count != 16
+    )
     return tuple(candidates)
 
 
 ALL_CANDIDATES = _candidates()
 BASELINE_NAME = "raw+multiscale-e2:inc-minimum:gap-full"
+SELECTED_CANDIDATE_NAME = "raw+multiscale-e2:inc-aggregate:gap-full"
+RAW_ABLATION_CANDIDATE_NAMES = tuple(
+    f"raw{bin_count}+multiscale-e2:inc-aggregate:gap-full"
+    for bin_count in RAW_BIN_COUNTS[:-1]
+) + (SELECTED_CANDIDATE_NAME,)
 
 
 def _required_rules(candidates: tuple[Candidate, ...]) -> tuple[IncrementBinRule, ...]:
@@ -303,6 +335,32 @@ def hierarchical_score(pvalues: np.ndarray, valid: np.ndarray) -> np.ndarray:
     return aggregate_increment_view_evidence(pvalues, valid)
 
 
+def raw_uniformity_pvalues(
+    values: np.ndarray,
+    present: np.ndarray,
+    bin_count: int,
+) -> np.ndarray:
+    """Pearson raw-IPID uniformity p-values for one equal-width bin count."""
+    if bin_count < 2:
+        raise ValueError("raw uniformity requires at least two bins")
+    row_count = len(values)
+    sample_count = present.sum(axis=1)
+    probabilities = discrete_bin_probabilities(bin_count)
+    values_u32 = np.where(present, values, 0).astype(np.uint32, copy=False)
+    bins = (values_u32 * bin_count) // MODULUS
+    rows = np.broadcast_to(np.arange(row_count)[:, None], values.shape)
+    flat = (rows * bin_count + bins)[present]
+    counts = np.bincount(flat, minlength=row_count * bin_count).reshape(
+        row_count,
+        bin_count,
+    )
+    result = np.ones(row_count, dtype=float)
+    active = sample_count > 0
+    statistics = pearson_statistics(counts[active], probabilities)
+    result[active] = gammaincc((bin_count - 1) / 2.0, statistics / 2.0)
+    return result
+
+
 def _primitive_scores(
     values: np.ndarray,
     present: np.ndarray,
@@ -311,7 +369,11 @@ def _primitive_scores(
     rules: tuple[IncrementBinRule, ...] = BIN_RULES,
     include_gap_aggregate: bool = True,
 ) -> dict[str, np.ndarray]:
-    result = {"raw": random_structure_features(values, present).uniformity_pvalue}
+    result = {
+        f"raw:{bin_count}": raw_uniformity_pvalues(values, present, bin_count)
+        for bin_count in RAW_BIN_COUNTS
+    }
+    result["raw"] = result["raw:16"]
     if include_gap_aggregate:
         result["gap_views"] = gap_view_pvalues(values, present, spacing_tables)
     else:
@@ -343,7 +405,7 @@ def _component_scores(
     if candidate.include_gap:
         components["gap"] = primitive[f"gap_{candidate.gap_mode}"]
     if candidate.include_raw:
-        components["raw"] = primitive["raw"]
+        components["raw"] = primitive[f"raw:{candidate.raw_bin_count}"]
     return components
 
 
@@ -389,6 +451,7 @@ def _calibrate(
     spacing_tables: EmpiricalNullTables,
     rules: tuple[IncrementBinRule, ...] | None = None,
     include_gap_aggregate: bool | None = None,
+    target_rates: tuple[float, ...] = TARGET_RANDOM_FALSE_REJECTION_RATES,
 ) -> dict[str, dict]:
     rules = rules if rules is not None else _required_rules(candidates)
     include_gap_aggregate = (
@@ -426,21 +489,33 @@ def _calibrate(
     arrays = [np.concatenate(parts) for parts in by_condition]
     calibrated = {}
     for candidate_index, candidate in enumerate(candidates):
-        thresholds = {
-            condition.name: _threshold_at_false_rejection(
-                arrays[index][:, candidate_index],
-                TARGET_RANDOM_FALSE_REJECTION_RATE,
-            )
-            for index, condition in enumerate(CORE_CONDITIONS)
-        }
-        threshold = min(thresholds.values())
-        calibrated[candidate.name] = {
-            "threshold": threshold,
-            "threshold_by_condition": thresholds,
-            "false_rejection_by_condition": {
-                condition.name: float((arrays[index][:, candidate_index] < threshold).mean())
+        operating_points = {}
+        for target_rate in target_rates:
+            thresholds = {
+                condition.name: _threshold_at_false_rejection(
+                    arrays[index][:, candidate_index],
+                    target_rate,
+                )
                 for index, condition in enumerate(CORE_CONDITIONS)
-            },
+            }
+            threshold = min(thresholds.values())
+            operating_points[f"{target_rate:.8g}"] = {
+                "target_random_false_rejection_rate": target_rate,
+                "threshold": threshold,
+                "threshold_by_condition": thresholds,
+                "false_rejection_by_condition": {
+                    condition.name: float(
+                        (arrays[index][:, candidate_index] < threshold).mean()
+                    )
+                    for index, condition in enumerate(CORE_CONDITIONS)
+                },
+            }
+        primary = operating_points[f"{TARGET_RANDOM_FALSE_REJECTION_RATE:.8g}"]
+        calibrated[candidate.name] = {
+            "threshold": primary["threshold"],
+            "threshold_by_condition": primary["threshold_by_condition"],
+            "false_rejection_by_condition": primary["false_rejection_by_condition"],
+            "operating_points": operating_points,
         }
     return calibrated
 
@@ -457,6 +532,11 @@ def _score_schema(
         ("PRESENT_COUNT", pa.int16()),
         ("RAW", pa.float32()),
     ]
+    fields.extend(
+        (f"RAW_{bin_count}", pa.float32())
+        for bin_count in RAW_BIN_COUNTS
+        if bin_count != 16
+    )
     gap_names = VIEW_NAMES if include_gap_aggregate else VIEW_NAMES[:1]
     fields.extend((f"GAP_{name.upper()}", pa.float32()) for name in gap_names)
     for rule in rules:
@@ -487,6 +567,9 @@ def _write_score_batch(
         "PRESENT_COUNT": present.sum(axis=1).astype(np.int16),
         "RAW": primitive["raw"].astype(np.float32),
     }
+    for bin_count in RAW_BIN_COUNTS:
+        if bin_count != 16:
+            columns[f"RAW_{bin_count}"] = primitive[f"raw:{bin_count}"].astype(np.float32)
     gap_names = VIEW_NAMES if include_gap_aggregate else VIEW_NAMES[:1]
     for index, name in enumerate(gap_names):
         columns[f"GAP_{name.upper()}"] = primitive["gap_views"][:, index].astype(np.float32)
@@ -508,7 +591,7 @@ def _evaluate(
     score_path: Path,
     rules: tuple[IncrementBinRule, ...] | None = None,
     include_gap_aggregate: bool | None = None,
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict]]:
     rules = rules if rules is not None else _required_rules(candidates)
     include_gap_aggregate = (
         include_gap_aggregate
@@ -516,6 +599,7 @@ def _evaluate(
         else _requires_gap_aggregate(candidates)
     )
     counts: dict[tuple[str, str, str, str], list[int]] = {}
+    operating_counts: dict[tuple[str, str, str, str, str], list[int]] = {}
     catches: dict[tuple[str, str, str, str, str], int] = {}
     schema = _score_schema(rules, include_gap_aggregate)
     with pq.ParquetWriter(score_path, schema, compression="zstd") as writer:
@@ -571,6 +655,27 @@ def _evaluate(
                             aggregate[0] += int(random_compatible.sum())
                             aggregate[1] += size
 
+                            for target, operating_point in calibrated[candidate.name][
+                                "operating_points"
+                            ].items():
+                                accepted = (
+                                    scores[:, candidate_index]
+                                    >= operating_point["threshold"]
+                                )
+                                operating_key = (
+                                    profile,
+                                    candidate.name,
+                                    target,
+                                    condition.name,
+                                    strategy,
+                                )
+                                operating_aggregate = operating_counts.setdefault(
+                                    operating_key,
+                                    [0, 0],
+                                )
+                                operating_aggregate[0] += int(accepted.sum())
+                                operating_aggregate[1] += size
+
                             component = _component_scores(primitive, candidate)
                             component_names = tuple(sorted(component))
                             mask = np.zeros(size, dtype=np.uint8)
@@ -622,7 +727,34 @@ def _evaluate(
         }
         for (profile, candidate, condition, strategy, label), count in sorted(catches.items())
     ]
-    return detail_rows, catch_rows
+    operating_rows = []
+    for (
+        profile,
+        candidate,
+        target,
+        condition,
+        strategy,
+    ), (accepted, total) in sorted(operating_counts.items()):
+        errors = total - accepted if strategy == "RANDOM" else accepted
+        low, high = _wilson_interval(errors, total)
+        operating_rows.append(
+            {
+                "profile": profile,
+                "candidate": candidate,
+                "target_random_false_rejection_rate": float(target),
+                "threshold": calibrated[candidate]["operating_points"][target]["threshold"],
+                "condition": condition,
+                "generator_strategy": strategy,
+                "sample_count": total,
+                "random_compatible_count": accepted,
+                "error_type": "false_rejection" if strategy == "RANDOM" else "false_random",
+                "error_count": errors,
+                "error_rate": errors / total,
+                "error_rate_ci95_low": low,
+                "error_rate_ci95_high": high,
+            }
+        )
+    return detail_rows, catch_rows, operating_rows
 
 
 def _benchmark(
@@ -666,7 +798,9 @@ def _benchmark(
                 gap_views = gap_view_pvalues(ideal, present, spacing_tables)
                 components.append(hierarchical_score(gap_views, _gap_valid_views(present)))
             if candidate.include_raw:
-                components.append(random_structure_features(ideal, present).uniformity_pvalue)
+                components.append(
+                    raw_uniformity_pvalues(ideal, present, candidate.raw_bin_count)
+                )
             return np.minimum.reduce(components)
 
         calculate()
@@ -711,6 +845,7 @@ def _summaries(
                     "increment_mode": candidate.increment_mode,
                     "gap_mode": candidate.gap_mode,
                     "include_raw": candidate.include_raw,
+                    "raw_bin_count": candidate.raw_bin_count if candidate.include_raw else "",
                     "include_increment": candidate.include_increment,
                     "include_gap": candidate.include_gap,
                     "threshold": calibrated[candidate.name]["threshold"],
@@ -727,6 +862,78 @@ def _summaries(
                     "runtime_ms_per_10k": runtimes[candidate.name],
                 }
             )
+    return rows
+
+
+def _operating_point_summaries(
+    detail_rows: list[dict],
+    candidates: tuple[Candidate, ...],
+) -> list[dict]:
+    """Aggregate the accuracy trade-off for every calibrated operating point."""
+    rows = []
+    targets = sorted({row["target_random_false_rejection_rate"] for row in detail_rows})
+    for profile in PROFILE_NAMES:
+        for candidate in candidates:
+            for target in targets:
+                selected = [
+                    row
+                    for row in detail_rows
+                    if row["profile"] == profile
+                    and row["candidate"] == candidate.name
+                    and row["target_random_false_rejection_rate"] == target
+                ]
+                if not selected:
+                    continue
+                random_rows = [
+                    row for row in selected if row["generator_strategy"] == "RANDOM"
+                ]
+                structured = [
+                    row for row in selected if row["generator_strategy"] != "RANDOM"
+                ]
+                structured_rates = [row["error_rate"] for row in structured]
+                worst = max(structured, key=lambda row: row["error_rate"])
+
+                def scenario_rate(strategy: str, rows: list[dict] = structured) -> float:
+                    return next(
+                        (
+                            row["error_rate"]
+                            for row in rows
+                            if row["condition"] == "lossy-reordered"
+                            and row["generator_strategy"] == strategy
+                        ),
+                        float("nan"),
+                    )
+
+                rows.append(
+                    {
+                        "profile": profile,
+                        "candidate": candidate.name,
+                        "raw_bin_count": candidate.raw_bin_count
+                        if candidate.include_raw
+                        else "",
+                        "target_random_false_rejection_rate": target,
+                        "threshold": selected[0]["threshold"],
+                        "observed_random_false_rejection_rate": sum(
+                            row["error_count"] for row in random_rows
+                        )
+                        / sum(row["sample_count"] for row in random_rows),
+                        "structured_false_random_rate": sum(
+                            row["error_count"] for row in structured
+                        )
+                        / sum(row["sample_count"] for row in structured),
+                        "structured_p95_false_random_rate": float(
+                            np.quantile(structured_rates, 0.95)
+                        ),
+                        "structured_worst_false_random_rate": worst["error_rate"],
+                        "structured_worst_scenario": (
+                            f"{worst['condition']}:{worst['generator_strategy']}"
+                        ),
+                        "per_bucket_lossy_reordered_false_random_rate": scenario_rate(
+                            "PER_BUCKET"
+                        ),
+                        "single_lossy_reordered_false_random_rate": scenario_rate("SINGLE"),
+                    }
+                )
     return rows
 
 
@@ -813,6 +1020,63 @@ def _plot_per_bucket(detail_rows: list[dict], summary_rows: list[dict], path: Pa
     plt.close(fig)
 
 
+def _plot_final_tuning(operating_rows: list[dict], path: Path) -> None:
+    """Plot the raw-bin and false-rejection operating-point trade-off."""
+    _configure_evaluation_style()
+    fig, axes = plt.subplots(1, 2, figsize=(9.2, 4.0), sharex=True)
+    colors = {8: "#4c78a8", 10: "#f58518", 12: "#54a24b", 16: "#b279a2"}
+    for bin_count, candidate_name in zip(
+        RAW_BIN_COUNTS,
+        RAW_ABLATION_CANDIDATE_NAMES,
+        strict=True,
+    ):
+        heldout = sorted(
+            (
+                row
+                for row in operating_rows
+                if row["profile"] == "heldout" and row["candidate"] == candidate_name
+            ),
+            key=lambda row: row["target_random_false_rejection_rate"],
+        )
+        paper = sorted(
+            (
+                row
+                for row in operating_rows
+                if row["profile"] == "paper" and row["candidate"] == candidate_name
+            ),
+            key=lambda row: row["target_random_false_rejection_rate"],
+        )
+        if not heldout or not paper:
+            continue
+        x = [100 * row["target_random_false_rejection_rate"] for row in heldout]
+        axes[0].plot(
+            x,
+            [100 * row["structured_false_random_rate"] for row in heldout],
+            marker="o",
+            color=colors[bin_count],
+            label=f"{bin_count} raw bins",
+        )
+        axes[1].plot(
+            x,
+            [
+                100 * row["per_bucket_lossy_reordered_false_random_rate"]
+                for row in paper
+            ],
+            marker="o",
+            color=colors[bin_count],
+            label=f"{bin_count} raw bins",
+        )
+    axes[0].set_ylabel("Held-out structured classified Random [%]")
+    axes[1].set_ylabel("Paper Per-Bucket classified Random\nunder Lossy + Reordered [%]")
+    for axis in axes:
+        axis.set_xlabel("Target RANDOM false rejection [%]")
+        axis.grid(color="0.88", linewidth=0.6)
+    axes[0].legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _recommendations(summary_rows: list[dict], path: Path, preset_name: str) -> list[str]:
     heldout = sorted(
         (row for row in summary_rows if row["profile"] == "heldout"),
@@ -839,6 +1103,12 @@ def _recommendations(summary_rows: list[dict], path: Path, preset_name: str) -> 
             "Calibration tail observations per condition: "
             f"{PRESETS[preset_name].calibration_samples * TARGET_RANDOM_FALSE_REJECTION_RATE:.1f}."
         ),
+        (
+            "Operating-point targets: "
+            + ", ".join(f"{100 * rate:.3g}%" for rate in TARGET_RANDOM_FALSE_REJECTION_RATES)
+            + "."
+        ),
+        "Raw-IPID bin ablation: 8, 10, 12, and 16 equal-width bins.",
         "",
         "Reference baseline:",
         (
@@ -884,12 +1154,19 @@ def _review_bundle(output_dir: Path, figure_dir: Path) -> Path:
         "summary.json",
         "variant-results.csv",
         "variant-by-scenario.csv",
+        "operating-point-results.csv",
+        "operating-point-by-scenario.csv",
+        "raw-bin-ablation.csv",
         "catch-attribution.csv",
         "pareto-frontier.csv",
         "recommendations.txt",
         "run.log",
     )
-    figures = ("variant-accuracy-summary.pdf", "per-bucket-lossy-reordered.pdf")
+    figures = (
+        "variant-accuracy-summary.pdf",
+        "per-bucket-lossy-reordered.pdf",
+        "final-tuning-tradeoff.pdf",
+    )
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name in names:
             candidate = output_dir / name
@@ -908,7 +1185,7 @@ def main(
     variants: str = typer.Option("", help="Optional comma-separated candidate names"),
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR),  # noqa: B008
     figure_dir: Path = typer.Option(DEFAULT_FIGURE_DIR),  # noqa: B008
-    seed: int = typer.Option(20260927),
+    seed: int = typer.Option(CANDIDATE_NULL_TABLE_SEED),
 ) -> None:
     """Run the staged, production-independent view-evidence experiment."""
     if preset not in PRESETS:
@@ -954,8 +1231,10 @@ def main(
             "lie in the target lower tail; use confirmation for final threshold estimates",
             expected_tail,
         )
-    increment_tables = IncrementBinNullTables(config.null_samples, seed + 11)
-    spacing_tables = EmpiricalNullTables(config.null_samples, seed + 23)
+    increment_seed = seed + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
+    gap_seed = seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
+    increment_tables = IncrementBinNullTables(config.null_samples, increment_seed)
+    spacing_tables = EmpiricalNullTables(config.null_samples, gap_seed)
     calibrated = _calibrate(
         config.calibration_samples,
         config.batch_size,
@@ -966,7 +1245,7 @@ def main(
         required_rules,
         include_gap_aggregate,
     )
-    detail_rows, catch_rows = _evaluate(
+    detail_rows, catch_rows, operating_detail_rows = _evaluate(
         config,
         seed,
         selected,
@@ -979,10 +1258,17 @@ def main(
     )
     runtimes = _benchmark(seed, selected, increment_tables, spacing_tables)
     summary_rows = _summaries(detail_rows, calibrated, runtimes, selected)
+    operating_rows = _operating_point_summaries(operating_detail_rows, selected)
+    raw_ablation_rows = [
+        row for row in operating_rows if row["candidate"] in RAW_ABLATION_CANDIDATE_NAMES
+    ]
     frontier = _pareto(summary_rows)
 
     _write_csv(output_dir / "variant-results.csv", summary_rows)
     _write_csv(output_dir / "variant-by-scenario.csv", detail_rows)
+    _write_csv(output_dir / "operating-point-results.csv", operating_rows)
+    _write_csv(output_dir / "operating-point-by-scenario.csv", operating_detail_rows)
+    _write_csv(output_dir / "raw-bin-ablation.csv", raw_ablation_rows)
     _write_csv(output_dir / "catch-attribution.csv", catch_rows)
     _write_csv(output_dir / "pareto-frontier.csv", frontier)
     _plot_accuracy(summary_rows, figure_dir / "variant-accuracy-summary.pdf")
@@ -991,14 +1277,28 @@ def main(
         summary_rows,
         figure_dir / "per-bucket-lossy-reordered.pdf",
     )
+    if raw_ablation_rows:
+        _plot_final_tuning(raw_ablation_rows, figure_dir / "final-tuning-tradeoff.pdf")
     shortlist = _recommendations(summary_rows, output_dir / "recommendations.txt", preset)
     metadata = {
         "experiment_version": EXPERIMENT_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "preset": preset,
         "configuration": config.__dict__,
+        "seeds": {
+            "base": seed,
+            "increment_null_tables": increment_seed,
+            "gap_null_tables": gap_seed,
+        },
         "target_random_false_rejection_rate": TARGET_RANDOM_FALSE_REJECTION_RATE,
+        "target_random_false_rejection_rates": list(
+            TARGET_RANDOM_FALSE_REJECTION_RATES
+        ),
         "expected_calibration_tail_observations_per_condition": expected_tail,
+        "expected_calibration_tail_observations_by_target": {
+            f"{rate:.8g}": config.calibration_samples * rate
+            for rate in TARGET_RANDOM_FALSE_REJECTION_RATES
+        },
         "exploratory_tail_calibration": expected_tail < 20,
         "conditions": [condition.__dict__ for condition in CORE_CONDITIONS],
         "bin_rules": [rule.__dict__ for rule in required_rules],
@@ -1007,6 +1307,8 @@ def main(
         else "full-only",
         "candidates": [candidate.__dict__ for candidate in selected],
         "calibration": calibrated,
+        "raw_bin_counts": list(RAW_BIN_COUNTS),
+        "raw_ablation_candidates": list(RAW_ABLATION_CANDIDATE_NAMES),
         "accuracy_first_shortlist": shortlist,
         "production_classifier_changed": False,
         "score_parquet": str(output_dir / "view-scores.pq"),
@@ -1021,6 +1323,9 @@ def main(
         "summary": output_dir / "summary.json",
         "results": output_dir / "variant-results.csv",
         "scenarios": output_dir / "variant-by-scenario.csv",
+        "operating_points": output_dir / "operating-point-results.csv",
+        "operating_point_scenarios": output_dir / "operating-point-by-scenario.csv",
+        "raw_bin_ablation": output_dir / "raw-bin-ablation.csv",
         "catch_attribution": output_dir / "catch-attribution.csv",
         "view_scores": output_dir / "view-scores.pq",
         "recommendations": output_dir / "recommendations.txt",

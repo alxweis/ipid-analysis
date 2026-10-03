@@ -8,7 +8,10 @@ from ipid_analysis.increment_bin_rule_evaluation import (
     increment_view_pvalues_for_rule,
 )
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_GAP_NULL_TABLE_SEED,
     CANDIDATE_INCREMENT_BIN_COUNTS,
+    CANDIDATE_INCREMENT_NULL_TABLE_SEED,
+    CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SCORE_VERSION,
@@ -67,7 +70,7 @@ class RandomClassifierCandidateTest(unittest.TestCase):
             values,
             present,
             rule,
-            IncrementBinNullTables(256, seed=10),
+            IncrementBinNullTables(256, seed=20),
         )
         expected = hierarchical_score(views, _increment_valid_views(present, rule))
 
@@ -78,6 +81,10 @@ class RandomClassifierCandidateTest(unittest.TestCase):
         )
         self.assertEqual(CANDIDATE_RANDOM_MIN_SCORE, 1.599998358869925e-05)
         np.testing.assert_array_equal(components.increment_uniformity, expected)
+
+    def test_candidate_null_table_seeds_match_confirmation_evaluator(self):
+        self.assertEqual(CANDIDATE_INCREMENT_NULL_TABLE_SEED, CANDIDATE_NULL_TABLE_SEED + 11)
+        self.assertEqual(CANDIDATE_GAP_NULL_TABLE_SEED, CANDIDATE_NULL_TABLE_SEED + 23)
 
     def test_candidate_does_not_change_production_constants(self):
         self.assertEqual(RANDOM_STRUCTURE_SCORE_VERSION, "raw-multiset-bounded-v2")

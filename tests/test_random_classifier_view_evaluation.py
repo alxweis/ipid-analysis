@@ -19,16 +19,22 @@ from ipid_analysis.random_classifier_view_evaluation import (
     BASELINE_NAME,
     CORE_CONDITIONS,
     PRESETS,
+    RAW_ABLATION_CANDIDATE_NAMES,
+    RAW_BIN_COUNTS,
+    TARGET_RANDOM_FALSE_REJECTION_RATES,
     EvaluationPreset,
     _calibrate,
     _evaluate,
+    _operating_point_summaries,
     _required_rules,
     _requires_gap_aggregate,
     _score_schema,
     _summaries,
     gap_view_pvalues,
     hierarchical_score,
+    raw_uniformity_pvalues,
 )
+from ipid_analysis.strategies import random_structure_features
 
 
 class RandomClassifierViewEvaluationTest(unittest.TestCase):
@@ -105,9 +111,24 @@ class RandomClassifierViewEvaluationTest(unittest.TestCase):
         self.assertEqual(CORE_CONDITIONS[2].reorder_fraction, 0.20)
         self.assertEqual(CORE_CONDITIONS[3].loss_fraction, 0.20)
         self.assertIn("multiscale-e2", BASELINE_NAME)
-        self.assertEqual(len(ALL_CANDIDATES), 63)
+        self.assertEqual(len(ALL_CANDIDATES), 66)
         self.assertTrue(any(candidate.name == "raw-only" for candidate in ALL_CANDIDATES))
         self.assertEqual(PRESETS["confirmation"].null_samples, 1_000_000)
+        self.assertEqual(RAW_BIN_COUNTS, (8, 10, 12, 16))
+        self.assertEqual(len(RAW_ABLATION_CANDIDATE_NAMES), 4)
+        self.assertEqual(
+            TARGET_RANDOM_FALSE_REJECTION_RATES,
+            (0.0001, 0.00025, 0.0005, 0.001),
+        )
+
+    def test_raw_16_bin_ablation_matches_established_component(self):
+        rng = np.random.default_rng(31)
+        values = rng.integers(0, 65536, size=(24, 100), dtype=np.uint16)
+        present = rng.random(values.shape) >= 0.20
+        np.testing.assert_allclose(
+            raw_uniformity_pvalues(values, present, 16),
+            random_structure_features(values, present).uniformity_pvalue,
+        )
 
     def test_confirmation_plan_computes_only_selected_rules_and_gap_views(self):
         names = {
@@ -145,10 +166,16 @@ class RandomClassifierViewEvaluationTest(unittest.TestCase):
             increment_tables,
             spacing_tables,
         )
+        for candidate in candidates:
+            thresholds = [
+                point["threshold"]
+                for point in calibrated[candidate.name]["operating_points"].values()
+            ]
+            self.assertEqual(thresholds, sorted(thresholds))
         preset = EvaluationPreset(2, 2, 8, 100, 2)
         with tempfile.TemporaryDirectory() as directory:
             score_path = Path(directory) / "view-scores.pq"
-            details, catches = _evaluate(
+            details, catches, operating_details = _evaluate(
                 preset,
                 9,
                 candidates,
@@ -161,6 +188,22 @@ class RandomClassifierViewEvaluationTest(unittest.TestCase):
             self.assertGreater(score_path.stat().st_size, 0)
             self.assertTrue(details)
             self.assertTrue(catches)
+            self.assertTrue(operating_details)
+            self.assertEqual(
+                {
+                    row["target_random_false_rejection_rate"]
+                    for row in operating_details
+                },
+                set(TARGET_RANDOM_FALSE_REJECTION_RATES),
+            )
+            operating_summaries = _operating_point_summaries(
+                operating_details,
+                candidates,
+            )
+            self.assertEqual(
+                len(operating_summaries),
+                2 * len(candidates) * len(TARGET_RANDOM_FALSE_REJECTION_RATES),
+            )
             summaries = _summaries(
                 details,
                 calibrated,
