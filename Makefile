@@ -80,6 +80,12 @@ analyse:
 inspect-sequences:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.inspect_sequences $(ARGS)
 
+## Analyze observed missing replies in persisted fixed-interval Mass sequences
+##   usage: make analyse-missing-replies ARGS="data.json"
+.PHONY: analyse-missing-replies
+analyse-missing-replies:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.missing_reply_analysis $(ARGS)
+
 ## Poll S3 for RT handoff and complete postprocessing jobs
 ##   usage: make workflow-worker ARGS="--s3-prefix s3://bucket/prefix"
 .PHONY: workflow-worker
