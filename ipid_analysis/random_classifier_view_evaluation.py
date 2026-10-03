@@ -21,7 +21,6 @@ import matplotlib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from scipy.special import gammaincc
 import typer
 
 matplotlib.use("Agg")
@@ -35,6 +34,7 @@ from ipid_analysis.increment_bin_rule_evaluation import (
     increment_view_pvalues_for_rule,
     selected_bin_counts,
 )
+from ipid_analysis.multiscale_increment_uniformity import aggregate_increment_view_evidence
 from ipid_analysis.random_classifier_evaluation import (
     EmpiricalNullTables,
     ImpairmentCondition,
@@ -298,24 +298,9 @@ def _gap_valid_views(present: np.ndarray) -> np.ndarray:
     )
 
 
-def fisher_compatibility(pvalues: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    """Fisher-combine disjoint views, excluding unavailable short views."""
-    clipped = np.clip(pvalues, np.finfo(float).tiny, 1.0)
-    active = valid.sum(axis=1)
-    log_sum = np.where(valid, np.log(clipped), 0.0).sum(axis=1)
-    result = np.ones(len(pvalues), dtype=float)
-    rows = active > 0
-    # Fisher T=-2*sum(log(p)); chi-square survival is gammaincc(k, T/2).
-    result[rows] = gammaincc(active[rows], -log_sum[rows])
-    return result
-
-
 def hierarchical_score(pvalues: np.ndarray, valid: np.ndarray) -> np.ndarray:
     """Minimum of full, combined destination, and combined connection evidence."""
-    full = np.where(valid[:, 0], pvalues[:, 0], 1.0)
-    destinations = fisher_compatibility(pvalues[:, 1:3], valid[:, 1:3])
-    connections = fisher_compatibility(pvalues[:, 3:7], valid[:, 3:7])
-    return np.minimum.reduce((full, destinations, connections))
+    return aggregate_increment_view_evidence(pvalues, valid)
 
 
 def _primitive_scores(
@@ -821,7 +806,7 @@ def _plot_per_bucket(detail_rows: list[dict], summary_rows: list[dict], path: Pa
     axis.barh(np.arange(len(names)), [100 * selected[name] for name in names], color="#72b7b2")
     axis.set_yticks(np.arange(len(names)), names)
     axis.invert_yaxis()
-    axis.set_xlabel("Per-Bucket classified Random under Lossy + Reordered [%]")
+    axis.set_xlabel("Paper Per-Bucket classified Random under Lossy + Reordered [%]")
     axis.grid(axis="x", color="0.88", linewidth=0.6)
     fig.tight_layout()
     fig.savefig(path, bbox_inches="tight")
@@ -851,7 +836,7 @@ def _recommendations(summary_rows: list[dict], path: Path, preset_name: str) -> 
         ),
         "Global reordering is used for both paper and held-out profiles.",
         (
-            "Screening tail observations per condition: "
+            "Calibration tail observations per condition: "
             f"{PRESETS[preset_name].calibration_samples * TARGET_RANDOM_FALSE_REJECTION_RATE:.1f}."
         ),
         "",

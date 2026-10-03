@@ -327,6 +327,10 @@ class ClassifierValidationTest(unittest.TestCase):
                 list(CANDIDATE_INCREMENT_BIN_COUNTS),
             )
             self.assertEqual(
+                random_score["increment_uniformity"]["subsequence_aggregation"],
+                "hierarchical-fisher-disjoint-v1",
+            )
+            self.assertEqual(
                 random_score["null_tables"]["component_seeds"],
                 {
                     "increment_uniformity": CANDIDATE_NULL_TABLE_SEED + 1,
