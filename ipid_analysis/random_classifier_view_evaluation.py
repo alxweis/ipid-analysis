@@ -1,7 +1,7 @@
 """Staged offline evaluation of view evidence for RANDOM classification.
 
-This module deliberately does not change production classification.  It compares
-the selected ``min(raw, increment, gap)`` validation candidate with alternatives
+This module deliberately does not change classifier state. It compares the
+selected ``min(raw, increment, gap)`` production score with alternatives
 that aggregate independent destination/connection evidence, add circular-spacing
 subsequence views, and vary the increment bin rule.
 """
@@ -29,6 +29,12 @@ import matplotlib.pyplot as plt
 
 from ipid_analysis.classifier_validation import FIXED_CONFIG, generate_fixed_sequences
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.empirical_random_uniformity import (
+    EmpiricalNullTables,
+    _right_tail_pvalues,
+    _spacing_cvm_statistics,
+    _stable_rng,
+)
 from ipid_analysis.increment_bin_rule_evaluation import (
     IncrementBinNullTables,
     IncrementBinRule,
@@ -46,12 +52,8 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_NULL_TABLE_SEED,
 )
 from ipid_analysis.random_classifier_evaluation import (
-    EmpiricalNullTables,
     ImpairmentCondition,
     _configure_evaluation_style,
-    _right_tail_pvalues,
-    _spacing_cvm_statistics,
-    _stable_rng,
     _threshold_at_false_rejection,
     _wilson_interval,
 )

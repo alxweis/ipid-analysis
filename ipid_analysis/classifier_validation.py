@@ -47,22 +47,21 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_RANDOM_SCORE_VERSION,
     CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
     CandidateNullTables,
-    candidate_random_scores,
     create_candidate_null_tables,
 )
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
+    LEGACY_RANDOM_STRUCTURE_MIN_SCORE,
+    LEGACY_RANDOM_STRUCTURE_SCORE_VERSION,
     MAX_INC,
     MULTI_MAX_CLUSTERS,
     MULTI_MAX_INC,
-    RANDOM_STRUCTURE_MIN_SCORE,
-    RANDOM_STRUCTURE_MIN_TEST_SAMPLES,
-    RANDOM_STRUCTURE_SCORE_VERSION,
     STRATEGY_PRETTY,
     IPIDStrategy,
     MeasurementConfig,
     classify_batch,
     classify_batch_mass,
+    legacy_random_structure_scores,
 )
 
 app = typer.Typer()
@@ -455,6 +454,7 @@ def _classify_mass(
     *,
     candidate_null_tables: CandidateNullTables | None = None,
     candidate_threshold: float = CANDIDATE_RANDOM_MIN_SCORE,
+    legacy_random_score: bool = False,
 ) -> np.ndarray:
     rows = []
     for row_index, row in enumerate(values):
@@ -470,32 +470,15 @@ def _classify_mass(
     codes = classify_batch_mass(
         pa.array(rows, type=pa.list_(pa.int64())),
         FIXED_CONFIG,
-    )
-    if candidate_null_tables is None:
-        return codes
-
-    # The established exact, CONSTANT, and MULTI decisions stay untouched.
-    # RANDOM is the final mass-classifier stage, so replacing both its current
-    # RANDOM and UNCLASSIFIED outputs precisely substitutes only that decision.
-    residual = (codes == int(IPIDStrategy.RANDOM)) | (codes == int(IPIDStrategy.UNCLASSIFIED))
-    if not residual.any():
-        return codes
-
-    present = (
-        np.ones(values.shape, dtype=bool)
-        if loss_mask is None
-        else ~np.asarray(loss_mask, dtype=bool)
-    )
-    scores = candidate_random_scores(
-        values[residual],
-        present[residual],
-        candidate_null_tables,
-    )
-    enough = present[residual].sum(axis=1) >= RANDOM_STRUCTURE_MIN_TEST_SAMPLES
-    codes[residual] = np.where(
-        (scores >= candidate_threshold) & enough,
-        int(IPIDStrategy.RANDOM),
-        int(IPIDStrategy.UNCLASSIFIED),
+        random_null_tables=candidate_null_tables,
+        random_threshold=(
+            LEGACY_RANDOM_STRUCTURE_MIN_SCORE
+            if legacy_random_score
+            else candidate_threshold
+        ),
+        random_score_function=(
+            legacy_random_structure_scores if legacy_random_score else None
+        ),
     )
     return codes
 
@@ -1120,6 +1103,7 @@ def validate_classifier(
     mass_classifier_kwargs = {
         "candidate_null_tables": candidate_null_tables,
         "candidate_threshold": candidate_threshold,
+        "legacy_random_score": not candidate_random_score,
     }
 
     seed_sequence = np.random.SeedSequence(seed)
@@ -1463,16 +1447,17 @@ def validate_classifier(
                 },
                 "pvalue_resolution": 1.0 / (candidate_null_table_samples + 1.0),
             },
-            "validation_only": True,
-            "production_classifier_changed": False,
+            "validation_only": False,
+            "production_classifier_changed": True,
             "scope": "fixed-interval mass classifier only",
         }
     else:
         random_score_metadata = {
-            "version": RANDOM_STRUCTURE_SCORE_VERSION,
-            "threshold": RANDOM_STRUCTURE_MIN_SCORE,
+            "version": LEGACY_RANDOM_STRUCTURE_SCORE_VERSION,
+            "threshold": LEGACY_RANDOM_STRUCTURE_MIN_SCORE,
             "validation_only": False,
-            "production_classifier_changed": False,
+            "production_classifier_changed": True,
+            "historical_baseline": True,
             "scope": "fixed-interval mass classifier only",
         }
     random_score_metadata["applies_after"] = [
@@ -1656,10 +1641,10 @@ def main(
     seed: int = typer.Option(42, help="deterministic random seed"),
     candidate_random_score: bool = typer.Option(
         True,
-        "--candidate-random-score/--production-random-score",
+        "--final-random-score/--legacy-random-score",
         help=(
-            "render the established paper figures with the selected validation-only "
-            "RANDOM score, or reproduce the current production score"
+            "render the established paper figures with the final production "
+            "RANDOM score, or reproduce the pre-v7 production baseline"
         ),
     ),
     candidate_null_table_samples: int = typer.Option(

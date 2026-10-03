@@ -143,7 +143,7 @@ make validate-classifier
 make validate-classifier ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-The paper figures use the selected validation-only RANDOM candidate by default:
+The paper figures and production mass classifier use the same final RANDOM score:
 the minimum of raw-IPID uniformity, hierarchically aggregated multiscale
 increment evidence, and full-sequence circular gap uniformity. The increment
 component evaluates all usable resolutions from `{3, 4, 8, 16}` in every full,
@@ -152,13 +152,15 @@ destination views and the four disjoint connection views, then takes the
 minimum of full, destination, and connection evidence. The complete score and
 threshold are calibrated together because those three families overlap. The
 calibrated threshold and empirical-null specification are recorded in each
-JSON sidecar.
-This replaces only the final RANDOM decision inside the synthetic validation;
-the production classifier remains unchanged. To reproduce the confusion
-matrices with the current production RANDOM score instead, run:
+JSON sidecar. Production generates the deterministic empirical tables lazily
+from the confirmed seeds and caches them for the lifetime of the process, so
+streamed mass batches do not rebuild them.
+The validation uses the same version, threshold, null-table sizes, and seeds as
+production. To reproduce the pre-v7 production baseline for a historical
+comparison instead, run:
 
 ```bash
-python -m ipid_analysis.classifier_validation --production-random-score
+python -m ipid_analysis.classifier_validation --legacy-random-score
 ```
 
 By default, 100,000 sequences are generated per evaluated strategy.
@@ -217,7 +219,7 @@ make plot-mass-random-score-cdf
 make plot-mass-random-score-cdf ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-The candidate score is
+The production score is
 `S = min(raw_uniformity, increment_evidence, gap_uniformity)`. Raw uniformity
 uses the established 16-bin Pearson test. Increment evidence is the empirical
 multiscale test over the full, two destination, and four connection views. It
@@ -239,8 +241,7 @@ RANDOM-compatible when `S >= tau`.
 By default, the plotted nontrivial strategies use 100,000 sequences;
 `REFLECTION` and `CONSTANT` remain fixed at 1,000. The exact complete-sequence
 rules and the established `CONSTANT` and `MULTI` fallbacks keep precedence over
-the candidate score. This validation pipeline does not change the production
-classifier. The PDFs and JSON metadata are written below
+the RANDOM score. The PDFs and JSON metadata are written below
 `reports/figures/classifier-validation/`; the underlying scores and decisions
 are stored in
 `data/processed/classifier-validation/mass-4x25-random-score-cdf.pq`. The four
@@ -316,8 +317,8 @@ the combined threshold of 0.0005.
 
 ### Held-out RANDOM-classifier paper diagnostics
 
-Compare the current production score, the adapted NIST baseline, and the
-selected validation candidate on the independent held-out v2 generators:
+Compare the pre-v7 production score, the adapted NIST baseline, and the final
+production score on the independent held-out v2 generators:
 
 ```bash
 make plot-random-classifier-diagnostics
@@ -325,8 +326,8 @@ make plot-random-classifier-diagnostics
 make plot-random-classifier-diagnostics ARGS="--samples-per-generator 10 --candidate-null-samples 100 --nist-null-samples 100 --batch-size 10"
 ```
 
-The diagnostics use all four impairment conditions and do not change the
-production classifier. They write:
+The diagnostics use all four impairment conditions and do not mutate classifier
+state. They write:
 
 ```text
 random-classifier-candidate-confusion.pdf
@@ -343,9 +344,8 @@ are rendered as `<0.1` rather than `0.0`.
 
 ### RANDOM metric-selection experiment
 
-Evaluate the four production score components together with candidate
-increment-uniformity and circular gap-uniformity metrics without changing the
-production classifier:
+Reproduce the historical selection experiment over the four pre-v7 production
+components plus increment-uniformity and circular gap-uniformity metrics:
 
 ```bash
 # Fast pipeline/plot smoke test (not statistically conclusive)
@@ -465,8 +465,8 @@ table, the recommendations, the run log, and all three plots.
 
 ### Increment-uniformity bin-rule ablation
 
-Before changing the selected validation candidate or production classifier,
-the bin-rule experiment holds `S = min(raw, increment, gap)` fixed and compares:
+The bin-rule experiment that selected the production rule holds
+`S = min(raw, increment, gap)` fixed and compares:
 
 - the current power-of-two rule with about five expected transitions per bin;
 - a finer power-of-two rule with about three expected transitions per bin;
@@ -889,7 +889,7 @@ reports/figures/<zmap-id>/no-connection/fixed-interval-mass/n-fi-m_strategies.js
 
 ## Offline RANDOM view-evidence evaluation
 
-The production-independent evaluator compares the current validation candidate
+The production-independent evaluator compares the selected production score
 against increment evidence aggregation, circular-gap subsequences, and several
 single-/multiscale increment-bin rules.  Its primary impairment model uses global
 reordering. Component-only candidates are calibrated separately so the catch

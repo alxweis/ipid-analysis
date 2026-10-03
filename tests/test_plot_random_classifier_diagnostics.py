@@ -30,7 +30,7 @@ class PlotRandomClassifierDiagnosticsTest(unittest.TestCase):
             for path in outputs.values():
                 self.assertTrue(path.is_file(), path)
             report = json.loads(outputs["report_json"].read_text(encoding="utf-8"))
-            self.assertFalse(report["production_classifier_changed"])
+            self.assertTrue(report["production_classifier_changed"])
             self.assertEqual(report["methods"], list(METHODS))
             self.assertEqual(report["conditions"], [condition.name for condition in CONDITIONS])
             with zipfile.ZipFile(outputs["review_bundle"]) as archive:

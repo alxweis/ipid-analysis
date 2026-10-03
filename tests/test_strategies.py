@@ -9,6 +9,10 @@ import pyarrow.parquet as pq
 
 from ipid_analysis.increments import mass_increments
 from ipid_analysis.manifest import IpidMeasurement
+from ipid_analysis.random_classifier_candidate import (
+    candidate_random_scores,
+    create_candidate_null_tables,
+)
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
     RANDOM_STRUCTURE_MIN_SCORE,
@@ -20,6 +24,7 @@ from ipid_analysis.strategies import (
     classify_measurement,
     classify_paths,
     load_config,
+    random_structure_scores,
 )
 
 
@@ -88,7 +93,11 @@ class StrategyClassificationTest(unittest.TestCase):
             type=pa.list_(pa.int64()),
         )
 
-        codes = classify_batch_mass(values, self.mass_config)
+        with patch(
+            "ipid_analysis.strategies.random_structure_scores",
+            return_value=np.ones(1),
+        ):
+            codes = classify_batch_mass(values, self.mass_config)
 
         self.assertEqual(
             codes.tolist(),
@@ -129,7 +138,11 @@ class StrategyClassificationTest(unittest.TestCase):
             type=pa.list_(pa.int64()),
         )
 
-        codes = classify_batch_mass(values, self.mass_config)
+        with patch(
+            "ipid_analysis.strategies.random_structure_scores",
+            return_value=np.zeros(1),
+        ):
+            codes = classify_batch_mass(values, self.mass_config)
 
         self.assertEqual(
             codes.tolist(),
@@ -147,7 +160,11 @@ class StrategyClassificationTest(unittest.TestCase):
         incomplete_single = list(range(99)) + [-1]
         values = pa.array([incomplete_single], type=pa.list_(pa.int64()))
 
-        codes = classify_batch_mass(values, self.mass_config)
+        with patch(
+            "ipid_analysis.strategies.random_structure_scores",
+            return_value=np.zeros(1),
+        ):
+            codes = classify_batch_mass(values, self.mass_config)
 
         self.assertEqual(codes.tolist(), [int(IPIDStrategy.UNCLASSIFIED)])
 
@@ -158,7 +175,7 @@ class StrategyClassificationTest(unittest.TestCase):
 
         self.assertEqual(codes.tolist(), [int(IPIDStrategy.CONSTANT)])
 
-    def test_mass_multiset_and_random_rules_are_position_independent(self):
+    def test_mass_multiset_rules_keep_priority_when_positions_change(self):
         rng = np.random.default_rng(7)
         random_values = rng.integers(0, 1 << 16, size=100).tolist()
         multi_values = list(range(40)) + list(range(10_000, 10_040))
@@ -168,14 +185,39 @@ class StrategyClassificationTest(unittest.TestCase):
             type=pa.list_(pa.int64()),
         )
 
-        original_codes = classify_batch_mass(original, self.mass_config)
-        shuffled_codes = classify_batch_mass(shuffled, self.mass_config)
+        with patch(
+            "ipid_analysis.strategies.random_structure_scores",
+            return_value=np.ones(1),
+        ):
+            original_codes = classify_batch_mass(original, self.mass_config)
+            shuffled_codes = classify_batch_mass(shuffled, self.mass_config)
 
         self.assertEqual(original_codes.tolist(), shuffled_codes.tolist())
         self.assertEqual(
             original_codes.tolist(),
             [int(IPIDStrategy.MULTI), int(IPIDStrategy.RANDOM)],
         )
+
+    def test_production_random_score_uses_confirmed_candidate(self):
+        rng = np.random.default_rng(71)
+        values = rng.integers(0, 1 << 16, size=(6, 100), dtype=np.uint16)
+        present = rng.random(values.shape) >= 0.20
+        tables = create_candidate_null_tables(128, seed=73)
+
+        actual = random_structure_scores(
+            values,
+            present,
+            self.mass_config,
+            null_tables=tables,
+        )
+        expected = candidate_random_scores(
+            values,
+            present,
+            tables,
+            config=self.mass_config,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
 
     def test_mass_constant_and_multi_keep_priority_over_random_score(self):
         rng = np.random.default_rng(13)

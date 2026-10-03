@@ -1,9 +1,9 @@
-"""Plot the selected validation-only RANDOM-candidate score CDFs.
+"""Plot the final production RANDOM-score CDFs.
 
-The ``mass-4x25-random-score-cdf-*`` artifacts exactly match the candidate selected by
+The ``mass-4x25-random-score-cdf-*`` artifacts exactly match the score selected by
 the final operating-point confirmation: the minimum of raw-IPID uniformity,
 hierarchically aggregated multiscale increment evidence, and empirical circular gap
-uniformity. The production classifier remains unchanged.
+uniformity. This is the score used by the v7 production mass classifier.
 """
 
 from __future__ import annotations
@@ -44,8 +44,8 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
-    CANDIDATE_RANDOM_SELECTION,
     CANDIDATE_RANDOM_SCORE_VERSION,
+    CANDIDATE_RANDOM_SELECTION,
     CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
     CandidateNullTables,
     candidate_random_scores,
@@ -113,7 +113,7 @@ def calculate_scores(
     loss_mask: np.ndarray,
     null_tables: CandidateNullTables,
 ) -> np.ndarray:
-    """Return the uncensored candidate score, including exact zero values."""
+    """Return the uncensored production score, including exact zero values."""
     return candidate_random_scores(
         values,
         ~loss_mask,
@@ -200,7 +200,7 @@ def plot_score_cdf(
     *,
     dataset_label: str,
     x_label: str = r"Random-Compatibility Score $S$",
-    method_title: str = "Selected RANDOM-candidate score",
+    method_title: str = "Production RANDOM score",
     positive_axis_minimum: float = POSITIVE_SCORE_AXIS_MINIMUM,
     separate_subminimum_panel: bool = True,
     show_curve_markers: bool = False,
@@ -419,7 +419,7 @@ def plot_score_cdf(
             "Title": (
                 f"{method_title} distributions by IP-ID selection strategy ({dataset_label})"
             ),
-            "Subject": f"Synthetic 4x25 candidate-score CDFs ({dataset_label})",
+            "Subject": f"Synthetic 4x25 production-score CDFs ({dataset_label})",
             "Creator": "ipid-analysis",
         },
     )
@@ -574,7 +574,7 @@ def render(
             "trivial_strategies": sorted(TRIVIAL_STRATEGIES),
             "score": {
                 "version": SCORE_VERSION,
-                "definition": "minimum selected RANDOM-candidate compatibility score",
+                "definition": "minimum production RANDOM-compatibility score",
                 "components": list(CANDIDATE_RANDOM_METRICS),
                 "combiner": "minimum",
                 "raw_uniformity_bins": 16,
@@ -609,8 +609,8 @@ def render(
                     },
                     "pvalue_resolution": 1.0 / (null_table_samples + 1.0),
                 },
-                "validation_only": True,
-                "production_classifier_changed": False,
+                "validation_only": False,
+                "production_classifier_changed": True,
                 "random_compatible_when": "S >= tau",
             },
             "threshold": {

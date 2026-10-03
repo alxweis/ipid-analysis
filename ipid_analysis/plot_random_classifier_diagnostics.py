@@ -1,4 +1,4 @@
-"""Held-out paper diagnostics for current, NIST-derived, and candidate RANDOM scores."""
+"""Held-out diagnostics for previous, NIST-derived, and production RANDOM scores."""
 
 from __future__ import annotations
 
@@ -46,9 +46,9 @@ from ipid_analysis.random_classifier_evaluation_v2 import (
     generate_v2_sequences,
 )
 from ipid_analysis.strategies import (
-    RANDOM_STRUCTURE_MIN_SCORE,
+    LEGACY_RANDOM_STRUCTURE_MIN_SCORE,
     RANDOM_STRUCTURE_MIN_TEST_SAMPLES,
-    random_structure_scores,
+    legacy_random_structure_scores,
 )
 
 app = typer.Typer(add_completion=False)
@@ -58,7 +58,7 @@ DEFAULT_SAMPLES_PER_GENERATOR = 100_000
 DEFAULT_BATCH_SIZE = 2_000
 DEFAULT_OUTPUT_DIR = PROCESSED_DATA_DIR / "classifier-validation" / "paper-diagnostics"
 DEFAULT_FIGURE_DIR = FIGURES_DIR / "classifier-validation"
-METHODS = ("current", "nist", "candidate")
+METHODS = ("previous-production", "nist", "production")
 COMPACT_CONDITION_LABELS = {
     "ideal": "Ideal",
     "loss-20-random": "20% Lossy",
@@ -66,9 +66,9 @@ COMPACT_CONDITION_LABELS = {
     "loss-20-random-reorder-20": "20% Lossy +\n20% Reordered",
 }
 METHOD_LABELS = {
-    "current": "Current production score",
+    "previous-production": "Previous production score",
     "nist": "Adapted NIST baseline",
-    "candidate": "Candidate: Raw + Aggregated Multiscale + Gap",
+    "production": "Production: Raw + Aggregated Multiscale + Gap",
 }
 CONDITIONS = (
     ImpairmentCondition("ideal"),
@@ -128,20 +128,25 @@ def _evaluate(
                     _stable_rng(seed, 802, batch_index, generator_index, condition_index),
                 )
                 enough = present.sum(axis=1) >= RANDOM_STRUCTURE_MIN_TEST_SAMPLES
-                current = (
-                    random_structure_scores(values, present, FIXED_CONFIG)
-                    >= RANDOM_STRUCTURE_MIN_SCORE
+                previous = (
+                    legacy_random_structure_scores(values, present, FIXED_CONFIG)
+                    >= LEGACY_RANDOM_STRUCTURE_MIN_SCORE
                 ) & enough
-                candidate = (
-                    candidate_random_scores(values, present, candidate_tables)
+                production = (
+                    candidate_random_scores(
+                        values,
+                        present,
+                        candidate_tables,
+                        config=FIXED_CONFIG,
+                    )
                     >= CANDIDATE_RANDOM_MIN_SCORE
                 ) & enough
                 nist_bits = ipids_to_bitstreams(values, present)
                 nist_score, _ = nist_tables.combined_pvalues(nist_bits)
                 nist = (nist_score >= NIST_COMBINED_THRESHOLD) & enough
-                aggregates[("current", condition.name, generator)].add(current)
+                aggregates[("previous-production", condition.name, generator)].add(previous)
                 aggregates[("nist", condition.name, generator)].add(nist)
-                aggregates[("candidate", condition.name, generator)].add(candidate)
+                aggregates[("production", condition.name, generator)].add(production)
         produced += size
         batch_index += 1
 
@@ -228,7 +233,7 @@ def _plot_candidate_confusion(metrics: dict, output_path: Path) -> Path:
     for column, condition in enumerate(CONDITIONS):
         image = _draw_binary(
             axes[column],
-            metrics["candidate"][condition.name],
+            metrics["production"][condition.name],
             COMPACT_CONDITION_LABELS[condition.name],
         )
         axes[column].tick_params(axis="y", labelleft=column == 0)
@@ -277,7 +282,7 @@ def _plot_candidate_by_generator(rows: list[dict], output_path: Path) -> Path:
     lookup = {
         (row["generator_strategy"], row["condition"]): row
         for row in rows
-        if row["method"] == "candidate"
+        if row["method"] == "production"
     }
     matrix = np.asarray(
         [
@@ -408,16 +413,16 @@ def render(
     report_path = _write_json(
         {
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "production_classifier_changed": False,
+            "production_classifier_changed": True,
             "samples_per_generator_and_condition": samples_per_generator,
             "generator_profile": "heldout",
             "generators": list(GENERATOR_NAMES),
             "conditions": [condition.name for condition in CONDITIONS],
             "methods": list(METHODS),
             "thresholds": {
-                "current": RANDOM_STRUCTURE_MIN_SCORE,
+                "previous-production": LEGACY_RANDOM_STRUCTURE_MIN_SCORE,
                 "nist": NIST_COMBINED_THRESHOLD,
-                "candidate": CANDIDATE_RANDOM_MIN_SCORE,
+                "production": CANDIDATE_RANDOM_MIN_SCORE,
             },
             "binary_metrics": metrics,
         },

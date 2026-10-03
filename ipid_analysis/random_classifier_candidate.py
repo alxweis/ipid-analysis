@@ -1,17 +1,22 @@
-"""Validation-only RANDOM classifier selected by final operating-point confirmation.
+"""Final RANDOM classifier selected by the operating-point confirmation.
 
-The module centralizes the exact candidate specification so paper validation
-and a later production implementation cannot silently diverge.  Importing it
-does not modify the production classifier in :mod:`ipid_analysis.strategies`.
+The module centralizes the exact score specification shared by production,
+paper validation, and held-out diagnostics so those paths cannot silently
+diverge.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ipid_analysis.empirical_random_uniformity import (
+    EmpiricalNullTables,
+    gap_uniformity_pvalues,
+)
 from ipid_analysis.multiscale_increment_uniformity import (
     MIN_INCREMENT_TRANSITIONS,
     MULTISCALE_INCREMENT_BINS,
@@ -22,7 +27,7 @@ from ipid_analysis.multiscale_increment_uniformity import (
 from ipid_analysis.strategies import random_structure_features
 
 if TYPE_CHECKING:
-    from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
+    from ipid_analysis.strategies import MeasurementConfig
 
 CANDIDATE_RANDOM_SCORE_VERSION = "raw-multiscale-increment-evidence-gap-min-v3"
 CANDIDATE_RANDOM_METRICS = (
@@ -72,8 +77,6 @@ def create_candidate_null_tables(
     seed: int = CANDIDATE_NULL_TABLE_SEED,
 ) -> CandidateNullTables:
     """Build the exact null-table pair used by the selected candidate."""
-    from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
-
     return CandidateNullTables(
         increment=MultiscaleIncrementNullTables(
             sample_count,
@@ -84,6 +87,16 @@ def create_candidate_null_tables(
             seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
         ),
     )
+
+
+@lru_cache(maxsize=1)
+def production_candidate_null_tables() -> CandidateNullTables:
+    """Return the process-wide production tables with the confirmed seeds.
+
+    The table containers generate individual sample-count tables lazily.  A
+    process-wide cache prevents rebuilding them for every streamed mass batch.
+    """
+    return create_candidate_null_tables()
 
 
 @dataclass(frozen=True)
@@ -100,21 +113,25 @@ def candidate_random_score_components(
     values: np.ndarray,
     present: np.ndarray,
     null_tables: CandidateNullTables,
+    config: MeasurementConfig | None = None,
 ) -> CandidateRandomScoreComponents:
-    """Calculate the validation candidate without changing production state."""
-    # Imported lazily because the offline evaluator reuses the established
-    # classifier-validation generators. Keeping that dependency out of module
-    # initialization lets the established validator import this candidate.
-    from ipid_analysis.classifier_validation import FIXED_CONFIG
-    from ipid_analysis.random_classifier_evaluation import (
-        gap_uniformity_pvalues,
-    )
+    """Calculate the final score components for one measurement shape."""
+    # Historical validation callers omit the shape because all confirmation
+    # data use the fixed 4x25 layout. Production always passes its snapshot
+    # configuration explicitly and therefore has no validation dependency.
+    if config is None:
+        from ipid_analysis.classifier_validation import FIXED_CONFIG
 
+        config = FIXED_CONFIG
+    if config.connection_count != 4 or config.requests_per_connection != 25:
+        raise ValueError(
+            "final RANDOM score is calibrated only for 4x25 fixed-interval mass sequences"
+        )
     raw = random_structure_features(values, present).uniformity_pvalue
     increment = multiscale_increment_evidence_pvalues(
         values,
         present,
-        FIXED_CONFIG,
+        config,
         null_tables.increment,
         bin_counts=CANDIDATE_INCREMENT_BIN_COUNTS,
         target_expected_per_bin=CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
@@ -133,6 +150,12 @@ def candidate_random_scores(
     values: np.ndarray,
     present: np.ndarray,
     null_tables: CandidateNullTables,
+    config: MeasurementConfig | None = None,
 ) -> np.ndarray:
-    """Return only the validation candidate's minimum compatibility score."""
-    return candidate_random_score_components(values, present, null_tables).score
+    """Return only the final minimum RANDOM-compatibility score."""
+    return candidate_random_score_components(
+        values,
+        present,
+        null_tables,
+        config,
+    ).score
