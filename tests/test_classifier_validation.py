@@ -43,7 +43,9 @@ from ipid_analysis.classifier_validation import (
     validate_classifier,
 )
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_BIN_COUNTS,
+    CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
@@ -333,8 +335,14 @@ class ClassifierValidationTest(unittest.TestCase):
             self.assertEqual(
                 random_score["null_tables"]["component_seeds"],
                 {
-                    "increment_uniformity": CANDIDATE_NULL_TABLE_SEED + 1,
-                    "gap_uniformity": CANDIDATE_NULL_TABLE_SEED + 2,
+                    "increment_uniformity": (
+                        CANDIDATE_NULL_TABLE_SEED
+                        + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
+                    ),
+                    "gap_uniformity": (
+                        CANDIDATE_NULL_TABLE_SEED
+                        + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
+                    ),
                 },
             )
             self.assertTrue(random_score["validation_only"])

@@ -232,8 +232,9 @@ of the present, sorted 16-bit IP-ID values against the same versioned discrete
 empirical RANDOM null; it is order-independent and uses only the full sequence.
 The fixed selected threshold is `tau = 1.599998358869925e-05`, calibrated at a
 target 0.01% RANDOM false-rejection rate in the seed-20260927 view-evidence
-confirmation. Increment and gap null tables use the independent seeds 20260928
-and 20260929, respectively. A sequence is RANDOM-compatible when `S >= tau`.
+confirmation. Increment and gap null tables use the same independent seeds as
+that confirmation run, 20260938 and 20260950, respectively. A sequence is
+RANDOM-compatible when `S >= tau`.
 
 By default, the plotted nontrivial strategies use 100,000 sequences;
 `REFLECTION` and `CONSTANT` remain fixed at 1,000. The exact complete-sequence
@@ -909,13 +910,20 @@ shortlist with the larger preset and a comma-separated `--variants` value:
 make evaluate-random-classifier-views ARGS="--preset confirmation --variants '<candidate-a>,<candidate-b>'"
 ```
 
-Both presets calibrate every complete score at the same target RANDOM
-false-rejection rate. The confirmation preset uses one million null samples per
-null table so its lower-tail resolution is appropriate for the final threshold.
+Both presets calibrate every complete score at RANDOM false-rejection targets
+of 0.01%, 0.025%, 0.05%, and 0.1%; 0.01% remains the backward-compatible
+primary operating point. The evaluator also compares raw-IPID uniformity with
+8, 10, 12, and 16 bins for the selected aggregated multiscale candidate. The
+confirmation preset uses one million null samples per null table so its
+lower-tail resolution is appropriate for the final threshold.
 It computes only the increment-bin rules and gap views required by the selected
 variants; the current baseline is added automatically. This keeps a focused
 confirmation run practical without changing its statistical specification.
-The command never changes the production classifier.
+`operating-point-results.csv`, `operating-point-by-scenario.csv`, and
+`raw-bin-ablation.csv` contain the focused final-tuning results, while
+`final-tuning-tradeoff.pdf` visualizes the main trade-off. The summary records
+the base, increment-table, and gap-table seeds explicitly. The command never
+changes the production classifier.
 
 --------
 
