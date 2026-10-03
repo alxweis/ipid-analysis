@@ -115,14 +115,6 @@ def main(
         help="one measurement target, or base and mass targets for a merged plot",
     ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
-    processed_root: Path = typer.Option(
-        PROCESSED_DATA_DIR,
-        help="root directory containing strategy artifacts",
-    ),
-    figures_root: Path = typer.Option(
-        FIGURES_DIR,
-        help="root directory for generated PDF and JSON artifacts",
-    ),
 ) -> None:
     data = load_manifest(manifest)
     try:
@@ -132,19 +124,11 @@ def main(
             if measurement is None:
                 raise ValueError(f"{target}: not present in {manifest}")
             label = measurement.target
-            pdf_path, json_path = render(
-                measurement,
-                processed_root=processed_root,
-                figures_root=figures_root,
-            )
+            pdf_path, json_path = render(measurement)
         elif len(targets) == 2:
             merge = resolve_strategy_merge(data, targets[0], targets[1])
             label = merge.target
-            pdf_path, json_path = render_merged(
-                merge,
-                processed_root=processed_root,
-                figures_root=figures_root,
-            )
+            pdf_path, json_path = render_merged(merge)
         else:
             raise ValueError("provide either one measurement target or one base/mass target pair")
     except (FileNotFoundError, ValueError) as exc:
