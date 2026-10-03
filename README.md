@@ -115,6 +115,31 @@ Reclassification does not replace the persisted historical input. Its result
 may differ from the classification that selected the original fixed-interval
 mass target when classifier rules have changed in the meantime.
 
+For an isolated comparison that also preserves the regular processed artifact,
+write the current classifier result and its distribution figure below separate
+roots. Only the requested measurement is reclassified:
+
+```bash
+TARGET=tcp.ipid.no-connection.fixed-interval.mass
+MANIFEST=data/analysis-jobs/<job-id>/manifest.json
+
+python -m ipid_analysis.strategies "$TARGET" \
+  --manifest "$MANIFEST" \
+  --reclassify \
+  --processed-root data/processed/reclassification-v7
+
+python -m ipid_analysis.plot_strategies "$TARGET" \
+  --manifest "$MANIFEST" \
+  --processed-root data/processed/reclassification-v7 \
+  --figures-root reports/figures/reclassification-v7
+```
+
+Repeat the two commands for each desired Mass target. The historical workflow
+classification under `data/raw/ipid/<measurement-id>/strategies.pq` and the
+regular `data/processed/` result remain unchanged. The isolated Parquet output
+retains the classifier-version and RANDOM-score metadata of the current
+production implementation.
+
 To inspect why sampled mass-measurement rows retained a particular label, join
 their processed strategy with the raw IP-ID sequence and step through ten
 interactive plots:
