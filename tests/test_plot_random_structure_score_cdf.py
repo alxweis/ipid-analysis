@@ -220,8 +220,8 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
                     "gap_uniformity": 17 + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
                 },
             )
-            self.assertTrue(metadata["score"]["validation_only"])
-            self.assertFalse(metadata["score"]["production_classifier_changed"])
+            self.assertFalse(metadata["score"]["validation_only"])
+            self.assertTrue(metadata["score"]["production_classifier_changed"])
             self.assertEqual(metadata["score"]["random_compatible_when"], "S >= tau")
             self.assertEqual(
                 metadata["figure_axis"]["subminimum_scores"],

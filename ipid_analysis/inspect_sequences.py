@@ -17,9 +17,12 @@ import typer
 
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import load_manifest, resolve
+from ipid_analysis.random_classifier_candidate import (
+    candidate_random_score_components,
+    production_candidate_null_tables,
+)
 from ipid_analysis.strategies import (
     INPUT_NAME,
-    MAX_INC,
     MODULUS,
     OUTPUT_NAME,
     RANDOM_STRUCTURE_MIN_SCORE,
@@ -28,9 +31,7 @@ from ipid_analysis.strategies import (
     _cluster_counts_mass,
     _sorted_present_values,
     load_config,
-    random_structure_bounded_increment_pvalues,
     random_structure_features,
-    random_structure_scores,
 )
 
 app = typer.Typer(add_completion=False)
@@ -48,10 +49,9 @@ class SequenceDiagnostics:
     unique_count: int
     cluster_count: int
     maximum_gap: int
-    uniformity_pvalue: float
-    occupancy_pvalue: float
-    maximum_gap_pvalue: float
-    bounded_increment_pvalue: float
+    raw_uniformity_pvalue: float
+    increment_uniformity_pvalue: float
+    gap_uniformity_pvalue: float
     random_score: float
     limiting_component: str
 
@@ -136,26 +136,30 @@ def sequence_diagnostics(sequence: np.ndarray, cfg: MeasurementConfig) -> Sequen
     lengths = present.sum(axis=1).astype(np.int64)
     ordered = _sorted_present_values(values, present)
     features = random_structure_features(values, present, ordered=ordered)
-    bounded = random_structure_bounded_increment_pvalues(values, present, cfg)
-    score = random_structure_scores(values, present, cfg, ordered=ordered)
+    score_components = candidate_random_score_components(
+        values,
+        present,
+        production_candidate_null_tables(),
+        config=cfg,
+    )
     clusters = _cluster_counts_mass(values, present, lengths, ordered=ordered)
 
     components = {
-        "uniformity": float(features.uniformity_pvalue[0]),
-        "occupancy": float(features.occupancy_pvalue[0]),
-        "maximum gap": float(features.maximum_gap_pvalue[0]),
-        f"bounded increments (1..{MAX_INC})": float(bounded[0]),
+        "raw uniformity": float(score_components.raw_uniformity[0]),
+        "aggregated increment uniformity": float(
+            score_components.increment_uniformity[0]
+        ),
+        "circular gap uniformity": float(score_components.gap_uniformity[0]),
     }
     return SequenceDiagnostics(
         present_count=int(features.sample_count[0]),
         unique_count=int(features.unique_count[0]),
         cluster_count=int(clusters[0]),
         maximum_gap=int(features.maximum_gap[0]),
-        uniformity_pvalue=components["uniformity"],
-        occupancy_pvalue=components["occupancy"],
-        maximum_gap_pvalue=components["maximum gap"],
-        bounded_increment_pvalue=components[f"bounded increments (1..{MAX_INC})"],
-        random_score=float(score[0]),
+        raw_uniformity_pvalue=components["raw uniformity"],
+        increment_uniformity_pvalue=components["aggregated increment uniformity"],
+        gap_uniformity_pvalue=components["circular gap uniformity"],
+        random_score=float(score_components.score[0]),
         limiting_component=min(components, key=components.get),
     )
 
@@ -267,10 +271,9 @@ def _plot_sample(
         f"Unique IP-IDs: {diagnostics.unique_count}\n"
         f"Circular clusters: {diagnostics.cluster_count}\n"
         f"Maximum circular gap: {diagnostics.maximum_gap}\n"
-        f"Uniformity p: {diagnostics.uniformity_pvalue:.3e}\n"
-        f"Occupancy p: {diagnostics.occupancy_pvalue:.3e}\n"
-        f"Maximum-gap p: {diagnostics.maximum_gap_pvalue:.3e}\n"
-        f"Bounded-increment p: {diagnostics.bounded_increment_pvalue:.3e}\n\n"
+        f"Raw-uniformity p: {diagnostics.raw_uniformity_pvalue:.3e}\n"
+        f"Increment-evidence p: {diagnostics.increment_uniformity_pvalue:.3e}\n"
+        f"Circular-gap p: {diagnostics.gap_uniformity_pvalue:.3e}\n\n"
         "Close window / Right / Space: next\n"
         "Left: previous    Q / Esc: quit"
     )

@@ -19,6 +19,7 @@ from ipid_analysis.random_classifier_candidate import (
     CandidateRandomScoreComponents,
     candidate_random_score_components,
     create_candidate_null_tables,
+    production_candidate_null_tables,
 )
 from ipid_analysis.random_classifier_view_evaluation import (
     _increment_valid_views,
@@ -88,10 +89,18 @@ class RandomClassifierCandidateTest(unittest.TestCase):
         self.assertEqual(CANDIDATE_INCREMENT_NULL_TABLE_SEED, CANDIDATE_NULL_TABLE_SEED + 11)
         self.assertEqual(CANDIDATE_GAP_NULL_TABLE_SEED, CANDIDATE_NULL_TABLE_SEED + 23)
 
-    def test_candidate_does_not_change_production_constants(self):
-        self.assertEqual(RANDOM_STRUCTURE_SCORE_VERSION, "raw-multiset-bounded-v2")
-        self.assertEqual(RANDOM_STRUCTURE_MIN_SCORE, 0.000016313656391956604)
-        self.assertNotEqual(CANDIDATE_RANDOM_MIN_SCORE, RANDOM_STRUCTURE_MIN_SCORE)
+    def test_confirmed_candidate_is_the_production_specification(self):
+        self.assertEqual(RANDOM_STRUCTURE_SCORE_VERSION, CANDIDATE_RANDOM_SCORE_VERSION)
+        self.assertEqual(RANDOM_STRUCTURE_MIN_SCORE, CANDIDATE_RANDOM_MIN_SCORE)
+
+    def test_production_null_table_container_is_cached_per_process(self):
+        production_candidate_null_tables.cache_clear()
+        first = production_candidate_null_tables()
+        second = production_candidate_null_tables()
+
+        self.assertIs(first, second)
+        self.assertEqual(first.increment.sample_count, 1_000_000)
+        self.assertEqual(first.gap.sample_count, 1_000_000)
 
 
 if __name__ == "__main__":

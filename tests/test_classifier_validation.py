@@ -145,10 +145,14 @@ class ClassifierValidationTest(unittest.TestCase):
         self.assertEqual(tuple(fixed_sequences), FIXED_STRATEGIES)
         for strategy, values in fixed_sequences.items():
             self.assertEqual(values.shape, (16, 100))
-            detected = classify_batch_mass(
-                pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64())),
-                FIXED_CONFIG,
-            )
+            with patch(
+                "ipid_analysis.strategies.random_structure_scores",
+                return_value=np.ones(len(values)),
+            ):
+                detected = classify_batch_mass(
+                    pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64())),
+                    FIXED_CONFIG,
+                )
             self.assertTrue(
                 np.all(detected == int(IPIDStrategy[strategy])),
                 strategy,
@@ -345,8 +349,8 @@ class ClassifierValidationTest(unittest.TestCase):
                     ),
                 },
             )
-            self.assertTrue(random_score["validation_only"])
-            self.assertFalse(random_score["production_classifier_changed"])
+            self.assertFalse(random_score["validation_only"])
+            self.assertTrue(random_score["production_classifier_changed"])
             self.assertEqual(
                 base_3_report["samples_by_dataset_and_strategy"][RT_OUT_OF_SCOPE_DATASET],
                 {"MULTI": 8, "RANDOM": 8},

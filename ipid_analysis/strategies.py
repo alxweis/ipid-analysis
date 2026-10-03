@@ -46,7 +46,7 @@ from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
-CLASSIFIER_VERSION = "6"
+CLASSIFIER_VERSION = "7"
 
 # --- classifier thresholds (tuning, measurement-independent) ---------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3
@@ -56,8 +56,10 @@ MULTI_MAX_CLUSTERS = 16
 # Retained for the legacy Chi-square diagnostic plot; production RANDOM uses S.
 RANDOM_MIN_P_VALUE = 1e-9
 CHI2_BINS = 4  # equal-width bins for the IPID-value uniformity test
-RANDOM_STRUCTURE_SCORE_VERSION = "raw-multiset-bounded-v2"
-RANDOM_STRUCTURE_MIN_SCORE = 0.000016313656391956604
+LEGACY_RANDOM_STRUCTURE_SCORE_VERSION = "raw-multiset-bounded-v2"
+LEGACY_RANDOM_STRUCTURE_MIN_SCORE = 0.000016313656391956604
+RANDOM_STRUCTURE_SCORE_VERSION = "raw-multiscale-increment-evidence-gap-min-v3"
+RANDOM_STRUCTURE_MIN_SCORE = 7.89999176049605e-05
 RANDOM_STRUCTURE_UNIFORMITY_BINS = 16
 RANDOM_STRUCTURE_MIN_TEST_SAMPLES = 2
 RANDOM_STRUCTURE_BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
@@ -545,14 +547,14 @@ def random_structure_bounded_increment_pvalues(
     )
 
 
-def random_structure_scores(
+def legacy_random_structure_scores(
     values: np.ndarray,
     present: np.ndarray,
     cfg: MeasurementConfig,
     *,
     ordered: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Production RANDOM-compatibility score shared with synthetic evaluation."""
+    """Return the pre-v7 score for reproducible historical comparisons."""
     features = random_structure_features(values, present, ordered=ordered)
     return np.clip(
         np.minimum.reduce(
@@ -572,9 +574,38 @@ def random_structure_scores(
     )
 
 
+def random_structure_scores(
+    values: np.ndarray,
+    present: np.ndarray,
+    cfg: MeasurementConfig,
+    *,
+    ordered: np.ndarray | None = None,
+    null_tables=None,
+) -> np.ndarray:
+    """Return the final production RANDOM-compatibility score.
+
+    ``ordered`` remains accepted for source compatibility with the historical
+    score. The final gap component performs its own circular-spacing sort.
+    Tests and offline evaluations may inject smaller null tables; production
+    reuses the confirmed million-sample tables process-wide.
+    """
+    del ordered
+    from ipid_analysis.random_classifier_candidate import (
+        candidate_random_scores,
+        production_candidate_null_tables,
+    )
+
+    tables = production_candidate_null_tables() if null_tables is None else null_tables
+    return candidate_random_scores(values, present, tables, config=cfg)
+
+
 def classify_batch_mass(
     ipid_list: pa.ListArray,
     cfg: MeasurementConfig,
+    *,
+    random_null_tables=None,
+    random_threshold: float = RANDOM_STRUCTURE_MIN_SCORE,
+    random_score_function=None,
 ) -> np.ndarray:
     """Fixed-interval mass classification.
 
@@ -615,13 +646,22 @@ def classify_batch_mass(
 
     residual_rows = np.flatnonzero(codes == int(IPIDStrategy.UNCLASSIFIED))
     if residual_rows.size:
-        score = random_structure_scores(
-            values[residual_rows],
-            present[residual_rows],
-            cfg,
-            ordered=ordered[residual_rows],
-        )
-        is_random = (score >= RANDOM_STRUCTURE_MIN_SCORE) & (
+        if random_score_function is None:
+            score = random_structure_scores(
+                values[residual_rows],
+                present[residual_rows],
+                cfg,
+                ordered=ordered[residual_rows],
+                null_tables=random_null_tables,
+            )
+        else:
+            score = random_score_function(
+                values[residual_rows],
+                present[residual_rows],
+                cfg,
+                ordered=ordered[residual_rows],
+            )
+        is_random = (score >= random_threshold) & (
             lengths[residual_rows] >= RANDOM_STRUCTURE_MIN_TEST_SAMPLES
         )
         codes[residual_rows] = np.where(

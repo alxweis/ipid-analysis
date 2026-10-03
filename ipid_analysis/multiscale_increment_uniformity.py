@@ -5,10 +5,10 @@ connection subsequences.  Within each view it combines every usable resolution
 from 3/4/8/16 bins and calibrates that minimum against a joint empirical null
 distribution. Missing observations never create artificial transitions.
 
-The selected validation candidate combines the two disjoint destination views
+The final production score combines the two disjoint destination views
 and the four disjoint connection views with Fisher's method. It then takes the
 minimum of the full-sequence evidence and those two group-level values. The
-final candidate threshold calibrates that overlapping three-way minimum.
+final production threshold calibrates that overlapping three-way minimum.
 """
 
 from __future__ import annotations
