@@ -13,11 +13,13 @@ from ipid_analysis.plot_nist_short_sequence_baseline import (
     CONDITION_LABELS,
     CONDITIONS,
     HEATMAP_LABELS,
+    NIST_COMBINED_THRESHOLD,
     NIST_HEATMAP_CELL_FONT_SIZE,
     NIST_HEATMAP_CELL_HEIGHT_INCHES,
     NIST_HEATMAP_CELL_WIDTH_INCHES,
     NIST_HEATMAP_COLORBAR_WIDTH_INCHES,
     NIST_HEATMAP_FIGURE_SIZE_INCHES,
+    TARGET_RANDOM_FALSE_REJECTION_RATE,
     _next_lower_power_of_ten,
     render,
 )
@@ -25,6 +27,8 @@ from ipid_analysis.plot_nist_short_sequence_baseline import (
 
 class PlotNistShortSequenceBaselineTest(unittest.TestCase):
     def test_paper_labels_and_compact_axis_are_stable(self):
+        self.assertEqual(TARGET_RANDOM_FALSE_REJECTION_RATE, 0.0005)
+        self.assertEqual(NIST_COMBINED_THRESHOLD, 0.0005)
         self.assertEqual(
             CONDITION_LABELS,
             {

@@ -66,7 +66,7 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
     def test_default_sample_budget(self):
         self.assertEqual(DEFAULT_STRUCTURE_SAMPLES_PER_STRATEGY, 100_000)
         self.assertEqual(DEFAULT_NULL_TABLE_SAMPLES, 1_000_000)
-        self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.0001)
+        self.assertEqual(DEFAULT_RANDOM_FALSE_REJECTION_RATE, 0.0005)
 
     def test_log_axis_starts_at_censored_positive_boundary(self):
         axis_minimum, major_ticks, minor_ticks = _log_axis_parameters()
