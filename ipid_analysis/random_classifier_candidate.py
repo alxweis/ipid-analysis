@@ -31,12 +31,12 @@ CANDIDATE_RANDOM_METRICS = (
     "gap_uniformity",
 )
 
-# Selected by the seed-20260927 view-evidence confirmation using a target
-# true-RANDOM false-rejection rate of 0.01%. This threshold is meaningful only
-# for hierarchical increment-evidence aggregation and the null-table
+# Selected by the seed-20260927 final operating-point confirmation using a
+# target true-RANDOM false-rejection rate of 0.05%. This threshold is meaningful
+# only for hierarchical increment-evidence aggregation and the null-table
 # specification recorded alongside it.
-CANDIDATE_RANDOM_MIN_SCORE = 1.599998358869925e-05
-CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE = 0.0001
+CANDIDATE_RANDOM_MIN_SCORE = 7.89999176049605e-05
+CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE = 0.0005
 CANDIDATE_NULL_TABLE_VERSION = "empirical-discrete-16bit-multiscale-v2"
 CANDIDATE_NULL_TABLE_SAMPLES = 1_000_000
 CANDIDATE_NULL_TABLE_SEED = 20_260_927

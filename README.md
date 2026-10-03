@@ -230,8 +230,8 @@ are combined by a minimum whose effect is included in the complete candidate
 calibration. Gap uniformity compares the complete circular spacing distribution
 of the present, sorted 16-bit IP-ID values against the same versioned discrete
 empirical RANDOM null; it is order-independent and uses only the full sequence.
-The fixed selected threshold is `tau = 1.599998358869925e-05`, calibrated at a
-target 0.01% RANDOM false-rejection rate in the seed-20260927 view-evidence
+The fixed selected threshold is `tau = 7.89999176049605e-05`, calibrated at a
+target 0.05% RANDOM false-rejection rate in the seed-20260927 final operating-point
 confirmation. Increment and gap null tables use the same independent seeds as
 that confirmation run, 20260938 and 20260950, respectively. A sequence is
 RANDOM-compatible when `S >= tau`.
@@ -287,7 +287,7 @@ in the JSON report.
 The minimum of the ten dependent component p-values is not treated as another
 ordinary p-value. It is calibrated against IID-bit Monte Carlo null tables for
 the exact 1,280- or 1,600-bit length, using an add-one correction. The combined
-compatibility score is classified RANDOM at the same target 0.01% true-RANDOM
+compatibility score is classified RANDOM at the same target 0.05% true-RANDOM
 false-rejection rate used for the selected IP-ID-specific candidate. This keeps
 the comparison fair without changing the published component statistics.
 
@@ -312,7 +312,7 @@ In the heatmap, each named NIST component row reports the percentage of
 sequences whose component p-value is at least 0.01. The separated `Combined
 score` row is not another NIST component or an average: it reports the
 percentage whose empirically calibrated minimum-component score is at least
-the combined threshold of 0.0001.
+the combined threshold of 0.0005.
 
 ### Held-out RANDOM-classifier paper diagnostics
 
@@ -911,8 +911,8 @@ make evaluate-random-classifier-views ARGS="--preset confirmation --variants '<c
 ```
 
 Both presets calibrate every complete score at RANDOM false-rejection targets
-of 0.01%, 0.025%, 0.05%, and 0.1%; 0.01% remains the backward-compatible
-primary operating point. The evaluator also compares raw-IPID uniformity with
+of 0.01%, 0.025%, 0.05%, and 0.1%; the confirmed 0.05% target is the primary
+operating point. The evaluator also compares raw-IPID uniformity with
 8, 10, 12, and 16 bins for the selected aggregated multiscale candidate. The
 confirmation preset uses one million null samples per null table so its
 lower-tail resolution is appropriate for the final threshold.

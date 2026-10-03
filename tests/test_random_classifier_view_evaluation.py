@@ -21,6 +21,7 @@ from ipid_analysis.random_classifier_view_evaluation import (
     PRESETS,
     RAW_ABLATION_CANDIDATE_NAMES,
     RAW_BIN_COUNTS,
+    TARGET_RANDOM_FALSE_REJECTION_RATE,
     TARGET_RANDOM_FALSE_REJECTION_RATES,
     EvaluationPreset,
     _calibrate,
@@ -116,6 +117,7 @@ class RandomClassifierViewEvaluationTest(unittest.TestCase):
         self.assertEqual(PRESETS["confirmation"].null_samples, 1_000_000)
         self.assertEqual(RAW_BIN_COUNTS, (8, 10, 12, 16))
         self.assertEqual(len(RAW_ABLATION_CANDIDATE_NAMES), 4)
+        self.assertEqual(TARGET_RANDOM_FALSE_REJECTION_RATE, 0.0005)
         self.assertEqual(
             TARGET_RANDOM_FALSE_REJECTION_RATES,
             (0.0001, 0.00025, 0.0005, 0.001),
@@ -167,6 +169,10 @@ class RandomClassifierViewEvaluationTest(unittest.TestCase):
             spacing_tables,
         )
         for candidate in candidates:
+            self.assertEqual(
+                calibrated[candidate.name]["threshold"],
+                calibrated[candidate.name]["operating_points"]["0.0005"]["threshold"],
+            )
             thresholds = [
                 point["threshold"]
                 for point in calibrated[candidate.name]["operating_points"].values()

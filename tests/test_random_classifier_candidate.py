@@ -15,6 +15,7 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SCORE_VERSION,
+    CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
     CandidateRandomScoreComponents,
     candidate_random_score_components,
     create_candidate_null_tables,
@@ -79,7 +80,8 @@ class RandomClassifierCandidateTest(unittest.TestCase):
             CANDIDATE_RANDOM_SCORE_VERSION,
             "raw-multiscale-increment-evidence-gap-min-v3",
         )
-        self.assertEqual(CANDIDATE_RANDOM_MIN_SCORE, 1.599998358869925e-05)
+        self.assertEqual(CANDIDATE_RANDOM_MIN_SCORE, 7.89999176049605e-05)
+        self.assertEqual(CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE, 0.0005)
         np.testing.assert_array_equal(components.increment_uniformity, expected)
 
     def test_candidate_null_table_seeds_match_confirmation_evaluator(self):

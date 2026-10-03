@@ -78,7 +78,7 @@ CORE_CONDITIONS = (
     ImpairmentCondition("lossy-reordered", loss_fraction=0.20, reorder_fraction=0.20),
 )
 PROFILE_NAMES = ("paper", "heldout")
-TARGET_RANDOM_FALSE_REJECTION_RATE = 0.0001
+TARGET_RANDOM_FALSE_REJECTION_RATE = 0.0005
 TARGET_RANDOM_FALSE_REJECTION_RATES = (0.0001, 0.00025, 0.0005, 0.001)
 DEFAULT_OUTPUT_DIR = (
     PROCESSED_DATA_DIR / "classifier-validation" / "random-classifier-view-evaluation"
@@ -1087,6 +1087,9 @@ def _recommendations(summary_rows: list[dict], path: Path, preset_name: str) -> 
             row["runtime_ms_per_10k"],
         ),
     )
+    paper_by_candidate = {
+        row["candidate"]: row for row in summary_rows if row["profile"] == "paper"
+    }
     shortlist = [row["candidate"] for row in heldout[:6]]
     baseline = next(row for row in heldout if row["candidate"] == BASELINE_NAME)
     lines = [
@@ -1110,22 +1113,26 @@ def _recommendations(summary_rows: list[dict], path: Path, preset_name: str) -> 
         ),
         "Raw-IPID bin ablation: 8, 10, 12, and 16 equal-width bins.",
         "",
-        "Reference baseline:",
+        "Held-out reference baseline:",
         (
             f"  {BASELINE_NAME}: false-Random={baseline['structured_false_random_rate']:.6%}, "
             f"p95={baseline['structured_p95_false_random_rate']:.6%}, "
             f"worst={baseline['structured_worst_false_random_rate']:.6%}"
         ),
         "",
-        "Accuracy-first shortlist:",
+        "Held-out accuracy-first shortlist:",
     ]
     for rank, row in enumerate(heldout[:10], 1):
+        paper = paper_by_candidate[row["candidate"]]
         lines.append(
             f"  {rank}. {row['candidate']} "
             f"| false-Random={row['structured_false_random_rate']:.6%} "
             f"| p95={row['structured_p95_false_random_rate']:.6%} "
             f"| worst={row['structured_worst_false_random_rate']:.6%} "
-            f"| Per-Bucket LR={row['per_bucket_lossy_reordered_false_random_rate']:.6%} "
+            "| Held-out Per-Bucket LR="
+            f"{row['per_bucket_lossy_reordered_false_random_rate']:.6%} "
+            "| Paper Per-Bucket LR="
+            f"{paper['per_bucket_lossy_reordered_false_random_rate']:.6%} "
             f"| {row['runtime_ms_per_10k']:.2f} ms/10k"
         )
     lines.extend(
