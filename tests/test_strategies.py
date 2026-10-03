@@ -397,48 +397,6 @@ class StrategyClassificationTest(unittest.TestCase):
                 ["CONSTANT"],
             )
 
-    def test_reclassify_can_write_to_isolated_processed_root(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            raw = root / "raw"
-            regular_processed = root / "processed"
-            isolated_processed = root / "reclassification-v7"
-            measurement = self._measurement()
-            raw_dir = raw / measurement.input_key
-            regular_output = measurement.artifact_path(regular_processed, "strategies")
-            isolated_output = measurement.artifact_path(isolated_processed, "strategies")
-            self._write_strategies(regular_output, "RANDOM")
-            raw_dir.mkdir(parents=True, exist_ok=True)
-            pq.write_table(
-                pa.table(
-                    {
-                        "IP_ADDR": ["192.0.2.1"],
-                        "IPID_SEQUENCE": [",".join(["7"] * 16)],
-                    }
-                ),
-                raw_dir / "ipid.pq",
-            )
-            (raw_dir / "ipid.snapshot.yaml").write_text(
-                "connection_count: 4\nrequests_per_connection: 4\nrequest_ip_ids: [1, 2, 3, 4]\n"
-            )
-
-            output = classify_measurement(
-                measurement,
-                reclassify=True,
-                raw_root=raw,
-                processed_root=isolated_processed,
-            )
-
-            self.assertEqual(output, isolated_output)
-            self.assertEqual(
-                pq.read_table(isolated_output)["IPID_SELECTION_STRATEGY"].to_pylist(),
-                ["CONSTANT"],
-            )
-            self.assertEqual(
-                pq.read_table(regular_output)["IPID_SELECTION_STRATEGY"].to_pylist(),
-                ["RANDOM"],
-            )
-
 
 if __name__ == "__main__":
     unittest.main()

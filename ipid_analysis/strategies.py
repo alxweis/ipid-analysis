@@ -858,10 +858,6 @@ def main(
     batch_size: int = typer.Option(1_000_000, help="rows per batch"),
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
-    processed_root: Path = typer.Option(
-        PROCESSED_DATA_DIR,
-        help="root directory for generated strategy artifacts",
-    ),
     reclassify: bool = typer.Option(
         False,
         "--reclassify",
@@ -879,7 +875,6 @@ def main(
             compression=None if compression == "none" else compression,
             threads=threads,
             reclassify=reclassify,
-            processed_root=processed_root,
         )
     except FileNotFoundError as exc:
         logger.error(f"not found: {exc}")
