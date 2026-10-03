@@ -132,6 +132,38 @@ returns to the previous one and Q/Escape exits. On a headless SSH session, add
 `--save-dir reports/sequence-inspection/<job-id>` to write the ten figures as
 PNGs instead.
 
+### Observed missing replies in Mass measurements
+
+Analyze every fixed-interval Mass measurement present in a manifest without
+reclassifying its sequences:
+
+```bash
+make analyse-missing-replies ARGS="data.json"
+```
+
+The command counts non-numeric positions in each stored `IPID_SEQUENCE` using
+the same missing-value interpretation as the production classifier. It writes:
+
+```text
+data/processed/missing-replies/mass-missing-replies.pq
+reports/figures/missing-replies/mass-missing-replies.json
+reports/figures/missing-replies/mass-missing-replies.pdf
+```
+
+The Parquet aggregate contains absolute, percentage, and cumulative counts for
+every missing-reply count, separated by protocol and Mass measurement. The PDF
+shows the exact distribution and ECDF. The JSON sidecar records the measurement
+shape, configured minimum reply rate, complete/incomplete shares, and data
+provenance.
+
+These values are *observed missing replies*, not a causal estimate of network
+packet loss. Requests can lack a stored reply because of either network
+direction, target behavior, filtering, local capture loss, or a timeout.
+Furthermore, `ipid-measure` persists only Mass sequences satisfying its minimum
+reply rate. Measurements rejected before persistence are absent, so the output
+describes the retained population (normally 0--20 missing replies for 4 x 25
+sequences at an 80% minimum reply rate).
+
 ### Synthetic classifier validation
 
 Generate reproducible, measurement-shaped IP-ID sequences and evaluate the
