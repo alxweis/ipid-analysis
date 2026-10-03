@@ -1,4 +1,4 @@
-"""Validation-only RANDOM classifier candidate selected by view-evidence confirmation.
+"""Validation-only RANDOM classifier selected by final operating-point confirmation.
 
 The module centralizes the exact candidate specification so paper validation
 and a later production implementation cannot silently diverge.  Importing it
@@ -37,6 +37,10 @@ CANDIDATE_RANDOM_METRICS = (
 # specification recorded alongside it.
 CANDIDATE_RANDOM_MIN_SCORE = 7.89999176049605e-05
 CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE = 0.0005
+CANDIDATE_RANDOM_SELECTION = (
+    "seed-20260927 final operating-point confirmation at 0.05% "
+    "target true-RANDOM false-rejection"
+)
 CANDIDATE_NULL_TABLE_VERSION = "empirical-discrete-16bit-multiscale-v2"
 CANDIDATE_NULL_TABLE_SAMPLES = 1_000_000
 CANDIDATE_NULL_TABLE_SEED = 20_260_927

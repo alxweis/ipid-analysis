@@ -41,6 +41,7 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
+    CANDIDATE_RANDOM_SELECTION,
     CANDIDATE_RANDOM_SCORE_VERSION,
     create_candidate_null_tables,
 )
@@ -178,6 +179,10 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             reordered_metadata = json.loads(reordered_json.read_text())
             lossy_reordered_metadata = json.loads(lossy_reordered_json.read_text())
             self.assertEqual(metadata["threshold"]["tau"], CANDIDATE_RANDOM_MIN_SCORE)
+            self.assertEqual(
+                metadata["threshold"]["selected_by"],
+                CANDIDATE_RANDOM_SELECTION,
+            )
             self.assertEqual(metadata["threshold"]["tau"], lossy_metadata["threshold"]["tau"])
             self.assertEqual(
                 metadata["threshold"]["tau"],
