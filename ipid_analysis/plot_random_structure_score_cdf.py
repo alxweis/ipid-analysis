@@ -1,9 +1,9 @@
 """Plot the selected validation-only RANDOM-candidate score CDFs.
 
 The ``mass-4x25-random-score-cdf-*`` artifacts exactly match the candidate selected by
-the full bin-rule evaluation: the minimum of raw-IPID uniformity, jointly calibrated
-multiscale increment uniformity, and empirical circular gap uniformity. The
-production classifier remains unchanged.
+the view-evidence confirmation: the minimum of raw-IPID uniformity, hierarchically
+aggregated multiscale increment evidence, and empirical circular gap uniformity.
+The production classifier remains unchanged.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from ipid_analysis.paper_figures import (
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+    CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
     CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     CANDIDATE_NULL_TABLE_SAMPLES,
     CANDIDATE_NULL_TABLE_SEED,
@@ -582,7 +583,13 @@ def render(
                     ),
                     "minimum_transitions": CANDIDATE_INCREMENT_MIN_TRANSITIONS,
                     "scale_aggregation": "jointly calibrated minimum",
-                    "subsequence_aggregation": "minimum",
+                    "subsequence_aggregation": CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
+                    "subsequence_groups": {
+                        "full": "standalone",
+                        "destinations": "Fisher combination of two disjoint views",
+                        "connections": "Fisher combination of four disjoint views",
+                        "final": "minimum of full, destination, and connection evidence",
+                    },
                 },
                 "gap_uniformity_order_invariant": True,
                 "null_tables": {
@@ -602,7 +609,7 @@ def render(
             "threshold": {
                 "tau": threshold,
                 "target_global_random_false_rejection_rate": (DEFAULT_RANDOM_FALSE_REJECTION_RATE),
-                "selected_by": "full seed-20260927 increment-bin-rule evaluation",
+                "selected_by": "seed-20260927 view-evidence confirmation",
             },
             "figure": str(pdf_path),
             "figure_axis": {

@@ -202,6 +202,10 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
                 list(CANDIDATE_INCREMENT_BIN_COUNTS),
             )
             self.assertEqual(
+                metadata["score"]["increment_uniformity"]["subsequence_aggregation"],
+                "hierarchical-fisher-disjoint-v1",
+            )
+            self.assertEqual(
                 metadata["score"]["null_tables"]["component_seeds"],
                 {"increment_uniformity": 18, "gap_uniformity": 19},
             )

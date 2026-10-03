@@ -68,7 +68,7 @@ COMPACT_CONDITION_LABELS = {
 METHOD_LABELS = {
     "current": "Current production score",
     "nist": "Adapted NIST baseline",
-    "candidate": "Candidate: Raw + Multiscale + Gap",
+    "candidate": "Candidate: Raw + Aggregated Multiscale + Gap",
 }
 CONDITIONS = (
     ImpairmentCondition("ideal"),

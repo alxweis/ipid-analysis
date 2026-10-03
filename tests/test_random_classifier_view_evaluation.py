@@ -12,6 +12,7 @@ from ipid_analysis.increment_bin_rule_evaluation import (
     increment_view_pvalues_for_rule,
     selected_bin_counts,
 )
+from ipid_analysis.multiscale_increment_uniformity import fisher_compatibility
 from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 from ipid_analysis.random_classifier_view_evaluation import (
     ALL_CANDIDATES,
@@ -25,7 +26,6 @@ from ipid_analysis.random_classifier_view_evaluation import (
     _requires_gap_aggregate,
     _score_schema,
     _summaries,
-    fisher_compatibility,
     gap_view_pvalues,
     hierarchical_score,
 )

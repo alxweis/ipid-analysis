@@ -1,4 +1,4 @@
-"""Validation-only RANDOM classifier candidate selected by evaluation v2.
+"""Validation-only RANDOM classifier candidate selected by view-evidence confirmation.
 
 The module centralizes the exact candidate specification so paper validation
 and a later production implementation cannot silently diverge.  Importing it
@@ -17,24 +17,25 @@ from ipid_analysis.multiscale_increment_uniformity import (
     MULTISCALE_INCREMENT_BINS,
     MULTISCALE_TARGET_EXPECTED_PER_BIN,
     MultiscaleIncrementNullTables,
-    multiscale_increment_uniformity_pvalues,
+    multiscale_increment_evidence_pvalues,
 )
 from ipid_analysis.strategies import random_structure_features
 
 if TYPE_CHECKING:
     from ipid_analysis.random_classifier_evaluation import EmpiricalNullTables
 
-CANDIDATE_RANDOM_SCORE_VERSION = "raw-multiscale-increment-gap-min-v2"
+CANDIDATE_RANDOM_SCORE_VERSION = "raw-multiscale-increment-evidence-gap-min-v3"
 CANDIDATE_RANDOM_METRICS = (
     "raw_uniformity",
     "increment_uniformity",
     "gap_uniformity",
 )
 
-# Selected by the full seed-20260927 bin-rule evaluation using a target
-# true-RANDOM false-rejection rate of 0.01%.  This threshold is meaningful only
-# with the null-table specification recorded alongside it.
-CANDIDATE_RANDOM_MIN_SCORE = 8.99999122339068e-06
+# Selected by the seed-20260927 view-evidence confirmation using a target
+# true-RANDOM false-rejection rate of 0.01%. This threshold is meaningful only
+# for hierarchical increment-evidence aggregation and the null-table
+# specification recorded alongside it.
+CANDIDATE_RANDOM_MIN_SCORE = 1.599998358869925e-05
 CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE = 0.0001
 CANDIDATE_NULL_TABLE_VERSION = "empirical-discrete-16bit-multiscale-v2"
 CANDIDATE_NULL_TABLE_SAMPLES = 1_000_000
@@ -45,6 +46,7 @@ CANDIDATE_EVALUATION_SEED = CANDIDATE_NULL_TABLE_SEED
 CANDIDATE_INCREMENT_BIN_COUNTS = MULTISCALE_INCREMENT_BINS
 CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN = MULTISCALE_TARGET_EXPECTED_PER_BIN
 CANDIDATE_INCREMENT_MIN_TRANSITIONS = MIN_INCREMENT_TRANSITIONS
+CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION = "hierarchical-fisher-disjoint-v1"
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,7 @@ def candidate_random_score_components(
     )
 
     raw = random_structure_features(values, present).uniformity_pvalue
-    increment = multiscale_increment_uniformity_pvalues(
+    increment = multiscale_increment_evidence_pvalues(
         values,
         present,
         FIXED_CONFIG,

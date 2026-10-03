@@ -35,6 +35,7 @@ from ipid_analysis.paper_figures import (
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_INCREMENT_MIN_TRANSITIONS,
+    CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
     CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     CANDIDATE_NULL_TABLE_SAMPLES,
     CANDIDATE_NULL_TABLE_SEED,
@@ -1436,7 +1437,13 @@ def validate_classifier(
                 ),
                 "minimum_transitions": CANDIDATE_INCREMENT_MIN_TRANSITIONS,
                 "scale_aggregation": "jointly calibrated minimum",
-                "subsequence_aggregation": "minimum",
+                "subsequence_aggregation": CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
+                "subsequence_groups": {
+                    "full": "standalone",
+                    "destinations": "Fisher combination of two disjoint views",
+                    "connections": "Fisher combination of four disjoint views",
+                    "final": "minimum of full, destination, and connection evidence",
+                },
             },
             "target_random_false_rejection_rate": (CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE),
             "null_tables": {

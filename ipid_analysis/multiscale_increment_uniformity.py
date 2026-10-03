@@ -3,8 +3,12 @@
 The test evaluates the full sequence, both destination subsequences, and all
 connection subsequences.  Within each view it combines every usable resolution
 from 3/4/8/16 bins and calibrates that minimum against a joint empirical null
-distribution.  The final component p-value is the minimum across the seven
-views.  Missing observations never create artificial transitions.
+distribution. Missing observations never create artificial transitions.
+
+The selected validation candidate combines the two disjoint destination views
+and the four disjoint connection views with Fisher's method. It then takes the
+minimum of the full-sequence evidence and those two group-level values. The
+final candidate threshold calibrates that overlapping three-way minimum.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import logging
 import math
 
 import numpy as np
+from scipy.special import gammaincc
 
 from ipid_analysis.strategies import MODULUS, MeasurementConfig
 
@@ -158,13 +163,14 @@ def _view_pvalues(
     *,
     bin_counts: tuple[int, ...],
     target_expected_per_bin: int,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     if values.shape[1] < 2:
-        return np.ones(len(values), dtype=float)
+        return np.ones(len(values), dtype=float), np.zeros(len(values), dtype=bool)
     pair_present = present[:, :-1] & present[:, 1:]
     transition_counts = pair_present.sum(axis=1).astype(np.int64)
     increments = (values[:, 1:].astype(np.int64) - values[:, :-1].astype(np.int64)) % MODULUS
     result = np.ones(len(values), dtype=float)
+    valid = np.zeros(len(values), dtype=bool)
 
     for transition_count in np.unique(transition_counts):
         active_bin_counts = selected_bin_counts(
@@ -175,6 +181,7 @@ def _view_pvalues(
         if not active_bin_counts:
             continue
         rows = np.flatnonzero(transition_counts == transition_count)
+        valid[rows] = True
         active = pair_present[rows]
         component_pvalues = []
         for bin_count in active_bin_counts:
@@ -203,10 +210,10 @@ def _view_pvalues(
             )
         else:
             result[rows] = minimum
-    return result
+    return result, valid
 
 
-def multiscale_increment_uniformity_pvalues(
+def multiscale_increment_uniformity_view_pvalues(
     values: np.ndarray,
     present: np.ndarray,
     config: MeasurementConfig,
@@ -214,14 +221,19 @@ def multiscale_increment_uniformity_pvalues(
     *,
     bin_counts: tuple[int, ...] = MULTISCALE_INCREMENT_BINS,
     target_expected_per_bin: int = MULTISCALE_TARGET_EXPECTED_PER_BIN,
-) -> np.ndarray:
-    """Return the minimum calibrated p-value across all seven increment views."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return p-values and validity for the seven stable increment views.
+
+    Columns are ordered as ``full, dst0, dst1, con0, con1, con2, con3``.
+    Views without a usable bin resolution retain the neutral p-value one and a
+    false validity flag.
+    """
     if values.shape[1] != config.sequence_length:
         raise ValueError(
             f"expected {config.sequence_length} fixed positions, got {values.shape[1]}"
         )
 
-    def view(data: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    def view(data: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return _view_pvalues(
             data,
             mask,
@@ -246,4 +258,81 @@ def multiscale_increment_uniformity_pvalues(
         view(connection_values[:, connection], connection_present[:, connection])
         for connection in range(config.connection_count)
     )
-    return np.minimum.reduce(components)
+    return (
+        np.column_stack([component[0] for component in components]),
+        np.column_stack([component[1] for component in components]),
+    )
+
+
+def fisher_compatibility(pvalues: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Fisher-combine disjoint view p-values, excluding unavailable views."""
+    clipped = np.clip(pvalues, np.finfo(float).tiny, 1.0)
+    active = valid.sum(axis=1)
+    log_sum = np.where(valid, np.log(clipped), 0.0).sum(axis=1)
+    result = np.ones(len(pvalues), dtype=float)
+    rows = active > 0
+    result[rows] = gammaincc(active[rows], -log_sum[rows])
+    return result
+
+
+def aggregate_increment_view_evidence(
+    pvalues: np.ndarray,
+    valid: np.ndarray,
+) -> np.ndarray:
+    """Combine full, destination, and connection increment evidence.
+
+    Destination and connection p-values are combined only inside their
+    respective disjoint groups. The final minimum contains overlapping views
+    and therefore receives no standalone p-value interpretation; the complete
+    RANDOM-candidate threshold is calibrated for this exact score.
+    """
+    if pvalues.ndim != 2 or pvalues.shape[1] != 7:
+        raise ValueError("expected seven increment-view p-value columns")
+    if valid.shape != pvalues.shape:
+        raise ValueError("validity mask must match increment-view p-values")
+    full = np.where(valid[:, 0], pvalues[:, 0], 1.0)
+    destinations = fisher_compatibility(pvalues[:, 1:3], valid[:, 1:3])
+    connections = fisher_compatibility(pvalues[:, 3:7], valid[:, 3:7])
+    return np.minimum.reduce((full, destinations, connections))
+
+
+def multiscale_increment_uniformity_pvalues(
+    values: np.ndarray,
+    present: np.ndarray,
+    config: MeasurementConfig,
+    null_tables: MultiscaleIncrementNullTables,
+    *,
+    bin_counts: tuple[int, ...] = MULTISCALE_INCREMENT_BINS,
+    target_expected_per_bin: int = MULTISCALE_TARGET_EXPECTED_PER_BIN,
+) -> np.ndarray:
+    """Return the minimum calibrated p-value across all seven increment views."""
+    pvalues, _ = multiscale_increment_uniformity_view_pvalues(
+        values,
+        present,
+        config,
+        null_tables,
+        bin_counts=bin_counts,
+        target_expected_per_bin=target_expected_per_bin,
+    )
+    return pvalues.min(axis=1)
+
+
+def multiscale_increment_evidence_pvalues(
+    values: np.ndarray,
+    present: np.ndarray,
+    config: MeasurementConfig,
+    null_tables: MultiscaleIncrementNullTables,
+    *,
+    bin_counts: tuple[int, ...] = MULTISCALE_INCREMENT_BINS,
+    target_expected_per_bin: int = MULTISCALE_TARGET_EXPECTED_PER_BIN,
+) -> np.ndarray:
+    """Return the selected hierarchical increment-evidence compatibility."""
+    pvalues, valid = multiscale_increment_uniformity_view_pvalues(
+        values,
+        present,
+        config,
+        null_tables,
+        bin_counts=bin_counts,
+        target_expected_per_bin=target_expected_per_bin,
+    )
+    return aggregate_increment_view_evidence(pvalues, valid)
