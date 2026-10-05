@@ -86,6 +86,12 @@ inspect-sequences:
 analyse-missing-replies:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.missing_reply_analysis $(ARGS)
 
+## Diagnose RT-Base UNCLASSIFIED addresses later classified deterministically in Mass
+##   usage: make analyse-deterministic-transitions ARGS="data.json"
+.PHONY: analyse-deterministic-transitions
+analyse-deterministic-transitions:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.deterministic_transition_analysis $(ARGS)
+
 ## Poll S3 for RT handoff and complete postprocessing jobs
 ##   usage: make workflow-worker ARGS="--s3-prefix s3://bucket/prefix"
 .PHONY: workflow-worker
