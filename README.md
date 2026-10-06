@@ -132,6 +132,37 @@ returns to the previous one and Q/Escape exits. On a headless SSH session, add
 `--save-dir reports/sequence-inspection/<job-id>` to write the ten figures as
 PNGs instead.
 
+### Repeated RANDOM-decision analysis
+
+Freeze every `UNCLASSIFIED` row of one fixed-interval Mass measurement together
+with an equally large RANDOM control cohort:
+
+```bash
+make prepare-random-reproducibility ARGS="prepare data.json \
+  --target icmp.ipid.no-connection.fixed-interval.mass"
+```
+
+Half of the controls are the accepted RANDOM rows closest to the production
+threshold; the remainder is a deterministic random sample of the other RANDOM
+rows. The command stores component p-values and distance from every exact
+deterministic rule, and writes a ZMap-compatible target file below
+`data/processed/random-reproducibility/`.
+
+After measuring that same target file repeatedly with the established 4 x 25
+fixed-interval configuration, evaluate the raw measurement ids directly:
+
+```bash
+make analyse-random-reproducibility ARGS="evaluate data.json \
+  --repeat-id icmp-repeat-1 --repeat-id icmp-repeat-2"
+```
+
+The evaluator applies the production classifier in memory. It never creates or
+overwrites `strategies.pq`. Per-repetition and per-address Parquet/CSV artifacts
+report every component below threshold, the limiting component, classification
+agreement, modal share, entropy, missing measurements, and the closest exact
+deterministic rule. A compact PDF summarizes repeated class outcomes,
+component rejection rates, and per-address stability.
+
 ### Observed missing replies in Mass measurements
 
 Analyze every fixed-interval Mass measurement present in a manifest without
