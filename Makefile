@@ -92,6 +92,18 @@ analyse-missing-replies:
 analyse-deterministic-transitions:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.deterministic_transition_analysis $(ARGS)
 
+## Freeze Mass UNCLASSIFIED plus RANDOM controls for repeated measurements
+##   usage: make prepare-random-reproducibility ARGS="prepare data.json --target icmp.ipid.no-connection.fixed-interval.mass"
+.PHONY: prepare-random-reproducibility
+prepare-random-reproducibility:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.random_reproducibility_analysis $(ARGS)
+
+## Evaluate repeated raw Mass runs without overwriting strategies.pq
+##   usage: make analyse-random-reproducibility ARGS="evaluate data.json --repeat-id id-1 --repeat-id id-2"
+.PHONY: analyse-random-reproducibility
+analyse-random-reproducibility:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.random_reproducibility_analysis $(ARGS)
+
 ## Poll S3 for RT handoff and complete postprocessing jobs
 ##   usage: make workflow-worker ARGS="--s3-prefix s3://bucket/prefix"
 .PHONY: workflow-worker
