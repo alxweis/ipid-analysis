@@ -134,19 +134,21 @@ PNGs instead.
 
 ### Repeated RANDOM-decision analysis
 
-Freeze every `UNCLASSIFIED` row of one fixed-interval Mass measurement together
-with an equally large RANDOM control cohort:
+Freeze a bounded sample of `UNCLASSIFIED` rows from one fixed-interval Mass
+measurement together with an equally large RANDOM control cohort:
 
 ```bash
 make prepare-random-reproducibility ARGS="prepare data.json \
   --target icmp.ipid.no-connection.fixed-interval.mass"
 ```
 
-Half of the controls are the accepted RANDOM rows closest to the production
-threshold; the remainder is a deterministic random sample of the other RANDOM
-rows. The command stores component p-values and distance from every exact
-deterministic rule, and writes a ZMap-compatible target file below
-`data/processed/random-reproducibility/`.
+At most 5,000 `UNCLASSIFIED` rows are selected proportionally by limiting
+component; the total cohort is capped at 10,000 targets. Half of the controls
+are the accepted RANDOM rows closest to the production threshold; the remainder
+is a deterministic random sample of the other RANDOM rows. The command stores
+component p-values, inclusion weights for sampled `UNCLASSIFIED` strata, and
+distance from every exact deterministic rule. Artifacts are written below the campaign's
+`no-connection/fixed-interval-mass/random-reproducibility/` directory.
 
 After measuring that same target file repeatedly with the established 4 x 25
 fixed-interval configuration, evaluate the raw measurement ids directly:
@@ -162,6 +164,11 @@ report every component below threshold, the limiting component, classification
 agreement, modal share, entropy, missing measurements, and the closest exact
 deterministic rule. A compact PDF summarizes repeated class outcomes,
 component rejection rates, and per-address stability.
+
+For manifests produced by the current `ipid-measure` pipeline this workflow is
+automatic: the Mass handoff prepares one frozen cohort, the manifest records
+exactly five repeat measurement ids, and normal postprocessing evaluates them.
+Targets missing from a repeat remain `NO_MEASUREMENT`; they are never replaced.
 
 ### Observed missing replies in Mass measurements
 
@@ -180,6 +187,10 @@ data/processed/missing-replies/mass-missing-replies.pq
 reports/figures/missing-replies/mass-missing-replies.json
 reports/figures/missing-replies/mass-missing-replies.pdf
 ```
+
+Normal manifest postprocessing runs this analysis automatically and additionally
+writes measurement-specific Parquet/JSON/PDF artifacts directly below each
+campaign's `no-connection/fixed-interval-mass/` directory.
 
 The Parquet aggregate contains absolute, percentage, and cumulative counts for
 every missing-reply count, separated by protocol and Mass measurement. The PDF
