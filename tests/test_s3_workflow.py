@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -166,6 +167,81 @@ class S3WorkflowTest(unittest.TestCase):
             with self.subTest(protocol=protocol):
                 self._assert_worker_uploads_filtered_targets(protocol, job_id)
 
+    def test_worker_prepares_bounded_random_reproducibility_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = "s3://bucket/workflow"
+            job_id = "icmp_2026-01-01_00-00-00"
+            job_prefix = f"{prefix}/jobs/{job_id}"
+            measurement_prefix = f"s3://bucket/raw/ipid/{job_id}"
+            request_uri = f"{job_prefix}/request.json"
+            request = {
+                "version": PROTOCOL_VERSION,
+                "job_id": job_id,
+                "protocol": "icmp",
+                "measurement_id": job_id,
+                "ipid_uri": f"{measurement_prefix}/ipid.pq",
+                "snapshot_uri": f"{measurement_prefix}/ipid.snapshot.yaml",
+                "result_uri": f"{measurement_prefix}/random-reproducibility-targets.pq",
+                "done_uri": f"{job_prefix}/done.json",
+                "failed_uri": f"{job_prefix}/failed.json",
+                "created_at": "2026-01-01T00:00:00Z",
+                "purpose": "random-reproducibility",
+                "maximum_targets": 10_000,
+                "selection_seed": 42,
+            }
+            client = FakeS3Client(
+                {
+                    request_uri: json.dumps(request).encode(),
+                    request["ipid_uri"]: b"input",
+                    request["snapshot_uri"]: b"snapshot",
+                }
+            )
+            classify_calls = []
+
+            def fake_classify(input_path, snapshot_path, output_path, **kwargs):
+                classify_calls.append(kwargs)
+                pq.write_table(
+                    pa.table(
+                        {
+                            "IP_ADDR": ["192.0.2.1"],
+                            "IPID_SELECTION_STRATEGY": ["UNCLASSIFIED"],
+                        }
+                    ),
+                    output_path,
+                )
+
+            def fake_prepare(*args, **kwargs):
+                pq.write_table(
+                    pa.table({"IP_ADDR": ["192.0.2.1"], "REPLY_TYPE": [""]}),
+                    kwargs["target_path"],
+                )
+                pq.write_table(pa.table({"IP_ADDR": ["192.0.2.1"]}), kwargs["cohort_path"])
+                kwargs["json_path"].write_text("{}\n")
+                return {
+                    "targets": kwargs["target_path"],
+                    "cohort": kwargs["cohort_path"],
+                    "json": kwargs["json_path"],
+                }
+
+            with (
+                patch("ipid_analysis.s3_workflow.classify_paths", side_effect=fake_classify),
+                patch(
+                    "ipid_analysis.s3_workflow.prepare_random_reproducibility_paths",
+                    side_effect=fake_prepare,
+                ),
+            ):
+                self.assertTrue(
+                    process_request(client, request_uri, prefix, root / "work", 100, 1)
+                )
+
+            self.assertTrue(classify_calls[0]["mass"])
+            self.assertIn(
+                f"{measurement_prefix}/random-reproducibility-cohort.pq",
+                client.uploads,
+            )
+            self.assertIn(request["result_uri"], client.uploads)
+
     def test_request_rejects_unsupported_protocol(self):
         prefix = "s3://bucket/workflow"
         job_id = "sctp_2026-01-01_00-00-00"
@@ -215,6 +291,7 @@ class S3WorkflowTest(unittest.TestCase):
             rt_id = "icmp_2026-07-22_10-00-02"
             mass_id = "icmp_2026-07-22_10-00-03"
             fixed_id = "icmp_2026-07-22_10-00-04"
+            repeat_ids = [f"icmp_2026-07-22_10-00-{value:02d}" for value in range(10, 15)]
             job_prefix = f"{prefix}/analysis-jobs/{job_id}"
             request_uri = f"{job_prefix}/request.json"
             manifest_uri = f"{job_prefix}/manifest.json"
@@ -240,6 +317,15 @@ class S3WorkflowTest(unittest.TestCase):
                             "fixed-interval": {"base": fixed_id, "mass": mass_id},
                         }
                     },
+                    "random_reproducibility": {
+                        "baseline": mass_id,
+                        "repeats": repeat_ids,
+                        "target_file": "random-reproducibility-targets.pq",
+                        "cohort_file": "random-reproducibility-cohort.pq",
+                        "prepare_metadata_file": "random-reproducibility-prepare.json",
+                        "selection_seed": 42,
+                        "maximum_targets": 10000,
+                    },
                 }
             }
             objects = {
@@ -250,8 +336,14 @@ class S3WorkflowTest(unittest.TestCase):
                 f"s3://bucket/raw/os/{os_id}/os-coverage.json": b"{}",
                 f"s3://bucket/raw/ipid/{rt_id}/zmap_unclassified.pq": b"targets",
                 f"s3://bucket/raw/ipid/{rt_id}/strategies.pq": b"strategies",
+                f"s3://bucket/raw/ipid/{mass_id}/random-reproducibility-targets.pq": b"targets",
+                f"s3://bucket/raw/ipid/{mass_id}/random-reproducibility-cohort.pq": b"cohort",
+                f"s3://bucket/raw/ipid/{mass_id}/random-reproducibility-prepare.json": b"{}",
             }
             for measurement_id in (rt_id, mass_id, fixed_id):
+                objects[f"s3://bucket/raw/ipid/{measurement_id}/ipid.pq"] = b"ipid"
+                objects[f"s3://bucket/raw/ipid/{measurement_id}/ipid.snapshot.yaml"] = b"snapshot"
+            for measurement_id in repeat_ids:
                 objects[f"s3://bucket/raw/ipid/{measurement_id}/ipid.pq"] = b"ipid"
                 objects[f"s3://bucket/raw/ipid/{measurement_id}/ipid.snapshot.yaml"] = b"snapshot"
             client = FakeS3Client(objects)
@@ -264,6 +356,19 @@ class S3WorkflowTest(unittest.TestCase):
                 self.assertTrue((root / "raw" / "os" / os_id / "os-coverage.json").is_file())
                 self.assertTrue((root / "raw" / "ipid" / rt_id / "strategies.pq").is_file())
                 self.assertTrue((root / "raw" / "ipid" / rt_id / "zmap_unclassified.pq").is_file())
+                self.assertTrue(
+                    (
+                        root
+                        / "raw"
+                        / "ipid"
+                        / mass_id
+                        / "random-reproducibility-cohort.pq"
+                    ).is_file()
+                )
+                for measurement_id in repeat_ids:
+                    self.assertTrue(
+                        (root / "raw" / "ipid" / measurement_id / "ipid.pq").is_file()
+                    )
                 log_path.write_text("postprocessing complete\n")
 
             self.assertTrue(

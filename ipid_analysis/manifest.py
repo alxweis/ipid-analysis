@@ -32,6 +32,20 @@ SCALES = ("base", "mass")
 CONNECTION_ABBREVIATIONS = {"no-connection": "n", "connection": "c"}
 INTERVAL_ABBREVIATIONS = {"rt-based": "rt", "fixed-interval": "fi"}
 SCALE_ABBREVIATIONS = {"base": "b", "mass": "m"}
+RANDOM_REPRODUCIBILITY_REPEAT_COUNT = 5
+
+
+@dataclass(frozen=True)
+class RandomReproducibility:
+    protocol: str
+    baseline_target: str
+    baseline_measurement_id: str
+    repeat_ids: tuple[str, ...]
+    target_file: str
+    cohort_file: str
+    prepare_metadata_file: str
+    selection_seed: int
+    maximum_targets: int
 
 
 @dataclass(frozen=True)
@@ -133,3 +147,77 @@ def iter_ipid_measurements(manifest: dict) -> list[IpidMeasurement]:
                     if m is not None:
                         out.append(m)
     return out
+
+
+def resolve_random_reproducibility(
+    manifest: dict,
+    protocol: str,
+) -> RandomReproducibility | None:
+    """Resolve optional bounded Mass reproducibility provenance for a protocol."""
+    section = manifest.get(protocol)
+    if not isinstance(section, dict):
+        return None
+    value = section.get("random_reproducibility")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError(f"{protocol}.random_reproducibility must be an object")
+    baseline_target = f"{protocol}.ipid.no-connection.fixed-interval.mass"
+    baseline = resolve(manifest, baseline_target)
+    if baseline is None:
+        raise ValueError(
+            f"{protocol}.random_reproducibility requires {baseline_target}"
+        )
+    baseline_id = value.get("baseline")
+    if baseline_id != baseline.measurement_id:
+        raise ValueError(
+            f"{protocol}.random_reproducibility.baseline does not match the Mass measurement"
+        )
+    repeats = value.get("repeats")
+    if not isinstance(repeats, list) or not all(
+        isinstance(item, str) and item for item in repeats
+    ):
+        raise ValueError(f"{protocol}.random_reproducibility.repeats must be a string list")
+    if len(repeats) != RANDOM_REPRODUCIBILITY_REPEAT_COUNT:
+        raise ValueError(
+            f"{protocol}.random_reproducibility.repeats must contain exactly "
+            f"{RANDOM_REPRODUCIBILITY_REPEAT_COUNT} measurements"
+        )
+    if len(set(repeats)) != len(repeats):
+        raise ValueError(f"{protocol}.random_reproducibility.repeats contains duplicates")
+    maximum_targets = value.get("maximum_targets")
+    if not isinstance(maximum_targets, int) or not 0 <= maximum_targets <= 10_000:
+        raise ValueError(
+            f"{protocol}.random_reproducibility.maximum_targets must be in [0, 10000]"
+        )
+    selection_seed = value.get("selection_seed")
+    if not isinstance(selection_seed, int):
+        raise TypeError(f"{protocol}.random_reproducibility.selection_seed must be an integer")
+
+    def required_name(field: str) -> str:
+        result = value.get(field)
+        if not isinstance(result, str) or not result or Path(result).name != result:
+            raise ValueError(
+                f"{protocol}.random_reproducibility.{field} must be a file name"
+            )
+        return result
+
+    return RandomReproducibility(
+        protocol=protocol,
+        baseline_target=baseline_target,
+        baseline_measurement_id=baseline.measurement_id,
+        repeat_ids=tuple(repeats),
+        target_file=required_name("target_file"),
+        cohort_file=required_name("cohort_file"),
+        prepare_metadata_file=required_name("prepare_metadata_file"),
+        selection_seed=selection_seed,
+        maximum_targets=maximum_targets,
+    )
+
+
+def iter_random_reproducibility(manifest: dict) -> list[RandomReproducibility]:
+    return [
+        spec
+        for protocol in manifest
+        if (spec := resolve_random_reproducibility(manifest, protocol)) is not None
+    ]

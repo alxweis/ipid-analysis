@@ -90,6 +90,20 @@ class MissingReplyAnalysisTest(unittest.TestCase):
             self.assertTrue(outputs["aggregate"].is_file())
             self.assertTrue(outputs["json"].is_file())
             self.assertTrue(outputs["pdf"].is_file())
+            for protocol in ("tcp", "icmp"):
+                key = f"{protocol}_ipid_no-connection_fixed-interval_mass"
+                self.assertTrue(outputs[f"{key}_parquet"].is_file())
+                self.assertTrue(outputs[f"{key}_json"].is_file())
+                self.assertTrue(outputs[f"{key}_pdf"].is_file())
+            self.assertEqual(
+                outputs["icmp_ipid_no-connection_fixed-interval_mass_pdf"],
+                root
+                / "figures"
+                / "icmp-zmap"
+                / "no-connection"
+                / "fixed-interval-mass"
+                / "n-fi-m_missing-replies.pdf",
+            )
 
             rows = pq.read_table(outputs["aggregate"]).to_pylist()
             self.assertEqual(len(rows), 42)

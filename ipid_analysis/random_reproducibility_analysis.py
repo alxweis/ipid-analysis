@@ -30,7 +30,7 @@ import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 import typer
 
-from ipid_analysis.config import PROCESSED_DATA_DIR, PROJ_ROOT, RAW_DATA_DIR
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.deterministic_transition_analysis import (
     DETERMINISTIC_STRATEGIES,
     rule_diagnostics,
@@ -59,8 +59,10 @@ from ipid_analysis.strategies import (
 app = typer.Typer(add_completion=False)
 
 DEFAULT_TARGET = "icmp.ipid.no-connection.fixed-interval.mass"
-DEFAULT_DATA_DIR = PROCESSED_DATA_DIR / "random-reproducibility"
-DEFAULT_FIGURE_DIR = PROJ_ROOT / "reports" / "figures" / "random-reproducibility"
+DEFAULT_MAXIMUM_TARGETS = 10_000
+TARGET_FILE_NAME = "random-reproducibility-targets.pq"
+COHORT_FILE_NAME = "random-reproducibility-cohort.pq"
+PREPARE_METADATA_FILE_NAME = "random-reproducibility-prepare.json"
 COMPONENTS = ("RAW", "INCREMENT", "GAP")
 MANIFEST_ARGUMENT = typer.Argument(..., help="baseline measurement manifest JSON")
 REPEAT_IDS_OPTION = typer.Option(
@@ -221,29 +223,113 @@ def _artifact_stem(measurement: IpidMeasurement) -> str:
     return f"{protocol}-{mode}-mass-random-reproducibility"
 
 
-def prepare_random_reproducibility(
-    manifest_path: Path,
+def _default_output_directories(
+    measurement: IpidMeasurement,
     *,
-    target: str = DEFAULT_TARGET,
+    processed_root: Path,
+    figures_root: Path = FIGURES_DIR,
+) -> tuple[Path, Path]:
+    if not measurement.zmap_id:
+        raise ValueError(f"{measurement.target}: zmap id is required for output paths")
+    relative = (
+        Path(measurement.zmap_id)
+        / measurement.artifact_directory
+        / "random-reproducibility"
+    )
+    return processed_root / relative, figures_root / relative
+
+
+def _proportional_stratified_sample(
+    rows: list[dict[str, object]],
+    maximum: int,
+    seed: int,
+) -> list[dict[str, object]]:
+    """Deterministically sample up to ``maximum`` rows by limiting component."""
+    if maximum < 0:
+        raise ValueError("maximum must be non-negative")
+    if len(rows) <= maximum:
+        selected = list(rows)
+    elif maximum == 0:
+        selected = []
+    else:
+        groups = {
+            component: [row for row in rows if row["LIMITING_COMPONENT"] == component]
+            for component in COMPONENTS
+        }
+        groups = {component: values for component, values in groups.items() if values}
+        exact = {
+            component: maximum * len(values) / len(rows)
+            for component, values in groups.items()
+        }
+        quotas = {
+            component: min(len(groups[component]), math.floor(value))
+            for component, value in exact.items()
+        }
+        remaining = maximum - sum(quotas.values())
+        order = sorted(
+            groups,
+            key=lambda component: (
+                -(exact[component] - math.floor(exact[component])),
+                component,
+            ),
+        )
+        while remaining:
+            progressed = False
+            for component in order:
+                if quotas[component] >= len(groups[component]):
+                    continue
+                quotas[component] += 1
+                remaining -= 1
+                progressed = True
+                if not remaining:
+                    break
+            if not progressed:
+                break
+        selected = []
+        for component, values in groups.items():
+            selected.extend(
+                sorted(
+                    values,
+                    key=lambda row: _stable_key(str(row["IP_ADDR"]), seed),
+                )[: quotas[component]]
+            )
+
+    population = Counter(str(row["LIMITING_COMPONENT"]) for row in rows)
+    sample = Counter(str(row["LIMITING_COMPONENT"]) for row in selected)
+    for row in selected:
+        component = str(row["LIMITING_COMPONENT"])
+        probability = sample[component] / population[component]
+        row["SELECTION_PROBABILITY"] = probability
+        row["SELECTION_WEIGHT"] = 1.0 / probability
+    return selected
+
+
+def prepare_random_reproducibility_paths(
+    raw_path: Path,
+    snapshot_path: Path,
+    strategy_path: Path,
+    *,
+    measurement_id: str,
+    target: str,
+    cohort_path: Path,
+    target_path: Path,
+    json_path: Path,
+    csv_path: Path | None = None,
     control_count: int | None = None,
+    maximum_targets: int = DEFAULT_MAXIMUM_TARGETS,
     seed: int = 42,
-    raw_root: Path = RAW_DATA_DIR,
-    processed_root: Path = PROCESSED_DATA_DIR,
-    data_dir: Path = DEFAULT_DATA_DIR,
-    figure_dir: Path = DEFAULT_FIGURE_DIR,
     null_tables: CandidateNullTables | None = None,
 ) -> dict[str, Path]:
-    """Freeze UNCLASSIFIED plus stratified RANDOM controls and target parquet."""
-    measurement, raw_path, snapshot_path, strategy_path = _measurement_paths(
-        manifest_path,
-        target,
-        raw_root=raw_root,
-        processed_root=processed_root,
-    )
+    """Freeze a bounded, reproducible Mass cohort from explicit input paths."""
+    for path in (raw_path, snapshot_path, strategy_path):
+        if not path.is_file():
+            raise FileNotFoundError(path)
+    if maximum_targets < 0:
+        raise ValueError("maximum_targets must be non-negative")
+
     cfg = load_config(snapshot_path)
     tables = production_candidate_null_tables() if null_tables is None else null_tables
     classified = _load_classified_sequences(raw_path, strategy_path)
-
     all_rows: list[dict[str, object]] = []
     for ip_addr, strategy, raw_sequence in classified:
         sequence = parse_sequence(raw_sequence, cfg.sequence_length)
@@ -252,18 +338,24 @@ def prepare_random_reproducibility(
                 "IP_ADDR": ip_addr,
                 "COHORT": strategy,
                 "BASELINE_CLASS": strategy,
-                "BASELINE_MEASUREMENT_ID": measurement.measurement_id,
+                "BASELINE_MEASUREMENT_ID": measurement_id,
                 "BASELINE_SEQUENCE": raw_sequence,
                 **_diagnostics(sequence, cfg, tables),
             }
         )
 
-    unclassified = [row for row in all_rows if row["COHORT"] == "UNCLASSIFIED"]
+    unclassified_population = [row for row in all_rows if row["COHORT"] == "UNCLASSIFIED"]
     random_rows = [row for row in all_rows if row["COHORT"] == "RANDOM"]
+    maximum_unclassified = maximum_targets // 2
+    unclassified = _proportional_stratified_sample(
+        unclassified_population,
+        maximum_unclassified,
+        seed,
+    )
     wanted = len(unclassified) if control_count is None else control_count
     if wanted < 0:
         raise ValueError("control_count must be non-negative")
-    wanted = min(wanted, len(random_rows))
+    wanted = min(wanted, len(random_rows), maximum_targets - len(unclassified))
     near_count = (wanted + 1) // 2
     near = sorted(random_rows, key=lambda row: (row["RANDOM_SCORE"], row["IP_ADDR"]))[
         :near_count
@@ -275,61 +367,54 @@ def prepare_random_reproducibility(
     ]
     for row in near:
         row["CONTROL_STRATUM"] = "NEAR_THRESHOLD"
+        row["SELECTION_PROBABILITY"] = None
+        row["SELECTION_WEIGHT"] = None
     for row in far:
         row["CONTROL_STRATUM"] = "RANDOM_SAMPLE"
+        row["SELECTION_PROBABILITY"] = None
+        row["SELECTION_WEIGHT"] = None
     for row in unclassified:
         row["CONTROL_STRATUM"] = ""
     selected = sorted(unclassified + near + far, key=lambda row: str(row["IP_ADDR"]))
 
-    stem = _artifact_stem(measurement)
-    cohort_path = data_dir / f"{stem}-cohort.pq"
-    target_path = data_dir / f"{stem}-targets.pq"
-    csv_path = figure_dir / f"{stem}-cohort.csv"
-    json_path = figure_dir / f"{stem}-prepare.json"
     table = _write_table(selected, cohort_path)
-    figure_dir.mkdir(parents=True, exist_ok=True)
-    pacsv.write_csv(table, csv_path)
+    if csv_path is not None:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        pacsv.write_csv(table, csv_path)
 
-    selected_ips = [str(row["IP_ADDR"]) for row in selected]
-    zmap_path = raw_root / "zmap" / str(measurement.zmap_id) / "zmap.pq"
-    if not zmap_path.is_file():
-        raise FileNotFoundError(zmap_path)
-    connection = duckdb.connect()
-    try:
-        target_table = connection.execute(
-            """
-            SELECT
-                CAST(IP_ADDR AS VARCHAR) AS IP_ADDR,
-                COALESCE(CAST(REPLY_TYPE AS VARCHAR), '') AS REPLY_TYPE
-            FROM read_parquet($zmap)
-            WHERE CAST(IP_ADDR AS VARCHAR) IN (SELECT unnest($ips))
-            ORDER BY IP_ADDR
-            """,
-            {"zmap": str(zmap_path), "ips": selected_ips},
-        ).to_arrow_table()
-    finally:
-        connection.close()
-    found = set(target_table.column("IP_ADDR").to_pylist())
-    missing = sorted(set(selected_ips) - found)
-    if missing:
-        raise ValueError(f"{len(missing)} cohort addresses are absent from {zmap_path}: {missing[:5]}")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_table = pa.table(
+        {
+            "IP_ADDR": pa.array([str(row["IP_ADDR"]) for row in selected], pa.string()),
+            "REPLY_TYPE": pa.array([""] * len(selected), pa.string()),
+        }
+    )
     pq.write_table(target_table, target_path)
 
+    component_population = Counter(
+        str(row["LIMITING_COMPONENT"]) for row in unclassified_population
+    )
+    component_sample = Counter(str(row["LIMITING_COMPONENT"]) for row in unclassified)
     metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "manifest": str(manifest_path),
         "target": target,
-        "measurement_id": measurement.measurement_id,
+        "measurement_id": measurement_id,
         "threshold": CANDIDATE_RANDOM_MIN_SCORE,
         "selection": {
-            "unclassified": len(unclassified),
+            "maximum_targets": maximum_targets,
+            "unclassified_population": len(unclassified_population),
+            "unclassified_selected": len(unclassified),
+            "random_population": len(random_rows),
             "random_controls": len(near) + len(far),
             "near_threshold_controls": len(near),
             "random_sample_controls": len(far),
+            "unclassified_by_component_population": dict(sorted(component_population.items())),
+            "unclassified_by_component_selected": dict(sorted(component_sample.items())),
             "seed": seed,
         },
         "methodology": {
-            "population": "all Mass UNCLASSIFIED rows plus stratified Mass RANDOM controls",
+            "population": "bounded Mass UNCLASSIFIED sample plus equally sized stratified Mass RANDOM controls",
+            "unclassified": "deterministic proportional sample by limiting component",
             "near_threshold": "lowest production RANDOM scores among accepted RANDOM rows",
             "random_sample": "deterministic hash sample from remaining RANDOM rows",
             "safety": "preparation reads classifications and never modifies them",
@@ -337,11 +422,74 @@ def prepare_random_reproducibility(
         "artifacts": {
             "cohort": str(cohort_path),
             "targets": str(target_path),
-            "csv": str(csv_path),
+            "csv": str(csv_path) if csv_path is not None else None,
         },
     }
-    json_path.write_text(json.dumps(metadata, indent=2) + "\n")
-    return {"cohort": cohort_path, "targets": target_path, "csv": csv_path, "json": json_path}
+    _write_json_atomic(json_path, metadata)
+    result = {"cohort": cohort_path, "targets": target_path, "json": json_path}
+    if csv_path is not None:
+        result["csv"] = csv_path
+    return result
+
+
+def _write_json_atomic(path: Path, value: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".part")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+def prepare_random_reproducibility(
+    manifest_path: Path,
+    *,
+    target: str = DEFAULT_TARGET,
+    control_count: int | None = None,
+    maximum_targets: int = DEFAULT_MAXIMUM_TARGETS,
+    seed: int = 42,
+    raw_root: Path = RAW_DATA_DIR,
+    processed_root: Path = PROCESSED_DATA_DIR,
+    data_dir: Path | None = None,
+    figure_dir: Path | None = None,
+    null_tables: CandidateNullTables | None = None,
+) -> dict[str, Path]:
+    """Freeze UNCLASSIFIED plus stratified RANDOM controls and target parquet."""
+    measurement, raw_path, snapshot_path, strategy_path = _measurement_paths(
+        manifest_path,
+        target,
+        raw_root=raw_root,
+        processed_root=processed_root,
+    )
+    if data_dir is None or figure_dir is None:
+        default_data, default_figures = _default_output_directories(
+            measurement,
+            processed_root=processed_root,
+        )
+        data_dir = data_dir or default_data
+        figure_dir = figure_dir or default_figures
+    stem = _artifact_stem(measurement)
+    cohort_path = data_dir / f"{stem}-cohort.pq"
+    target_path = data_dir / f"{stem}-targets.pq"
+    csv_path = figure_dir / f"{stem}-cohort.csv"
+    json_path = figure_dir / f"{stem}-prepare.json"
+    outputs = prepare_random_reproducibility_paths(
+        raw_path,
+        snapshot_path,
+        strategy_path,
+        measurement_id=measurement.measurement_id,
+        target=target,
+        cohort_path=cohort_path,
+        target_path=target_path,
+        json_path=json_path,
+        csv_path=csv_path,
+        control_count=control_count,
+        maximum_targets=maximum_targets,
+        seed=seed,
+        null_tables=null_tables,
+    )
+    metadata = json.loads(json_path.read_text())
+    metadata["manifest"] = str(manifest_path)
+    _write_json_atomic(json_path, metadata)
+    return outputs
 
 
 def _read_repeat_sequences(raw_path: Path, cohort_ips: list[str]) -> dict[str, str]:
@@ -505,8 +653,8 @@ def evaluate_random_reproducibility(
     cohort_path: Path | None = None,
     raw_root: Path = RAW_DATA_DIR,
     processed_root: Path = PROCESSED_DATA_DIR,
-    data_dir: Path = DEFAULT_DATA_DIR,
-    figure_dir: Path = DEFAULT_FIGURE_DIR,
+    data_dir: Path | None = None,
+    figure_dir: Path | None = None,
     null_tables: CandidateNullTables | None = None,
 ) -> dict[str, Path]:
     """Classify repeated raw Mass runs and report per-address stability."""
@@ -518,6 +666,13 @@ def evaluate_random_reproducibility(
         raw_root=raw_root,
         processed_root=processed_root,
     )
+    if data_dir is None or figure_dir is None:
+        default_data, default_figures = _default_output_directories(
+            measurement,
+            processed_root=processed_root,
+        )
+        data_dir = data_dir or default_data
+        figure_dir = figure_dir or default_figures
     stem = _artifact_stem(measurement)
     cohort_path = cohort_path or data_dir / f"{stem}-cohort.pq"
     if not cohort_path.is_file():
@@ -648,6 +803,11 @@ def prepare_command(
         min=0,
         help="RANDOM controls; default equals the UNCLASSIFIED population",
     ),
+    maximum_targets: int = typer.Option(
+        DEFAULT_MAXIMUM_TARGETS,
+        min=0,
+        help="hard cap across UNCLASSIFIED and RANDOM controls",
+    ),
     seed: int = typer.Option(42, help="deterministic control-sampling seed"),
 ) -> None:
     """Create the frozen cohort, offline diagnostics, and measurement targets."""
@@ -655,6 +815,7 @@ def prepare_command(
         manifest,
         target=target,
         control_count=control_count,
+        maximum_targets=maximum_targets,
         seed=seed,
     )
     for name, path in artifacts.items():

@@ -32,13 +32,26 @@ import pyarrow.parquet as pq
 import typer
 
 from ipid_analysis.config import DATA_DIR, INTERIM_DATA_DIR, PROJ_ROOT, RAW_DATA_DIR
-from ipid_analysis.manifest import iter_ipid_measurements, load_manifest
+from ipid_analysis.manifest import (
+    iter_ipid_measurements,
+    iter_random_reproducibility,
+    load_manifest,
+)
+from ipid_analysis.random_reproducibility_analysis import (
+    COHORT_FILE_NAME,
+    DEFAULT_MAXIMUM_TARGETS,
+    PREPARE_METADATA_FILE_NAME,
+    TARGET_FILE_NAME,
+    prepare_random_reproducibility_paths,
+)
 from ipid_analysis.strategies import classify_paths
 
 PROTOCOL_VERSION = 2
 ANALYSIS_JOB_VERSION = 1
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TARGET_NAME = "zmap_unclassified.pq"
+PURPOSE_RT_UNCLASSIFIED = "rt-unclassified"
+PURPOSE_RANDOM_REPRODUCIBILITY = "random-reproducibility"
 CONNECTION_TARGET_NAME = "zmap-connection-sample.pq"
 CONNECTION_TARGET_METADATA_NAME = "zmap-connection-sample.json"
 FIXED_BASE_TARGET_NAME = "zmap-fixed-base-sample.pq"
@@ -79,6 +92,9 @@ class Request:
     done_uri: str
     failed_uri: str
     created_at: str
+    purpose: str = PURPOSE_RT_UNCLASSIFIED
+    maximum_targets: int = DEFAULT_MAXIMUM_TARGETS
+    selection_seed: int = 42
 
     @classmethod
     def parse(cls, data: dict, s3_prefix: str) -> "Request":
@@ -105,9 +121,24 @@ class Request:
         if request.snapshot_uri != expected_snapshot_uri:
             raise ValueError("snapshot_uri does not match the IPID measurement prefix")
 
+        if request.purpose not in {
+            PURPOSE_RT_UNCLASSIFIED,
+            PURPOSE_RANDOM_REPRODUCIBILITY,
+        }:
+            raise ValueError(f"unsupported analysis purpose {request.purpose!r}")
+        if not 0 <= request.maximum_targets <= DEFAULT_MAXIMUM_TARGETS:
+            raise ValueError(
+                f"maximum_targets must be in [0, {DEFAULT_MAXIMUM_TARGETS}]"
+            )
+
         job_prefix = join_s3(s3_prefix, "jobs", request.job_id)
+        result_name = (
+            TARGET_NAME
+            if request.purpose == PURPOSE_RT_UNCLASSIFIED
+            else TARGET_FILE_NAME
+        )
         expected = {
-            "result_uri": join_s3(measurement_prefix, TARGET_NAME),
+            "result_uri": join_s3(measurement_prefix, result_name),
             "done_uri": join_s3(job_prefix, "done.json"),
             "failed_uri": join_s3(job_prefix, "failed.json"),
         }
@@ -323,6 +354,7 @@ def process_request(
             snapshot_path,
             strategies_path,
             protocol=request.protocol,
+            mass=request.purpose == PURPOSE_RANDOM_REPRODUCIBILITY,
             batch_size=batch_size,
             compression="zstd",
             threads=threads,
@@ -330,7 +362,33 @@ def process_request(
         measurement_prefix = request.ipid_uri.rsplit("/", 1)[0]
         strategies_uri = join_s3(measurement_prefix, "strategies.pq")
         client.upload(strategies_path, strategies_uri)
-        rows = build_unclassified_targets(strategies_path, result_path)
+        if request.purpose == PURPOSE_RT_UNCLASSIFIED:
+            rows = build_unclassified_targets(strategies_path, result_path)
+        else:
+            result_path = work_dir / TARGET_FILE_NAME
+            cohort_path = work_dir / COHORT_FILE_NAME
+            metadata_path = work_dir / PREPARE_METADATA_FILE_NAME
+            outputs = prepare_random_reproducibility_paths(
+                input_path,
+                snapshot_path,
+                strategies_path,
+                measurement_id=request.measurement_id,
+                target=f"{request.protocol}.ipid.no-connection.fixed-interval.mass",
+                cohort_path=cohort_path,
+                target_path=result_path,
+                json_path=metadata_path,
+                maximum_targets=request.maximum_targets,
+                seed=request.selection_seed,
+            )
+            rows = pq.read_metadata(outputs["targets"]).num_rows
+            client.upload(
+                cohort_path,
+                join_s3(measurement_prefix, COHORT_FILE_NAME),
+            )
+            client.upload(
+                metadata_path,
+                join_s3(measurement_prefix, PREPARE_METADATA_FILE_NAME),
+            )
         client.upload(result_path, request.result_uri)
 
         done = Done(
@@ -345,7 +403,8 @@ def process_request(
         write_json(done_path, asdict(done))
         client.upload(done_path, request.done_uri)
         logger.success(
-            f"[{request.job_id}] persisted strategies and uploaded {rows:,} unclassified targets"
+            f"[{request.job_id}] persisted strategies and uploaded {rows:,} "
+            f"{request.purpose} targets"
         )
         cleanup_completed_job(work_dir)
         return True
@@ -413,6 +472,14 @@ def validate_analysis_manifest(manifest: dict, request: AnalysisRequest) -> None
             raise ValueError(f"invalid measurement id {measurement_id!r}")
         if measurement_protocol(measurement_id) != request.protocol:
             raise ValueError(f"measurement id {measurement_id!r} has the wrong protocol")
+    for specification in iter_random_reproducibility(manifest):
+        for measurement_id in specification.repeat_ids:
+            if not JOB_ID_RE.fullmatch(measurement_id):
+                raise ValueError(f"invalid reproducibility measurement id {measurement_id!r}")
+            if measurement_protocol(measurement_id) != request.protocol:
+                raise ValueError(
+                    f"reproducibility measurement id {measurement_id!r} has the wrong protocol"
+                )
 
 
 def download_analysis_inputs(
@@ -489,6 +556,30 @@ def download_analysis_inputs(
         remote,
         raw_root / "ipid" / rt_base.measurement_id / TARGET_NAME,
     )
+
+    for specification in iter_random_reproducibility(manifest):
+        baseline_remote = join_s3(
+            request.ipid_prefix,
+            specification.baseline_measurement_id,
+        )
+        baseline_local = raw_root / "ipid" / specification.baseline_measurement_id
+        for file_name in (
+            specification.target_file,
+            specification.cohort_file,
+            specification.prepare_metadata_file,
+        ):
+            client.download(
+                join_s3(baseline_remote, file_name),
+                baseline_local / file_name,
+            )
+        for repeat_id in specification.repeat_ids:
+            repeat_remote = join_s3(request.ipid_prefix, repeat_id)
+            repeat_local = raw_root / "ipid" / repeat_id
+            client.download(join_s3(repeat_remote, "ipid.pq"), repeat_local / "ipid.pq")
+            client.download(
+                join_s3(repeat_remote, "ipid.snapshot.yaml"),
+                repeat_local / "ipid.snapshot.yaml",
+            )
 
 
 def run_postprocess(manifest_path: Path, log_path: Path, batch_size: int, threads: int) -> None:
