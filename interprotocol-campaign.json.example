@@ -1,0 +1,8 @@
+{
+  "campaign_id": "2026-10-example",
+  "manifests": {
+    "icmp": "data/manifests/icmp.json",
+    "tcp": "data/manifests/tcp.json",
+    "udp": "data/manifests/udp.json"
+  }
+}

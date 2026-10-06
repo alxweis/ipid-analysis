@@ -1,5 +1,28 @@
 # ipid-analysis
 
+## Inter-protocol deployment analysis
+
+The inter-protocol workflow compares only the existing deterministic counter
+classes `SINGLE`, `PER_DESTINATION`, and `PER_BUCKET`.  It first builds
+same-strategy ICMP/TCP/UDP intersections from the canonical merged stateless
+strategy artifacts.  Pair cohorts exclude the corresponding same-strategy
+triple cohort; an address whose third protocol has another strategy remains in
+the applicable pair cohort. `PER_CONNECTION` is intentionally excluded because
+a transport connection cannot be shared with ICMP or across TCP and UDP.
+
+Create a campaign file from `interprotocol-campaign.json.example`, then run:
+
+```bash
+make build-interprotocol-targets ARGS="interprotocol-campaign.json"
+make validate-interprotocol
+make analyse-interprotocol ARGS="RAW.pq SNAPSHOT.yaml OUTPUT_DIR"
+```
+
+Target files and `target-summary.json` are written below
+`data/processed/interprotocol/<campaign-id>/`.  The analysis writes a per-IP
+deployment Parquet, JSON counts, and PDF plots.  Triple measurements distinguish
+one shared counter, one shared protocol pair, and fully isolated protocol state.
+
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
 </a>
