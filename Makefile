@@ -121,6 +121,21 @@ validate-classifier:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.classifier_validation $(ARGS)
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_structure_score_cdf $(ARGS)
 
+## Build same-strategy ICMP/TCP/UDP target intersections
+.PHONY: build-interprotocol-targets
+build-interprotocol-targets:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.interprotocol build-targets $(ARGS)
+
+## Classify an inter-protocol measurement and render deployment plots
+.PHONY: analyse-interprotocol
+analyse-interprotocol:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.interprotocol classify $(ARGS)
+
+## Validate the inter-protocol classifier against synthetic ground truth
+.PHONY: validate-interprotocol
+validate-interprotocol:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.interprotocol validate $(ARGS)
+
 ## Plot selected candidate RANDOM-score CDFs for synthetic Mass 4x25 sequences
 .PHONY: plot-mass-random-score-cdf
 plot-mass-random-score-cdf:
