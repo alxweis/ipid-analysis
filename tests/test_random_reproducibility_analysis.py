@@ -133,6 +133,7 @@ class RandomReproducibilityAnalysisTest(unittest.TestCase):
                 processed_root=processed_root,
                 data_dir=data_dir,
                 figure_dir=figure_dir,
+                maximum_targets=2,
                 null_tables=tables,
             )
 
@@ -142,6 +143,10 @@ class RandomReproducibilityAnalysisTest(unittest.TestCase):
             target = pq.read_table(prepared["targets"])
             self.assertEqual(target.column_names, ["IP_ADDR", "REPLY_TYPE"])
             self.assertEqual(target.num_rows, 2)
+            prepare_metadata = json.loads(prepared["json"].read_text())
+            self.assertEqual(prepare_metadata["selection"]["maximum_targets"], 2)
+            self.assertEqual(prepare_metadata["selection"]["unclassified_selected"], 1)
+            self.assertEqual(prepare_metadata["selection"]["random_controls"], 1)
 
             evaluated = evaluate_random_reproducibility(
                 manifest_path,

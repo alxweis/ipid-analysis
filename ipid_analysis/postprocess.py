@@ -40,9 +40,16 @@ from loguru import logger
 import typer
 
 from ipid_analysis.comparison import iter_base_comparisons
+from ipid_analysis.config import RAW_DATA_DIR
 from ipid_analysis.coverage import write_coverage
 from ipid_analysis.increments import extract_increments
-from ipid_analysis.manifest import iter_ipid_measurements, load_manifest, resolve
+from ipid_analysis.manifest import (
+    iter_ipid_measurements,
+    iter_random_reproducibility,
+    load_manifest,
+    resolve,
+)
+from ipid_analysis.missing_reply_analysis import analyze_missing_replies
 from ipid_analysis.paper_figures import (
     default_maxmind_database,
     render_increment_comparison,
@@ -74,6 +81,9 @@ from ipid_analysis.plot_strategy_refinement import (
 )
 from ipid_analysis.plot_tcp_flags_strategy import render as render_tcp_flags_strategy_plot
 from ipid_analysis.probing_intervals import extract_probing_intervals
+from ipid_analysis.random_reproducibility_analysis import (
+    evaluate_random_reproducibility,
+)
 from ipid_analysis.strategies import classify_measurement
 from ipid_analysis.strategy_merge import iter_strategy_merges, merge_strategies
 
@@ -121,6 +131,42 @@ def main(
         except FileNotFoundError as exc:
             logger.warning(f"[{m.target}] missing input ({exc}) -- skipped")
             skipped += 1
+
+    try:
+        missing_outputs = analyze_missing_replies(
+            manifest_path,
+            compression=comp,
+            threads=threads,
+        )
+        logger.success(
+            f"automatic Mass missing-reply analysis -> {missing_outputs['pdf']}"
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        logger.warning(f"automatic Mass missing-reply analysis failed ({exc}) -- skipped")
+
+    for specification in iter_random_reproducibility(manifest):
+        cohort_path = (
+            RAW_DATA_DIR
+            / "ipid"
+            / specification.baseline_measurement_id
+            / specification.cohort_file
+        )
+        try:
+            outputs = evaluate_random_reproducibility(
+                manifest_path,
+                list(specification.repeat_ids),
+                target=specification.baseline_target,
+                cohort_path=cohort_path,
+            )
+            logger.success(
+                f"[{specification.baseline_target}] automatic RANDOM reproducibility "
+                f"-> {outputs['pdf']}"
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            logger.warning(
+                f"[{specification.baseline_target}] automatic RANDOM reproducibility "
+                f"failed ({exc}) -- skipped"
+            )
 
     connection = resolve(
         manifest,

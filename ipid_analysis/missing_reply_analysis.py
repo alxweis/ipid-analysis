@@ -372,7 +372,7 @@ def analyze_missing_replies(
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> dict[str, Path]:
-    """Aggregate all FI Mass targets in ``manifest_path`` and render outputs."""
+    """Write per-measurement outputs and an aggregate for every FI Mass target."""
     manifest = load_manifest(manifest_path)
     measurements = _fixed_interval_mass_measurements(manifest)
     if not measurements:
@@ -380,6 +380,7 @@ def analyze_missing_replies(
 
     rows: list[dict] = []
     measurement_metadata: list[dict] = []
+    outputs: dict[str, Path] = {}
     for measurement in measurements:
         logger.info(f"[{measurement.target}] counting observed missing replies")
         measurement_rows, metadata = _measurement_distribution(
@@ -389,6 +390,53 @@ def analyze_missing_replies(
         )
         rows.extend(measurement_rows)
         measurement_metadata.append(metadata)
+        measurement_table = pa.Table.from_pylist(measurement_rows, schema=OUTPUT_SCHEMA)
+        measurement_parquet = measurement.artifact_path(
+            processed_root,
+            "missing-replies",
+        )
+        measurement_json = measurement.artifact_path(
+            figures_root,
+            "missing-replies",
+            "json",
+        )
+        measurement_pdf = measurement.artifact_path(
+            figures_root,
+            "missing-replies",
+            "pdf",
+        )
+        _write_table(measurement_table, measurement_parquet, compression)
+        measurement_document = {
+            "schema_version": 1,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "manifest": str(manifest_path),
+            "aggregate": str(measurement_parquet),
+            "semantics": {
+                "missing_reply": (
+                    "a fixed IPID_SEQUENCE position whose token cannot be parsed as an integer"
+                ),
+                "population": "persisted fixed-interval Mass sequences only",
+                "censoring": (
+                    "measurement attempts rejected before persistence because they did not meet "
+                    "the configured minimum reply rate are absent"
+                ),
+                "causal_scope": (
+                    "missing replies are observed outcomes and are not attributed specifically "
+                    "to forward-path or return-path packet loss"
+                ),
+            },
+            "measurements": [metadata],
+        }
+        _write_json(measurement_json, measurement_document)
+        render_missing_reply_figure(
+            measurement_table,
+            measurement_document,
+            measurement_pdf,
+        )
+        key = measurement.target.replace(".", "_")
+        outputs[f"{key}_parquet"] = measurement_parquet
+        outputs[f"{key}_json"] = measurement_json
+        outputs[f"{key}_pdf"] = measurement_pdf
 
     table = pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA)
     aggregate_path = processed_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.pq"
@@ -419,7 +467,12 @@ def analyze_missing_replies(
     }
     _write_json(json_path, metadata)
     render_missing_reply_figure(table, metadata, pdf_path)
-    return {"aggregate": aggregate_path, "json": json_path, "pdf": pdf_path}
+    return {
+        **outputs,
+        "aggregate": aggregate_path,
+        "json": json_path,
+        "pdf": pdf_path,
+    }
 
 
 @app.command()

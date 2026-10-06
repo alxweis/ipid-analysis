@@ -1,7 +1,12 @@
-import unittest
 from pathlib import Path
+import unittest
 
-from ipid_analysis.manifest import IpidMeasurement, iter_ipid_measurements, resolve
+from ipid_analysis.manifest import (
+    IpidMeasurement,
+    iter_ipid_measurements,
+    iter_random_reproducibility,
+    resolve,
+)
 
 
 class ManifestTest(unittest.TestCase):
@@ -90,6 +95,25 @@ class ManifestTest(unittest.TestCase):
     def test_legacy_abbreviated_target_is_rejected(self):
         with self.assertRaises(ValueError):
             resolve(self.manifest, "tcp.ipid.nec.rt.base")
+
+    def test_random_reproducibility_requires_exactly_five_repeats(self):
+        self.manifest["tcp"]["random_reproducibility"] = {
+            "baseline": "tcp-n-fi-m",
+            "repeats": [f"tcp-repeat-{index}" for index in range(5)],
+            "target_file": "random-reproducibility-targets.pq",
+            "cohort_file": "random-reproducibility-cohort.pq",
+            "prepare_metadata_file": "random-reproducibility-prepare.json",
+            "selection_seed": 42,
+            "maximum_targets": 10_000,
+        }
+
+        specification = iter_random_reproducibility(self.manifest)[0]
+
+        self.assertEqual(specification.baseline_measurement_id, "tcp-n-fi-m")
+        self.assertEqual(len(specification.repeat_ids), 5)
+        self.manifest["tcp"]["random_reproducibility"]["repeats"].pop()
+        with self.assertRaisesRegex(ValueError, "exactly 5"):
+            iter_random_reproducibility(self.manifest)
 
 
 if __name__ == "__main__":
