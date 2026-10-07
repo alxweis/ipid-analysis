@@ -736,8 +736,14 @@ def synthetic_sequence(
     return out
 
 
-def validate_classifier(output_dir: Path, samples: int = 1000, seed: int = 42) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
+def validate_classifier(
+    processed_dir: Path,
+    figure_dir: Path,
+    samples: int = 1000,
+    seed: int = 42,
+) -> Path:
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    figure_dir.mkdir(parents=True, exist_ok=True)
     cases = []
     for protocols in GROUPS.values():
         cfg = InterprotocolConfig(protocols, 4, 4)
@@ -801,15 +807,15 @@ def validate_classifier(output_dir: Path, samples: int = 1000, seed: int = 42) -
             Counter(f"{expected}->{observed}" for _, _, expected, observed in cases)
         ),
     }
-    path = output_dir / "interprotocol-validation.json"
+    path = processed_dir / "interprotocol-validation.json"
     path.write_text(json.dumps(report, indent=2) + "\n")
     plot_confusion(
         [case for case in cases if case[0].count("-") == 1],
-        output_dir / "interprotocol-validation-pair-confusion.pdf",
+        figure_dir / "interprotocol-validation-pair-confusion.pdf",
     )
     plot_confusion(
         [case for case in cases if case[0].count("-") == 2],
-        output_dir / "interprotocol-validation-triple-confusion.pdf",
+        figure_dir / "interprotocol-validation-triple-confusion.pdf",
     )
     if correct != len(cases):
         raise RuntimeError(f"synthetic validation failed: {correct}/{len(cases)}")
@@ -884,11 +890,19 @@ def analyse_campaign_command(
 
 @app.command("validate")
 def validate_command(
-    output_dir: Path = FIGURES_DIR / "interprotocol-validation",
+    processed_dir: Path = PROCESSED_DATA_DIR / "interprotocol-validation",
+    figure_dir: Path = FIGURES_DIR / "interprotocol-validation",
     samples: int = 1000,
     seed: int = 42,
 ) -> None:
-    typer.echo(validate_classifier(output_dir, samples=samples, seed=seed))
+    typer.echo(
+        validate_classifier(
+            processed_dir,
+            figure_dir,
+            samples=samples,
+            seed=seed,
+        )
+    )
 
 
 if __name__ == "__main__":
