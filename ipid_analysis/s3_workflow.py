@@ -38,7 +38,12 @@ from ipid_analysis.config import (
     PROJ_ROOT,
     RAW_DATA_DIR,
 )
-from ipid_analysis.interprotocol import build_target_files, classify_campaign, load_run_manifest
+from ipid_analysis.interprotocol import (
+    INTERPROTOCOL_FIGURES_DIR,
+    build_target_files,
+    classify_campaign,
+    load_run_manifest,
+)
 from ipid_analysis.manifest import (
     iter_ipid_measurements,
     iter_random_reproducibility,
@@ -829,6 +834,7 @@ def process_interprotocol_target_request(
     work_root: Path,
     output_root: Path = PROCESSED_DATA_DIR / "interprotocol",
     processed_root: Path = PROCESSED_DATA_DIR,
+    figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
 ) -> bool:
     job_id = request_uri.rstrip("/").split("/")[-2]
     if not JOB_ID_RE.fullmatch(job_id):
@@ -860,10 +866,14 @@ def process_interprotocol_target_request(
             campaign_path,
             processed_root=processed_root,
             output_root=output_root,
+            figures_root=figures_root,
         )
         for path in sorted(output_dir.iterdir()):
             if path.is_file():
                 client.upload(path, join_s3(request.target_prefix, path.name))
+        figure_dir = figures_root / request.campaign_id
+        for path in sorted(figure_dir.glob("*.pdf")):
+            client.upload(path, join_s3(job_prefix, "reports", "figures", path.name))
         summary = json.loads((output_dir / "target-summary.json").read_text())
         rows = {
             group: sum(int(value) for value in counts.values())
@@ -930,6 +940,7 @@ def process_interprotocol_request(
     work_root: Path,
     raw_root: Path = RAW_DATA_DIR / "ipid",
     output_root: Path = PROCESSED_DATA_DIR / "interprotocol",
+    figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
 ) -> bool:
     job_id = request_uri.rstrip("/").split("/")[-2]
     if not JOB_ID_RE.fullmatch(job_id):
@@ -966,12 +977,24 @@ def process_interprotocol_request(
             manifest_path,
             raw_root=raw_root,
             output_root=output_root,
+            figures_root=figures_root,
         )
         for path in sorted(output_dir.rglob("*")):
             if path.is_file():
                 client.upload(
                     path, join_s3(request.result_prefix, path.relative_to(output_dir).as_posix())
                 )
+        figure_dir = figures_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
+        for path in sorted(figure_dir.rglob("*.pdf")):
+            client.upload(
+                path,
+                join_s3(
+                    request.result_prefix,
+                    "reports",
+                    "figures",
+                    path.relative_to(figure_dir).as_posix(),
+                ),
+            )
         summary = json.loads((output_dir / "interprotocol-campaign-summary.json").read_text())
         done = InterprotocolDone(
             version=INTERPROTOCOL_JOB_VERSION,

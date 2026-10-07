@@ -119,6 +119,7 @@ class S3WorkflowTest(unittest.TestCase):
                     root / "jobs",
                     output_root=root / "targets-output",
                     processed_root=processed_root,
+                    figures_root=root / "figures",
                 )
             )
             for group in ("icmp-tcp", "icmp-udp", "tcp-udp", "icmp-tcp-udp"):
@@ -129,6 +130,10 @@ class S3WorkflowTest(unittest.TestCase):
             done = json.loads(client.objects[request["done_uri"]])
             self.assertEqual(done["rows"]["icmp-tcp-udp"], 1)
             self.assertEqual(done["rows"]["icmp-tcp"], 1)
+            self.assertIn(
+                f"{job_prefix}/reports/figures/target-population.pdf",
+                client.objects,
+            )
 
     def test_interprotocol_worker_classifies_campaign_and_uploads_results(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -192,6 +197,7 @@ class S3WorkflowTest(unittest.TestCase):
                 root / "jobs",
                 raw_root=root / "raw",
                 output_root=root / "processed",
+                figures_root=root / "figures",
             )
 
             self.assertTrue(processed)
@@ -200,6 +206,10 @@ class S3WorkflowTest(unittest.TestCase):
             combined_uri = f"{request['result_prefix']}/interprotocol-campaign-deployments.pq"
             self.assertEqual(json.loads(client.objects[summary_uri])["rows"], 1)
             self.assertIn(combined_uri, client.objects)
+            self.assertIn(
+                f"{request['result_prefix']}/reports/figures/interprotocol-campaign-single.pdf",
+                client.objects,
+            )
             self.assertEqual(
                 InterprotocolRequest.parse(request, prefix).campaign_id,
                 "campaign",

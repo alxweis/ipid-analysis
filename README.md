@@ -28,16 +28,22 @@ make analyse-interprotocol ARGS="RAW.pq SNAPSHOT.yaml OUTPUT_DIR"
 make analyse-interprotocol-campaign ARGS="RUN-MANIFEST.json --raw-root data/raw/ipid"
 ```
 
-Target files and `target-summary.json` are written below
-`data/processed/interprotocol/<campaign-id>/`.  The analysis writes a per-IP
-deployment Parquet, JSON counts, and PDF plots.  Triple measurements distinguish
-one shared counter, one shared protocol pair, and fully isolated protocol state.
+Raw inter-protocol measurements are stored below `data/raw/ipid/`. Target files,
+`target-summary.json`, per-IP deployment Parquets, and JSON counts are written
+below `data/processed/interprotocol/<campaign-id>/`. All plots are kept separate
+below `reports/figures/interprotocol/<campaign-id>/`. Triple measurements
+distinguish one shared counter, one shared protocol pair, and fully isolated
+protocol state.
 
 The final job downloads all group measurements, produces the per-group results
 above, and additionally writes a combined campaign Parquet, JSON summary, run
-metadata, deployment PDF, and missing-sample PDF under
-`data/processed/interprotocol/<campaign-id>/runs/<run-id>/`. The same files are
-uploaded below `interprotocol-jobs/<run-id>/results/`.
+metadata under `data/processed/interprotocol/<campaign-id>/runs/<run-id>/`.
+Campaign and per-group PDFs are written to the matching path below
+`reports/figures/interprotocol/`. In addition to the overview and missing-sample
+plots, one 100% stacked campaign plot is generated for each counter strategy;
+its x-axis compares ICMP/TCP, ICMP/UDP, TCP/UDP, and ICMP/TCP/UDP while the
+stack distinguishes protocol-shared, protocol-isolated, missing, and
+unconfirmed results.
 
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
