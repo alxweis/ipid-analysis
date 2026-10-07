@@ -52,10 +52,18 @@ class InterprotocolClassifierTests(unittest.TestCase):
 
     def test_validation_report_has_perfect_synthetic_accuracy(self):
         with tempfile.TemporaryDirectory() as temporary:
-            output = validate_classifier(Path(temporary), samples=10, seed=42)
+            root = Path(temporary)
+            processed = root / "processed"
+            figures = root / "figures"
+            output = validate_classifier(processed, figures, samples=10, seed=42)
             report = json.loads(output.read_text())
             self.assertEqual(report["correct"], report["cases"])
             self.assertEqual(report["accuracy"], 1.0)
+            self.assertEqual(output.parent, processed)
+            self.assertTrue((figures / "interprotocol-validation-pair-confusion.pdf").is_file())
+            self.assertTrue((figures / "interprotocol-validation-triple-confusion.pdf").is_file())
+            self.assertFalse(any(processed.glob("*.pdf")))
+            self.assertFalse(any(figures.glob("*.json")))
 
     def test_target_builder_uses_same_strategy_and_exclusive_triple(self):
         rows = {

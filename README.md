@@ -28,6 +28,10 @@ make analyse-interprotocol ARGS="RAW.pq SNAPSHOT.yaml OUTPUT_DIR"
 make analyse-interprotocol-campaign ARGS="RUN-MANIFEST.json --raw-root data/raw/ipid"
 ```
 
+`make validate-interprotocol` writes its JSON report below
+`data/processed/interprotocol-validation/` and its confusion-matrix PDFs below
+`reports/figures/interprotocol-validation/`.
+
 Raw inter-protocol measurements are stored below `data/raw/ipid/`. Target files,
 `target-summary.json`, per-IP deployment Parquets, and JSON counts are written
 below `data/processed/interprotocol/<campaign-id>/`. All plots are kept separate
