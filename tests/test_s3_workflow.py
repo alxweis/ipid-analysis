@@ -10,6 +10,7 @@ import pyarrow.parquet as pq
 from ipid_analysis.s3_workflow import (
     ANALYSIS_JOB_VERSION,
     INTERPROTOCOL_JOB_VERSION,
+    INTERPROTOCOL_TARGET_JOB_VERSION,
     PROTOCOL_VERSION,
     AnalysisRequest,
     InterprotocolRequest,
@@ -18,9 +19,11 @@ from ipid_analysis.s3_workflow import (
     download_analysis_inputs,
     process_analysis_request,
     process_interprotocol_request,
+    process_interprotocol_target_request,
     process_request,
     validate_analysis_manifest,
 )
+from ipid_analysis.strategy_merge import iter_strategy_merges
 
 
 class FakeS3Client:
@@ -41,6 +44,92 @@ class FakeS3Client:
 
 
 class S3WorkflowTest(unittest.TestCase):
+    def test_interprotocol_target_worker_builds_and_uploads_all_groups(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            processed_root = root / "processed"
+            manifests = {}
+            rows = {
+                "icmp": [("192.0.2.1", "SINGLE"), ("192.0.2.2", "PER_BUCKET")],
+                "tcp": [("192.0.2.1", "SINGLE"), ("192.0.2.2", "PER_BUCKET")],
+                "udp": [("192.0.2.1", "SINGLE")],
+            }
+            objects = {}
+            for protocol, protocol_rows in rows.items():
+                manifest_protocol = "udp-dns" if protocol == "udp" else protocol
+                measurement_prefix = (
+                    "udp-dns-53"
+                    if protocol == "udp"
+                    else "tcp-80"
+                    if protocol == "tcp"
+                    else "icmp"
+                )
+                manifest = {
+                    manifest_protocol: {
+                        "zmap": f"{measurement_prefix}_2026-01-01_00-00-00",
+                        "ipid": {
+                            "no-connection": {
+                                "rt-based": {"base": f"{measurement_prefix}_2026-01-01_00-00-01"},
+                                "fixed-interval": {
+                                    "mass": f"{measurement_prefix}_2026-01-01_00-00-02"
+                                },
+                            }
+                        },
+                    }
+                }
+                strategy_path = iter_strategy_merges(manifest)[0].artifact_path(
+                    processed_root, "strategies"
+                )
+                strategy_path.parent.mkdir(parents=True, exist_ok=True)
+                pq.write_table(
+                    pa.table(
+                        {
+                            "IP_ADDR": [row[0] for row in protocol_rows],
+                            "IPID_SELECTION_STRATEGY": [row[1] for row in protocol_rows],
+                        }
+                    ),
+                    strategy_path,
+                )
+                uri = f"s3://bucket/workflow/analysis-jobs/{protocol}-job/manifest.json"
+                manifests[protocol] = uri
+                objects[uri] = json.dumps(manifest).encode()
+
+            prefix = "s3://bucket/workflow"
+            run_id = "interprotocol_2026-01-01_00-00-00"
+            job_prefix = f"{prefix}/interprotocol-target-jobs/{run_id}"
+            request_uri = f"{job_prefix}/request.json"
+            request = {
+                "version": INTERPROTOCOL_TARGET_JOB_VERSION,
+                "job_id": run_id,
+                "campaign_id": run_id,
+                "manifests": manifests,
+                "target_prefix": f"{job_prefix}/targets",
+                "done_uri": f"{job_prefix}/done.json",
+                "failed_uri": f"{job_prefix}/failed.json",
+                "created_at": "2026-01-01T00:00:00Z",
+            }
+            objects[request_uri] = json.dumps(request).encode()
+            client = FakeS3Client(objects)
+
+            self.assertTrue(
+                process_interprotocol_target_request(
+                    client,
+                    request_uri,
+                    prefix,
+                    root / "jobs",
+                    output_root=root / "targets-output",
+                    processed_root=processed_root,
+                )
+            )
+            for group in ("icmp-tcp", "icmp-udp", "tcp-udp", "icmp-tcp-udp"):
+                self.assertIn(
+                    f"{request['target_prefix']}/{group}-targets.pq",
+                    client.objects,
+                )
+            done = json.loads(client.objects[request["done_uri"]])
+            self.assertEqual(done["rows"]["icmp-tcp-udp"], 1)
+            self.assertEqual(done["rows"]["icmp-tcp"], 1)
+
     def test_interprotocol_worker_classifies_campaign_and_uploads_results(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
