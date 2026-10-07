@@ -16,12 +16,26 @@ Create a campaign file from `interprotocol-campaign.json.example`, then run:
 make build-interprotocol-targets ARGS="interprotocol-campaign.json"
 make validate-interprotocol
 make analyse-interprotocol ARGS="RAW.pq SNAPSHOT.yaml OUTPUT_DIR"
+make analyse-interprotocol-campaign ARGS="RUN-MANIFEST.json --raw-root data/raw/ipid"
 ```
 
 Target files and `target-summary.json` are written below
 `data/processed/interprotocol/<campaign-id>/`.  The analysis writes a per-IP
 deployment Parquet, JSON counts, and PDF plots.  Triple measurements distinguish
 one shared counter, one shared protocol pair, and fully isolated protocol state.
+
+For a complete manual campaign, copy the generated target directory to the
+measurement VM and invoke its `make run-all-interprotocol` target. That runner
+measures the selected groups sequentially, persists an atomic resume manifest,
+and publishes one `interprotocol-jobs/<run-id>/request.json` only after every
+selected group has completed. The existing `workflow-worker` consumes that
+request independently of the normal ICMP/TCP/UDP workflow. It downloads all
+group measurements, produces the per-group results above, and additionally
+writes a combined campaign Parquet, JSON summary, run metadata, deployment PDF,
+and missing-sample PDF under
+`data/processed/interprotocol/<campaign-id>/runs/<run-id>/`. The same files are
+uploaded below `interprotocol-jobs/<run-id>/results/`. Nothing is automatically
+attached to `make run-all-{icmp,tcp,udp}`.
 
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />

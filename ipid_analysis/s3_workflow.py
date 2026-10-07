@@ -14,6 +14,7 @@ the same worker and retain their manifest, log, and terminal marker.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -23,7 +24,6 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Callable
 
 import duckdb
 from loguru import logger
@@ -31,7 +31,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
-from ipid_analysis.config import DATA_DIR, INTERIM_DATA_DIR, PROJ_ROOT, RAW_DATA_DIR
+from ipid_analysis.config import (
+    DATA_DIR,
+    INTERIM_DATA_DIR,
+    PROCESSED_DATA_DIR,
+    PROJ_ROOT,
+    RAW_DATA_DIR,
+)
+from ipid_analysis.interprotocol import classify_campaign, load_run_manifest
 from ipid_analysis.manifest import (
     iter_ipid_measurements,
     iter_random_reproducibility,
@@ -48,6 +55,7 @@ from ipid_analysis.strategies import classify_paths
 
 PROTOCOL_VERSION = 2
 ANALYSIS_JOB_VERSION = 1
+INTERPROTOCOL_JOB_VERSION = 1
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TARGET_NAME = "zmap_unclassified.pq"
 PURPOSE_RT_UNCLASSIFIED = "rt-unclassified"
@@ -97,7 +105,7 @@ class Request:
     selection_seed: int = 42
 
     @classmethod
-    def parse(cls, data: dict, s3_prefix: str) -> "Request":
+    def parse(cls, data: dict, s3_prefix: str) -> Request:
         try:
             request = cls(**data)
         except TypeError as exc:
@@ -127,15 +135,11 @@ class Request:
         }:
             raise ValueError(f"unsupported analysis purpose {request.purpose!r}")
         if not 0 <= request.maximum_targets <= DEFAULT_MAXIMUM_TARGETS:
-            raise ValueError(
-                f"maximum_targets must be in [0, {DEFAULT_MAXIMUM_TARGETS}]"
-            )
+            raise ValueError(f"maximum_targets must be in [0, {DEFAULT_MAXIMUM_TARGETS}]")
 
         job_prefix = join_s3(s3_prefix, "jobs", request.job_id)
         result_name = (
-            TARGET_NAME
-            if request.purpose == PURPOSE_RT_UNCLASSIFIED
-            else TARGET_FILE_NAME
+            TARGET_NAME if request.purpose == PURPOSE_RT_UNCLASSIFIED else TARGET_FILE_NAME
         )
         expected = {
             "result_uri": join_s3(measurement_prefix, result_name),
@@ -174,7 +178,7 @@ class AnalysisRequest:
     connection_target_uri: str | None = None
 
     @classmethod
-    def parse(cls, data: dict, s3_prefix: str) -> "AnalysisRequest":
+    def parse(cls, data: dict, s3_prefix: str) -> AnalysisRequest:
         try:
             request = cls(**data)
         except TypeError as exc:
@@ -230,6 +234,55 @@ class AnalysisDone:
     completed_at: str
 
 
+@dataclass(frozen=True)
+class InterprotocolRequest:
+    version: int
+    job_id: str
+    campaign_id: str
+    manifest_uri: str
+    ipid_prefix: str
+    result_prefix: str
+    done_uri: str
+    failed_uri: str
+    created_at: str
+
+    @classmethod
+    def parse(cls, data: dict, s3_prefix: str) -> InterprotocolRequest:
+        try:
+            request = cls(**data)
+        except TypeError as exc:
+            raise ValueError(f"invalid inter-protocol request fields: {exc}") from exc
+        if request.version != INTERPROTOCOL_JOB_VERSION:
+            raise ValueError(f"unsupported inter-protocol request version {request.version}")
+        if not JOB_ID_RE.fullmatch(request.job_id):
+            raise ValueError("invalid inter-protocol job_id")
+        if not JOB_ID_RE.fullmatch(request.campaign_id):
+            raise ValueError("invalid inter-protocol campaign_id")
+        if not request.ipid_prefix.startswith("s3://"):
+            raise ValueError("invalid inter-protocol ipid_prefix")
+        job_prefix = join_s3(s3_prefix, "interprotocol-jobs", request.job_id)
+        expected = {
+            "manifest_uri": join_s3(job_prefix, "manifest.json"),
+            "result_prefix": join_s3(job_prefix, "results"),
+            "done_uri": join_s3(job_prefix, "done.json"),
+            "failed_uri": join_s3(job_prefix, "failed.json"),
+        }
+        for field, value in expected.items():
+            if getattr(request, field) != value:
+                raise ValueError(f"{field} does not match its canonical S3 location")
+        return request
+
+
+@dataclass(frozen=True)
+class InterprotocolDone:
+    version: int
+    job_id: str
+    campaign_id: str
+    result_prefix: str
+    rows: int
+    completed_at: str
+
+
 class S3Client:
     def __init__(self, run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run):
         self._run = run
@@ -249,6 +302,11 @@ class S3Client:
 
     def list_analysis_requests(self, s3_prefix: str) -> list[str]:
         output = self._command("ls", "--recursive", join_s3(s3_prefix, "analysis-jobs"))
+        uris = [line.split()[-1] for line in output.splitlines() if line.split()]
+        return sorted(uri for uri in uris if uri.endswith("/request.json"))
+
+    def list_interprotocol_requests(self, s3_prefix: str) -> list[str]:
+        output = self._command("ls", "--recursive", join_s3(s3_prefix, "interprotocol-jobs"))
         uris = [line.split()[-1] for line in output.splitlines() if line.split()]
         return sorted(uri for uri in uris if uri.endswith("/request.json"))
 
@@ -699,6 +757,111 @@ def run_analysis_pending(
     return processed
 
 
+def load_interprotocol_request(
+    client: S3Client, request_uri: str, s3_prefix: str, work_dir: Path
+) -> InterprotocolRequest:
+    path = work_dir / "request.json"
+    client.download(request_uri, path)
+    return InterprotocolRequest.parse(json.loads(path.read_text()), s3_prefix)
+
+
+def process_interprotocol_request(
+    client: S3Client,
+    request_uri: str,
+    s3_prefix: str,
+    work_root: Path,
+    raw_root: Path = RAW_DATA_DIR / "ipid",
+    output_root: Path = PROCESSED_DATA_DIR / "interprotocol",
+) -> bool:
+    job_id = request_uri.rstrip("/").split("/")[-2]
+    if not JOB_ID_RE.fullmatch(job_id):
+        raise ValueError(f"invalid inter-protocol job id in request URI: {request_uri}")
+    work_dir = work_root / job_id
+    job_prefix = join_s3(s3_prefix, "interprotocol-jobs", job_id)
+    done_uri = join_s3(job_prefix, "done.json")
+    failed_uri = join_s3(job_prefix, "failed.json")
+    if client.exists(done_uri) or client.exists(failed_uri):
+        return False
+
+    request = None
+    try:
+        request = load_interprotocol_request(client, request_uri, s3_prefix, work_dir)
+        if request.job_id != job_id:
+            raise ValueError("inter-protocol request job_id does not match request URI")
+        manifest_path = work_dir / "manifest.json"
+        client.download(request.manifest_uri, manifest_path)
+        manifest = load_run_manifest(manifest_path)
+        if manifest["run_id"] != request.job_id:
+            raise ValueError("inter-protocol manifest run_id does not match job_id")
+        if manifest["campaign_id"] != request.campaign_id:
+            raise ValueError("inter-protocol manifest campaign_id does not match request")
+        for specification in manifest["groups"].values():
+            measurement_id = specification["measurement_id"]
+            remote = join_s3(request.ipid_prefix, measurement_id)
+            local = raw_root / measurement_id
+            client.download(join_s3(remote, "interprotocol.pq"), local / "interprotocol.pq")
+            client.download(
+                join_s3(remote, "interprotocol.snapshot.yaml"),
+                local / "interprotocol.snapshot.yaml",
+            )
+        output_dir = classify_campaign(
+            manifest_path,
+            raw_root=raw_root,
+            output_root=output_root,
+        )
+        for path in sorted(output_dir.rglob("*")):
+            if path.is_file():
+                client.upload(
+                    path, join_s3(request.result_prefix, path.relative_to(output_dir).as_posix())
+                )
+        summary = json.loads((output_dir / "interprotocol-campaign-summary.json").read_text())
+        done = InterprotocolDone(
+            version=INTERPROTOCOL_JOB_VERSION,
+            job_id=request.job_id,
+            campaign_id=request.campaign_id,
+            result_prefix=request.result_prefix,
+            rows=int(summary["rows"]),
+            completed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+        done_path = work_dir / "done.json"
+        write_json(done_path, asdict(done))
+        client.upload(done_path, request.done_uri)
+        logger.success(f"[{request.job_id}] automatic inter-protocol analysis completed")
+        return True
+    except Exception as exc:
+        failed_job_id = request.job_id if request is not None else job_id
+        failed_path = work_dir / "failed.json"
+        write_json(
+            failed_path,
+            {
+                "version": INTERPROTOCOL_JOB_VERSION,
+                "job_id": failed_job_id,
+                "error": str(exc),
+            },
+        )
+        try:
+            client.upload(failed_path, failed_uri)
+        except Exception:
+            logger.exception(f"[{failed_job_id}] could not upload inter-protocol failure marker")
+        raise
+
+
+def run_interprotocol_pending(
+    client: S3Client,
+    s3_prefix: str,
+    work_root: Path,
+) -> int:
+    processed = 0
+    for request_uri in client.list_interprotocol_requests(s3_prefix):
+        try:
+            processed += int(
+                process_interprotocol_request(client, request_uri, s3_prefix, work_root)
+            )
+        except Exception:
+            logger.exception(f"failed processing {request_uri}")
+    return processed
+
+
 @app.command()
 def main(
     s3_prefix: str = typer.Option(
@@ -721,6 +884,11 @@ def main(
             DATA_DIR / "analysis-jobs",
             batch_size,
             threads,
+        )
+        run_interprotocol_pending(
+            client,
+            s3_prefix,
+            DATA_DIR / "interprotocol-jobs",
         )
         if once:
             return

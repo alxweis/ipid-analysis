@@ -131,6 +131,11 @@ build-interprotocol-targets:
 analyse-interprotocol:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.interprotocol classify $(ARGS)
 
+## Classify every measurement in an inter-protocol campaign run
+.PHONY: analyse-interprotocol-campaign
+analyse-interprotocol-campaign:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.interprotocol analyse-campaign $(ARGS)
+
 ## Validate the inter-protocol classifier against synthetic ground truth
 .PHONY: validate-interprotocol
 validate-interprotocol:
