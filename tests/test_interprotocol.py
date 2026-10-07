@@ -9,6 +9,7 @@ import pyarrow.parquet as pq
 from ipid_analysis.interprotocol import (
     InterprotocolConfig,
     build_target_files,
+    classify_campaign,
     classify_file,
     classify_sequence,
     synthetic_sequence,
@@ -130,6 +131,63 @@ class InterprotocolClassifierTests(unittest.TestCase):
             self.assertTrue(result.is_file())
             self.assertTrue((output / "interprotocol-summary.json").is_file())
             self.assertTrue((output / "interprotocol-deployments.pdf").is_file())
+
+    def test_campaign_analysis_classifies_and_combines_groups(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw_root = root / "raw"
+            groups = {}
+            for group, protocols in (
+                ("icmp-tcp", ("icmp", "tcp")),
+                ("icmp-tcp-udp", ("icmp", "tcp", "udp")),
+            ):
+                measurement_id = f"interprotocol-{group}_2026-01-01_00-00-00"
+                measurement = raw_root / measurement_id
+                measurement.mkdir(parents=True)
+                cfg = InterprotocolConfig(protocols, 4, 4)
+                sequence = synthetic_sequence(cfg, "SINGLE", (protocols,), 12)
+                pq.write_table(
+                    pa.table(
+                        {
+                            "IP_ADDR": [f"192.0.2.{len(groups) + 1}"],
+                            "IPID_SELECTION_STRATEGY": ["SINGLE"],
+                            "IPID_SEQUENCE": [",".join(map(str, sequence))],
+                        }
+                    ),
+                    measurement / "interprotocol.pq",
+                )
+                (measurement / "interprotocol.snapshot.yaml").write_text(
+                    "connection_count: 4\nrequests_per_connection: 4\n"
+                    f"interprotocol:\n  protocols: [{', '.join(protocols)}]\n"
+                )
+                groups[group] = {
+                    "protocols": list(protocols),
+                    "status": "complete",
+                    "measurement_id": measurement_id,
+                }
+            manifest = root / "run.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "campaign_id": "campaign",
+                        "run_id": "campaign-2026-01-01",
+                        "groups": groups,
+                    }
+                )
+            )
+            output = classify_campaign(
+                manifest,
+                raw_root=raw_root,
+                output_root=root / "processed",
+            )
+            combined = pq.read_table(output / "interprotocol-campaign-deployments.pq")
+            summary = json.loads((output / "interprotocol-campaign-summary.json").read_text())
+            self.assertEqual(combined.num_rows, 2)
+            self.assertEqual(summary["rows"], 2)
+            self.assertEqual(set(summary["groups"]), set(groups))
+            self.assertTrue((output / "interprotocol-campaign-deployments.pdf").is_file())
+            self.assertTrue((output / "interprotocol-campaign-missing.pdf").is_file())
 
 
 if __name__ == "__main__":

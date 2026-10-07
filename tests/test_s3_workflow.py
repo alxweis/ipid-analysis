@@ -9,12 +9,15 @@ import pyarrow.parquet as pq
 
 from ipid_analysis.s3_workflow import (
     ANALYSIS_JOB_VERSION,
+    INTERPROTOCOL_JOB_VERSION,
     PROTOCOL_VERSION,
     AnalysisRequest,
+    InterprotocolRequest,
     Request,
     build_unclassified_targets,
     download_analysis_inputs,
     process_analysis_request,
+    process_interprotocol_request,
     process_request,
     validate_analysis_manifest,
 )
@@ -38,6 +41,81 @@ class FakeS3Client:
 
 
 class S3WorkflowTest(unittest.TestCase):
+    def test_interprotocol_worker_classifies_campaign_and_uploads_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "interprotocol.pq"
+            pq.write_table(
+                pa.table(
+                    {
+                        "IP_ADDR": ["192.0.2.1"],
+                        "IPID_SELECTION_STRATEGY": ["SINGLE"],
+                        "IPID_SEQUENCE": [",".join(str(value) for value in range(1, 33))],
+                    }
+                ),
+                source,
+            )
+            prefix = "s3://bucket/workflow"
+            ipid_prefix = "s3://bucket/raw/ipid"
+            run_id = "campaign-2026-01-01"
+            measurement_id = "interprotocol-icmp-udp_2026-01-01_00-00-00"
+            job_prefix = f"{prefix}/interprotocol-jobs/{run_id}"
+            request_uri = f"{job_prefix}/request.json"
+            manifest = {
+                "version": 1,
+                "campaign_id": "campaign",
+                "run_id": run_id,
+                "groups": {
+                    "icmp-udp": {
+                        "protocols": ["icmp", "udp"],
+                        "status": "complete",
+                        "measurement_id": measurement_id,
+                    }
+                },
+            }
+            request = {
+                "version": INTERPROTOCOL_JOB_VERSION,
+                "job_id": run_id,
+                "campaign_id": "campaign",
+                "manifest_uri": f"{job_prefix}/manifest.json",
+                "ipid_prefix": ipid_prefix,
+                "result_prefix": f"{job_prefix}/results",
+                "done_uri": f"{job_prefix}/done.json",
+                "failed_uri": f"{job_prefix}/failed.json",
+                "created_at": "2026-01-01T00:00:00Z",
+            }
+            client = FakeS3Client(
+                {
+                    request_uri: json.dumps(request).encode(),
+                    request["manifest_uri"]: json.dumps(manifest).encode(),
+                    f"{ipid_prefix}/{measurement_id}/interprotocol.pq": source.read_bytes(),
+                    f"{ipid_prefix}/{measurement_id}/interprotocol.snapshot.yaml": (
+                        b"connection_count: 4\nrequests_per_connection: 4\n"
+                        b"interprotocol:\n  protocols: [icmp, udp]\n"
+                    ),
+                }
+            )
+
+            processed = process_interprotocol_request(
+                client,
+                request_uri,
+                prefix,
+                root / "jobs",
+                raw_root=root / "raw",
+                output_root=root / "processed",
+            )
+
+            self.assertTrue(processed)
+            self.assertIn(request["done_uri"], client.uploads)
+            summary_uri = f"{request['result_prefix']}/interprotocol-campaign-summary.json"
+            combined_uri = f"{request['result_prefix']}/interprotocol-campaign-deployments.pq"
+            self.assertEqual(json.loads(client.objects[summary_uri])["rows"], 1)
+            self.assertIn(combined_uri, client.objects)
+            self.assertEqual(
+                InterprotocolRequest.parse(request, prefix).campaign_id,
+                "campaign",
+            )
+
     def test_build_unclassified_targets_uses_zmap_schema(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -358,17 +436,11 @@ class S3WorkflowTest(unittest.TestCase):
                 self.assertTrue((root / "raw" / "ipid" / rt_id / "zmap_unclassified.pq").is_file())
                 self.assertTrue(
                     (
-                        root
-                        / "raw"
-                        / "ipid"
-                        / mass_id
-                        / "random-reproducibility-cohort.pq"
+                        root / "raw" / "ipid" / mass_id / "random-reproducibility-cohort.pq"
                     ).is_file()
                 )
                 for measurement_id in repeat_ids:
-                    self.assertTrue(
-                        (root / "raw" / "ipid" / measurement_id / "ipid.pq").is_file()
-                    )
+                    self.assertTrue((root / "raw" / "ipid" / measurement_id / "ipid.pq").is_file())
                 log_path.write_text("postprocessing complete\n")
 
             self.assertTrue(

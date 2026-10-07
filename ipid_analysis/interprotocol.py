@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 import time
 
@@ -22,7 +23,7 @@ import pyarrow.parquet as pq
 import typer
 import yaml
 
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import load_manifest
 from ipid_analysis.strategies import MAX_INC, MODULUS, STRATEGY_COLORS, STRATEGY_PRETTY
 from ipid_analysis.strategy_merge import iter_strategy_merges
@@ -37,6 +38,7 @@ GROUPS = {
     "tcp-udp": ("tcp", "udp"),
     "icmp-tcp-udp": ("icmp", "tcp", "udp"),
 }
+RUN_MANIFEST_VERSION = 1
 
 TARGET_SCHEMA = pa.schema([("IP_ADDR", pa.string()), ("IPID_SELECTION_STRATEGY", pa.string())])
 RESULT_SCHEMA = pa.schema(
@@ -366,6 +368,188 @@ def plot_deployments(counts: Counter[tuple[str, str]], output: Path) -> None:
     plt.close(fig)
 
 
+def load_run_manifest(path: Path) -> dict:
+    data = json.loads(path.read_text())
+    if data.get("version") != RUN_MANIFEST_VERSION:
+        raise ValueError(
+            f"unsupported inter-protocol run manifest version {data.get('version')!r}"
+        )
+    for field in ("campaign_id", "run_id"):
+        value = str(data.get(field, ""))
+        if not value or Path(value).name != value:
+            raise ValueError(f"{field} must be a non-empty directory name")
+    groups = data.get("groups")
+    if not isinstance(groups, dict) or not groups:
+        raise ValueError("run manifest must contain at least one protocol group")
+    for group, specification in groups.items():
+        if group not in GROUPS:
+            raise ValueError(f"unsupported protocol group {group!r}")
+        if specification.get("status") != "complete":
+            raise ValueError(f"protocol group {group!r} is not complete")
+        protocols = tuple(str(value) for value in specification.get("protocols", []))
+        if protocols != GROUPS[group]:
+            raise ValueError(
+                f"protocol order for {group!r} is {protocols!r}, expected {GROUPS[group]!r}"
+            )
+        measurement_id = str(specification.get("measurement_id", ""))
+        if not measurement_id.startswith(f"interprotocol-{group}_"):
+            raise ValueError(f"invalid measurement id for {group!r}: {measurement_id!r}")
+    return data
+
+
+def _campaign_counts(rows: list[dict]) -> dict[str, Counter[tuple[str, str]]]:
+    counts: dict[str, Counter[tuple[str, str]]] = {}
+    for row in rows:
+        group = str(row["PROTOCOL_GROUP"])
+        counts.setdefault(group, Counter())[
+            (str(row["IPID_SELECTION_STRATEGY"]), str(row["DEPLOYMENT"]))
+        ] += 1
+    return counts
+
+
+def plot_campaign_deployments(counts: dict[str, Counter[tuple[str, str]]], output: Path) -> None:
+    groups = [group for group in GROUPS if group in counts]
+    deployments = sorted(
+        {deployment for group_counts in counts.values() for _, deployment in group_counts}
+    )
+    colors = {
+        deployment: plt.get_cmap("tab10").colors[index % 10]
+        for index, deployment in enumerate(deployments)
+    }
+    columns = min(2, len(groups))
+    rows = math.ceil(len(groups) / columns)
+    fig, axes = plt.subplots(rows, columns, figsize=(7.16, 3.0 * rows), squeeze=False)
+    for ax, group in zip(axes.flat, groups, strict=False):
+        bottom = np.zeros(len(COUNTER_STRATEGIES))
+        group_counts = counts[group]
+        for deployment in deployments:
+            values = []
+            for strategy in COUNTER_STRATEGIES:
+                total = sum(
+                    count
+                    for (candidate, _), count in group_counts.items()
+                    if candidate == strategy
+                )
+                values.append(100 * group_counts[(strategy, deployment)] / total if total else 0)
+            ax.bar(
+                [STRATEGY_PRETTY[strategy] for strategy in COUNTER_STRATEGIES],
+                values,
+                bottom=bottom,
+                color=colors[deployment],
+                label=deployment,
+            )
+            bottom += values
+        ax.set_title(group)
+        ax.set_ylim(0, 100)
+        ax.tick_params(axis="x", rotation=25)
+    for ax in list(axes.flat)[len(groups) :]:
+        ax.set_visible(False)
+    axes[0, 0].set_ylabel("Targets [%]")
+    if deployments:
+        axes[0, -1].legend(frameon=False, fontsize=7, bbox_to_anchor=(1.02, 1), loc="upper left")
+    fig.tight_layout()
+    fig.savefig(output)
+    plt.close(fig)
+
+
+def plot_campaign_missing(counts: dict[str, Counter[tuple[str, str]]], output: Path) -> None:
+    groups = [group for group in GROUPS if group in counts]
+    x = np.arange(len(groups))
+    width = 0.24
+    fig, ax = plt.subplots(figsize=(7.16, 3.2))
+    for index, strategy in enumerate(COUNTER_STRATEGIES):
+        values = []
+        for group in groups:
+            group_counts = counts[group]
+            total = sum(
+                count for (candidate, _), count in group_counts.items() if candidate == strategy
+            )
+            missing = group_counts[(strategy, "NOT_ENOUGH_SAMPLES")]
+            values.append(100 * missing / total if total else 0)
+        ax.bar(
+            x + (index - 1) * width,
+            values,
+            width,
+            label=STRATEGY_PRETTY[strategy],
+            color=STRATEGY_COLORS[strategy],
+        )
+    ax.set_xticks(x, groups, rotation=20)
+    ax.set_ylabel("Not enough samples [%]")
+    ax.set_ylim(bottom=0)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(output)
+    plt.close(fig)
+
+
+def classify_campaign(
+    run_manifest_path: Path,
+    *,
+    raw_root: Path,
+    output_root: Path = PROCESSED_DATA_DIR / "interprotocol",
+) -> Path:
+    manifest = load_run_manifest(run_manifest_path)
+    output_dir = output_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tables = []
+    measurement_ids = {}
+    for group in GROUPS:
+        specification = manifest["groups"].get(group)
+        if specification is None:
+            continue
+        measurement_id = specification["measurement_id"]
+        measurement_ids[group] = measurement_id
+        measurement_dir = raw_root / measurement_id
+        result = classify_file(
+            measurement_dir / "interprotocol.pq",
+            measurement_dir / "interprotocol.snapshot.yaml",
+            output_dir / group,
+        )
+        tables.append(pq.read_table(result).cast(RESULT_SCHEMA))
+    combined = pa.concat_tables(tables) if len(tables) > 1 else tables[0]
+    combined_path = output_dir / "interprotocol-campaign-deployments.pq"
+    temporary = combined_path.with_suffix(".pq.part")
+    pq.write_table(combined, temporary, compression="zstd")
+    temporary.replace(combined_path)
+    output_rows = combined.to_pylist()
+    counts = _campaign_counts(output_rows)
+    for group in measurement_ids:
+        counts.setdefault(group, Counter())
+    summary = {
+        "classifier_version": CLASSIFIER_VERSION,
+        "campaign_id": manifest["campaign_id"],
+        "run_id": manifest["run_id"],
+        "groups": {
+            group: {
+                "measurement_id": measurement_ids[group],
+                "rows": sum(group_counts.values()),
+                "counts": {
+                    f"{strategy}:{deployment}": count
+                    for (strategy, deployment), count in sorted(group_counts.items())
+                },
+            }
+            for group, group_counts in counts.items()
+        },
+        "rows": len(output_rows),
+    }
+    (output_dir / "interprotocol-campaign-summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n"
+    )
+    analysis_run = {
+        "classifier_version": CLASSIFIER_VERSION,
+        "source_manifest": str(run_manifest_path),
+        "campaign_id": manifest["campaign_id"],
+        "run_id": manifest["run_id"],
+        "measurements": measurement_ids,
+    }
+    (output_dir / "interprotocol-campaign-run.json").write_text(
+        json.dumps(analysis_run, indent=2) + "\n"
+    )
+    plot_campaign_deployments(counts, output_dir / "interprotocol-campaign-deployments.pdf")
+    plot_campaign_missing(counts, output_dir / "interprotocol-campaign-missing.pdf")
+    return output_dir
+
+
 def synthetic_sequence(
     cfg: InterprotocolConfig, strategy: str, partition: tuple[tuple[str, ...], ...], seed: int
 ) -> np.ndarray:
@@ -511,6 +695,15 @@ def build_targets_command(
 @app.command("classify")
 def classify_command(raw: Path, snapshot: Path, output_dir: Path) -> None:
     typer.echo(classify_file(raw, snapshot, output_dir))
+
+
+@app.command("analyse-campaign")
+def analyse_campaign_command(
+    run_manifest: Path,
+    raw_root: Path = RAW_DATA_DIR / "ipid",
+    output_root: Path = PROCESSED_DATA_DIR / "interprotocol",
+) -> None:
+    typer.echo(classify_campaign(run_manifest, raw_root=raw_root, output_root=output_root))
 
 
 @app.command("validate")
