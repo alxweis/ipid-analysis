@@ -25,6 +25,11 @@ import yaml
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import load_manifest
+from ipid_analysis.paper_figures import (
+    COMPACT_PAPER_PDF_PADDING_INCHES,
+    COMPACT_PAPER_STROKE_WIDTH,
+    configure_compact_validation_style,
+)
 from ipid_analysis.strategies import MAX_INC, MODULUS, STRATEGY_COLORS, STRATEGY_PRETTY
 from ipid_analysis.strategy_merge import iter_strategy_merges
 
@@ -39,6 +44,33 @@ GROUPS = {
     "icmp-tcp-udp": ("icmp", "tcp", "udp"),
 }
 RUN_MANIFEST_VERSION = 1
+INTERPROTOCOL_FIGURES_DIR = FIGURES_DIR / "interprotocol"
+
+DEPLOYMENT_PLOT_CATEGORIES = (
+    "PROTOCOL_SHARED",
+    "PROTOCOL_ISOLATED",
+    "NOT_ENOUGH_SAMPLES",
+    "STRATEGY_NOT_CONFIRMED",
+)
+DEPLOYMENT_PLOT_LABELS = {
+    "PROTOCOL_SHARED": "Protocol-Shared",
+    "PROTOCOL_ISOLATED": "Protocol-Isolated",
+    "NOT_ENOUGH_SAMPLES": "Not Enough Samples",
+    "STRATEGY_NOT_CONFIRMED": "Strategy Not Confirmed",
+}
+DEPLOYMENT_PLOT_COLORS = {
+    "PROTOCOL_SHARED": STRATEGY_COLORS["PER_BUCKET"],
+    "PROTOCOL_ISOLATED": STRATEGY_COLORS["RANDOM"],
+    "NOT_ENOUGH_SAMPLES": STRATEGY_COLORS["NOT_ENOUGH_SAMPLES"],
+    "STRATEGY_NOT_CONFIRMED": STRATEGY_COLORS["PER_DESTINATION"],
+}
+GROUP_INTERSECTION_LABELS = {
+    "icmp-tcp": r"ICMP$\cap$TCP",
+    "icmp-udp": r"ICMP$\cap$UDP",
+    "tcp-udp": r"TCP$\cap$UDP",
+    "icmp-tcp-udp": r"ICMP$\cap$TCP$\cap$UDP",
+}
+INTERSECTION_XLABEL = "Protocol Intersection (#IP Addr.)"
 
 TARGET_SCHEMA = pa.schema([("IP_ADDR", pa.string()), ("IPID_SELECTION_STRATEGY", pa.string())])
 RESULT_SCHEMA = pa.schema(
@@ -117,6 +149,7 @@ def build_target_files(
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
     output_root: Path | None = None,
+    figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
     threads: int = 0,
 ) -> Path:
     """Create exclusive pair cohorts and one triple cohort.
@@ -191,7 +224,10 @@ def build_target_files(
         "targets": counts,
     }
     (output_dir / "target-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    plot_target_population(counts, output_dir / "target-population.pdf")
+    figure_dir = figures_root / campaign_id
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    plot_target_population(counts, figure_dir / "target-population.pdf")
+    (output_dir / "target-population.pdf").unlink(missing_ok=True)
     return output_dir
 
 
@@ -266,7 +302,13 @@ def _parse_sequence(value: str) -> np.ndarray:
     )
 
 
-def classify_file(raw_path: Path, snapshot_path: Path, output_dir: Path) -> Path:
+def classify_file(
+    raw_path: Path,
+    snapshot_path: Path,
+    output_dir: Path,
+    *,
+    figure_dir: Path | None = None,
+) -> Path:
     cfg = load_interprotocol_config(snapshot_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / "interprotocol-deployments.pq"
@@ -312,7 +354,10 @@ def classify_file(raw_path: Path, snapshot_path: Path, output_dir: Path) -> Path
         },
     }
     (output_dir / "interprotocol-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    plot_deployments(counts, output_dir / "interprotocol-deployments.pdf")
+    figure_dir = figure_dir or INTERPROTOCOL_FIGURES_DIR / output_dir.name
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    plot_deployments(counts, figure_dir / "interprotocol-deployments.pdf")
+    (output_dir / "interprotocol-deployments.pdf").unlink(missing_ok=True)
     return output
 
 
@@ -482,15 +527,124 @@ def plot_campaign_missing(counts: dict[str, Counter[tuple[str, str]]], output: P
     plt.close(fig)
 
 
+def _deployment_plot_category(deployment: str) -> str:
+    if deployment.startswith("SHARED_"):
+        return "PROTOCOL_SHARED"
+    if deployment == "PROTOCOL_ISOLATED":
+        return deployment
+    if deployment == "NOT_ENOUGH_SAMPLES":
+        return deployment
+    # AMBIGUOUS and unsupported/unexpected outcomes are not evidence for
+    # either shared or isolated state, so the plot includes them as unconfirmed.
+    return "STRATEGY_NOT_CONFIRMED"
+
+
+def _strategy_deployment_percentages(
+    counts: dict[str, Counter[tuple[str, str]]], strategy: str
+) -> dict[str, dict[str, float]]:
+    percentages = {}
+    for group in GROUPS:
+        grouped = Counter()
+        for (candidate, deployment), count in counts.get(group, Counter()).items():
+            if candidate == strategy:
+                grouped[_deployment_plot_category(deployment)] += count
+        total = sum(grouped.values())
+        percentages[group] = {
+            category: 100.0 * grouped[category] / total if total else 0.0
+            for category in DEPLOYMENT_PLOT_CATEGORIES
+        }
+    return percentages
+
+
+def _strategy_group_labels(
+    counts: dict[str, Counter[tuple[str, str]]], strategy: str
+) -> list[str]:
+    labels = []
+    for group in GROUPS:
+        targets = sum(
+            count
+            for (candidate, _), count in counts.get(group, Counter()).items()
+            if candidate == strategy
+        )
+        labels.append(f"{GROUP_INTERSECTION_LABELS[group]}\n({targets})")
+    return labels
+
+
+def plot_campaign_strategy_deployments(
+    counts: dict[str, Counter[tuple[str, str]]], output_dir: Path
+) -> list[Path]:
+    """Write one four-group percentage plot for each counter strategy."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    configure_compact_validation_style()
+    outputs = []
+    for strategy in COUNTER_STRATEGIES:
+        fig, ax = plt.subplots(figsize=(6.5, 2.55))
+        x = np.arange(len(GROUPS)) * 0.84
+        bottom = np.zeros(len(GROUPS))
+        percentages = _strategy_deployment_percentages(counts, strategy)
+        for category in DEPLOYMENT_PLOT_CATEGORIES:
+            values = [percentages[group][category] for group in GROUPS]
+            ax.bar(
+                x,
+                values,
+                bottom=bottom,
+                color=DEPLOYMENT_PLOT_COLORS[category],
+                edgecolor="white",
+                linewidth=COMPACT_PAPER_STROKE_WIDTH,
+                width=0.48,
+                label=DEPLOYMENT_PLOT_LABELS[category],
+            )
+            bottom += values
+        ax.set_xticks(x, _strategy_group_labels(counts, strategy))
+        ax.set_xlim(x[0] - 0.34, x[-1] + 0.34)
+        ax.set_ylabel("Percentage [%]")
+        ax.set_xlabel(INTERSECTION_XLABEL)
+        ax.set_ylim(0, 100)
+        ax.set_yticks(np.arange(0, 101, 20))
+        ax.set_axisbelow(True)
+        ax.grid(axis="y", color="#D9D9D9", linewidth=COMPACT_PAPER_STROKE_WIDTH)
+        ax.tick_params(axis="x", rotation=0, pad=1.5)
+        ax.legend(
+            frameon=False,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 1.01),
+            ncol=4,
+            columnspacing=1.0,
+            handlelength=1.25,
+            handletextpad=0.45,
+            borderaxespad=0,
+        )
+        fig.subplots_adjust(left=0.095, right=0.995, bottom=0.28, top=0.79)
+        slug = strategy.lower().replace("_", "-")
+        output = output_dir / f"interprotocol-campaign-{slug}.pdf"
+        fig.savefig(
+            output,
+            format="pdf",
+            bbox_inches="tight",
+            pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES,
+            metadata={
+                "Title": f"Inter-protocol deployment for {STRATEGY_PRETTY[strategy]}",
+                "Subject": "Inter-protocol IP-ID deployment percentages",
+                "Creator": "ipid-analysis",
+            },
+        )
+        plt.close(fig)
+        outputs.append(output)
+    return outputs
+
+
 def classify_campaign(
     run_manifest_path: Path,
     *,
     raw_root: Path,
     output_root: Path = PROCESSED_DATA_DIR / "interprotocol",
+    figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
 ) -> Path:
     manifest = load_run_manifest(run_manifest_path)
     output_dir = output_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
     output_dir.mkdir(parents=True, exist_ok=True)
+    figure_dir = figures_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
+    figure_dir.mkdir(parents=True, exist_ok=True)
     tables = []
     measurement_ids = {}
     for group in GROUPS:
@@ -504,6 +658,7 @@ def classify_campaign(
             measurement_dir / "interprotocol.pq",
             measurement_dir / "interprotocol.snapshot.yaml",
             output_dir / group,
+            figure_dir=figure_dir / group,
         )
         tables.append(pq.read_table(result).cast(RESULT_SCHEMA))
     combined = pa.concat_tables(tables) if len(tables) > 1 else tables[0]
@@ -545,8 +700,11 @@ def classify_campaign(
     (output_dir / "interprotocol-campaign-run.json").write_text(
         json.dumps(analysis_run, indent=2) + "\n"
     )
-    plot_campaign_deployments(counts, output_dir / "interprotocol-campaign-deployments.pdf")
-    plot_campaign_missing(counts, output_dir / "interprotocol-campaign-missing.pdf")
+    plot_campaign_deployments(counts, figure_dir / "interprotocol-campaign-deployments.pdf")
+    plot_campaign_missing(counts, figure_dir / "interprotocol-campaign-missing.pdf")
+    plot_campaign_strategy_deployments(counts, figure_dir)
+    (output_dir / "interprotocol-campaign-deployments.pdf").unlink(missing_ok=True)
+    (output_dir / "interprotocol-campaign-missing.pdf").unlink(missing_ok=True)
     return output_dir
 
 
@@ -683,18 +841,28 @@ def build_targets_command(
     campaign: Path,
     processed_root: Path = PROCESSED_DATA_DIR,
     output_root: Path | None = None,
+    figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
     threads: int = 0,
 ) -> None:
     typer.echo(
         build_target_files(
-            campaign, processed_root=processed_root, output_root=output_root, threads=threads
+            campaign,
+            processed_root=processed_root,
+            output_root=output_root,
+            figures_root=figures_root,
+            threads=threads,
         )
     )
 
 
 @app.command("classify")
-def classify_command(raw: Path, snapshot: Path, output_dir: Path) -> None:
-    typer.echo(classify_file(raw, snapshot, output_dir))
+def classify_command(
+    raw: Path,
+    snapshot: Path,
+    output_dir: Path,
+    figure_dir: Path | None = None,
+) -> None:
+    typer.echo(classify_file(raw, snapshot, output_dir, figure_dir=figure_dir))
 
 
 @app.command("analyse-campaign")
@@ -702,8 +870,16 @@ def analyse_campaign_command(
     run_manifest: Path,
     raw_root: Path = RAW_DATA_DIR / "ipid",
     output_root: Path = PROCESSED_DATA_DIR / "interprotocol",
+    figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
 ) -> None:
-    typer.echo(classify_campaign(run_manifest, raw_root=raw_root, output_root=output_root))
+    typer.echo(
+        classify_campaign(
+            run_manifest,
+            raw_root=raw_root,
+            output_root=output_root,
+            figures_root=figures_root,
+        )
+    )
 
 
 @app.command("validate")
