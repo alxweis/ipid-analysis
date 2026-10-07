@@ -10,7 +10,16 @@ triple cohort; an address whose third protocol has another strategy remains in
 the applicable pair cohort. `PER_CONNECTION` is intentionally excluded because
 a transport connection cannot be shared with ICMP or across TCP and UDP.
 
-Create a campaign file from `interprotocol-campaign.json.example`, then run:
+The normal analysis worker performs the complete workflow over S3. Each
+completed base sweep prints its canonical analysis manifest URI. The
+inter-protocol VM receives the ICMP, TCP, and UDP URI through one
+`make run-interprotocol` command; no campaign JSON or target copy is required.
+The worker consumes `interprotocol-target-jobs/<run-id>/request.json`, builds
+and uploads all four target intersections, and later consumes the final
+`interprotocol-jobs/<run-id>/request.json` to classify the measurements.
+
+The following commands remain available for focused validation and debugging,
+but are not part of the operator workflow:
 
 ```bash
 make build-interprotocol-targets ARGS="interprotocol-campaign.json"
@@ -24,18 +33,11 @@ Target files and `target-summary.json` are written below
 deployment Parquet, JSON counts, and PDF plots.  Triple measurements distinguish
 one shared counter, one shared protocol pair, and fully isolated protocol state.
 
-For a complete manual campaign, copy the generated target directory to the
-measurement VM and invoke its `make run-all-interprotocol` target. That runner
-measures the selected groups sequentially, persists an atomic resume manifest,
-and publishes one `interprotocol-jobs/<run-id>/request.json` only after every
-selected group has completed. The existing `workflow-worker` consumes that
-request independently of the normal ICMP/TCP/UDP workflow. It downloads all
-group measurements, produces the per-group results above, and additionally
-writes a combined campaign Parquet, JSON summary, run metadata, deployment PDF,
-and missing-sample PDF under
+The final job downloads all group measurements, produces the per-group results
+above, and additionally writes a combined campaign Parquet, JSON summary, run
+metadata, deployment PDF, and missing-sample PDF under
 `data/processed/interprotocol/<campaign-id>/runs/<run-id>/`. The same files are
-uploaded below `interprotocol-jobs/<run-id>/results/`. Nothing is automatically
-attached to `make run-all-{icmp,tcp,udp}`.
+uploaded below `interprotocol-jobs/<run-id>/results/`.
 
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
