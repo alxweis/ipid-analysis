@@ -31,6 +31,7 @@ from ipid_analysis.manifest import IpidMeasurement, resolve  # noqa: E402
 from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
     DEFAULT_MANIFEST,
+    PAPER_STRATEGY_ORDER,
     STRATEGY_COLORS,
     STRATEGY_NAMES,
     STRATEGY_PRETTY,
@@ -54,18 +55,7 @@ MODE_LABELS = {CONNECTION_MODE: "RT-based &\nConnection-oriented"}
 
 # Paper ordering follows the visual grouping used throughout the manuscript:
 # direct/simple behaviours, scoped counters, then the mass-only strategies.
-PLOT_STRATEGY_ORDER = (
-    "REFLECTION",
-    "CONSTANT",
-    "SINGLE",
-    "PER_DESTINATION",
-    "PER_CONNECTION",
-    "PER_BUCKET",
-    "MULTI",
-    "RANDOM",
-    "UNCLASSIFIED",
-    "NOT_ENOUGH_SAMPLES",
-)
+PLOT_STRATEGY_ORDER = PAPER_STRATEGY_ORDER
 
 OUTPUT_SCHEMA = pa.schema(
     [

@@ -14,6 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 from matplotlib.ticker import MultipleLocator  # noqa: E402
 
 from ipid_analysis.caida_itdk import ITDKDataset  # noqa: E402
@@ -21,8 +22,8 @@ from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
 from ipid_analysis.manifest import IpidMeasurement  # noqa: E402
 from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
 from ipid_analysis.strategies import (  # noqa: E402
+    PAPER_STRATEGY_ORDER,
     STRATEGY_COLORS,
-    STRATEGY_NAMES,
     STRATEGY_PRETTY,
 )
 from ipid_analysis.strategy_merge import StrategyMerge  # noqa: E402
@@ -31,7 +32,8 @@ TRANSIT_ROLE = "Transit-Observed"
 NO_TRANSIT_ROLE = "No Transit Evidence"
 ROLE_ORDER = (TRANSIT_ROLE, NO_TRANSIT_ROLE)
 NON_STRATEGIES = frozenset({"UNCLASSIFIED", "NOT_ENOUGH_SAMPLES"})
-PLOT_STRATEGIES = tuple(name for name in STRATEGY_NAMES if name != "NOT_ENOUGH_SAMPLES")
+PLOT_STRATEGIES = tuple(name for name in PAPER_STRATEGY_ORDER if name != "NOT_ENOUGH_SAMPLES")
+DISCORDANT_X_LABEL = "Discordant Nodes [% (#)]"
 
 
 @dataclass(frozen=True)
@@ -118,64 +120,111 @@ def _role_plot_data(rows: list[tuple[str, str, int]]) -> dict[str, dict[str, flo
 
 def _plot_roles(percentages: dict[str, dict[str, float]], output: Path) -> None:
     configure_paper_style()
-    fig, ax = plt.subplots(figsize=(7.0, 1.75))
-    plot_roles = (NO_TRANSIT_ROLE, TRANSIT_ROLE)
-    y_positions = range(len(plot_roles))
-    used = [
-        name
-        for name in PLOT_STRATEGIES
-        if any(percentages[role].get(name, 0.0) > 0 for role in plot_roles)
-    ]
-    for y, role in zip(y_positions, plot_roles):
+    fig, ax = plt.subplots(figsize=(7.16, 2.45))
+    plot_roles = (TRANSIT_ROLE, NO_TRANSIT_ROLE)
+    bar_height = 0.38
+    y_positions = {
+        role: float(len(plot_roles) - index - 1) for index, role in enumerate(plot_roles)
+    }
+    for role in plot_roles:
         left = 0.0
-        for strategy in used:
+        for strategy in PLOT_STRATEGIES:
             value = percentages[role].get(strategy, 0.0)
+            if value <= 0:
+                continue
             ax.barh(
-                y,
+                y_positions[role],
                 value,
                 left=left,
-                height=0.52,
+                height=bar_height,
                 color=STRATEGY_COLORS[strategy],
                 edgecolor="none",
-                label=STRATEGY_PRETTY[strategy] if y == 0 else None,
+                zorder=2,
             )
-            if value >= 2.0:
+            if value >= 1.5:
                 ax.text(
                     left + value / 2.0,
-                    y,
-                    f"{value:.0f}",
+                    y_positions[role],
+                    _label_percentage(value),
                     ha="center",
                     va="center",
                     fontsize=9,
+                    color="#111111",
+                    zorder=3,
                 )
             left += value
     ax.set_xlim(0, 100)
-    ax.set_yticks(list(y_positions))
-    ax.set_yticklabels(["No Transit\nEvidence", "Transit-Observed"])
+    ax.set_ylim(-0.52, len(plot_roles) - 0.48)
+    ax.set_yticks(
+        [y_positions[role] for role in plot_roles],
+        ["Transit-Observed", "No Transit\nEvidence"],
+    )
     ax.set_xlabel("IP-ID Selection Strategy [%]")
     ax.set_ylabel("Observed Network Role")
+    ax.xaxis.set_major_locator(MultipleLocator(20))
     ax.xaxis.set_minor_locator(MultipleLocator(5))
-    ax.grid(axis="x", linestyle="--", linewidth=0.45, alpha=0.5)
+    ax.tick_params(axis="x", which="major", length=5, width=0.8)
+    ax.tick_params(axis="x", which="minor", length=2.8, width=0.65)
+    ax.grid(
+        axis="x",
+        which="major",
+        color="#BDBDBD",
+        linestyle="--",
+        linewidth=0.5,
+        alpha=0.7,
+    )
     ax.set_axisbelow(True)
-    if used:
-        handles, labels = ax.get_legend_handles_labels()
-        ax.legend(
-            handles,
-            labels,
-            loc="lower center",
-            bbox_to_anchor=(0.5, 1.02),
-            ncol=min(5, len(used)),
-            frameon=False,
-            handlelength=1.1,
-            columnspacing=0.9,
+    handles = [
+        Patch(
+            facecolor=STRATEGY_COLORS[strategy],
+            edgecolor="none",
+            label=STRATEGY_PRETTY[strategy],
         )
+        for strategy in PLOT_STRATEGIES
+    ]
+    ax.legend(
+        handles=handles,
+        ncol=min(5, len(handles)),
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.035),
+        frameon=False,
+        borderaxespad=0,
+        columnspacing=1.25,
+        handlelength=1.45,
+        handletextpad=0.4,
+    )
+    fig.subplots_adjust(left=0.20, right=0.995, bottom=0.24, top=0.68)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, bbox_inches="tight", pad_inches=0.025)
+    fig.savefig(
+        output,
+        bbox_inches="tight",
+        pad_inches=0.02,
+        metadata={
+            "Title": "Observed network role by IP-ID selection strategy",
+            "Subject": "CAIDA ITDK transit evidence and IP-ID strategy",
+            "Creator": "ipid-analysis",
+        },
+    )
     plt.close(fig)
 
 
 def _pretty_combination(value: str) -> str:
     return " + ".join(STRATEGY_PRETTY.get(part, part) for part in value.split(" + "))
+
+
+def _label_percentage(value: float) -> str:
+    if value < 1.0:
+        return f"{value:.1f}"
+    return f"{value:.0f}"
+
+
+def _format_percentage(value: float) -> str:
+    """Format up to four decimal places while removing insignificant zeros."""
+    return f"{value:.4f}".rstrip("0").rstrip(".")
+
+
+def _combination_value_label(percentage: float, count: int) -> str:
+    return f"{_format_percentage(percentage)} ({count})"
 
 
 def _plot_combinations(rows: list[tuple[str, int, float]], output: Path) -> None:
@@ -190,29 +239,64 @@ def _plot_combinations(rows: list[tuple[str, int, float]], output: Path) -> None
             )
         )
     height = max(2.0, 0.35 * max(len(top), 1) + 0.65)
-    fig, ax = plt.subplots(figsize=(6.0, height))
+    fig, ax = plt.subplots(figsize=(7.16, height))
     if top:
-        labels = [_pretty_combination(str(row[0])) for row in reversed(top)]
-        percentages = [float(row[2]) for row in reversed(top)]
-        bars = ax.barh(range(len(top)), percentages, color="#799ABE", height=0.65)
+        reversed_top = list(reversed(top))
+        labels = [_pretty_combination(str(row[0])) for row in reversed_top]
+        counts = [int(row[1]) for row in reversed_top]
+        percentages = [float(row[2]) for row in reversed_top]
+        bars = ax.barh(
+            range(len(top)),
+            percentages,
+            color=STRATEGY_COLORS["CONSTANT"],
+            height=0.38,
+            edgecolor="none",
+            zorder=2,
+        )
         ax.set_yticks(range(len(top)))
         ax.set_yticklabels(labels)
-        ax.set_xlabel("Discordant Nodes [%]")
-        ax.set_xlim(0, max(percentages) * 1.18 if percentages else 1)
-        for bar, value in zip(bars, percentages):
+        ax.set_ylim(-0.52, len(top) - 0.48)
+        ax.set_xlabel(DISCORDANT_X_LABEL)
+        maximum = max(percentages) if percentages else 1.0
+        axis_maximum = 100.0 if maximum >= 80.0 else maximum * 1.25
+        ax.set_xlim(0, axis_maximum)
+        ax.tick_params(axis="x", which="major", length=5, width=0.8)
+        ax.grid(
+            axis="x",
+            which="major",
+            color="#BDBDBD",
+            linestyle="--",
+            linewidth=0.5,
+            alpha=0.7,
+        )
+        ax.set_axisbelow(True)
+        for bar, value, count in zip(bars, percentages, counts):
+            inside = value >= 0.92 * axis_maximum
             ax.text(
-                bar.get_width(),
+                bar.get_width() - 0.01 * axis_maximum if inside else bar.get_width(),
                 bar.get_y() + bar.get_height() / 2,
-                f" {value:.1f}",
+                ("" if inside else " ") + _combination_value_label(value, count),
+                ha="right" if inside else "left",
                 va="center",
                 fontsize=9,
+                color="#111111",
+                zorder=3,
             )
     else:
         ax.text(0.5, 0.5, "No discordant multi-interface nodes", ha="center", va="center")
         ax.set_axis_off()
-    ax.spines[["top", "right"]].set_visible(False)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, bbox_inches="tight", pad_inches=0.025)
+    fig.subplots_adjust(left=0.25, right=0.995, bottom=0.24, top=0.98)
+    fig.savefig(
+        output,
+        bbox_inches="tight",
+        pad_inches=0.02,
+        metadata={
+            "Title": "Discordant IP-ID strategy combinations",
+            "Subject": "Strategy combinations among discordant CAIDA ITDK alias sets",
+            "Creator": "ipid-analysis",
+        },
+    )
     plt.close(fig)
 
 
