@@ -126,6 +126,65 @@ sample fails instead of silently using the full ZMap population. Historical
 manifests without this declaration retain their previous coverage behavior.
 Deploy this support before enabling SYN-ACK sampling on the measurement VMs.
 
+### CAIDA ITDK role and cross-interface analysis
+
+Normal manifest postprocessing automatically joins the canonical merged
+stateless strategy result, and the TCP RT-based connection result when present,
+to a pinned CAIDA IPv4 ITDK release. The default is release `2025-08` and its
+`midar-iff-snmp-tnt` topology. On the first analysis job, the public
+`midar-iff-snmp-tnt.ifaces.bz2` and `README.txt` are downloaded and converted to
+a reusable Parquet lookup below:
+
+```text
+data/raw/caida-itdk/2025-08/midar-iff-snmp-tnt/
+```
+
+On the deployed analysis VM, `data/raw` is the S3-mounted
+`/mnt/data01/ipid-analysis/data/raw`, so the large source and lookup do not use
+the small root filesystem. Prepare the cache explicitly with:
+
+```bash
+make prepare-itdk ARGS="--release 2025-08 --topology midar-iff-snmp-tnt"
+```
+
+Private or not-yet-public releases can be imported without changing the
+analysis code:
+
+```bash
+make prepare-itdk ARGS="--release 2026-03 \
+  --source-dir /path/to/private/2026-03 \
+  --topology midar-iff-snmp-tnt"
+```
+
+The worker and `make analyse` read the same settings from
+`IPID_ANALYSIS_ITDK_RELEASE`, `IPID_ANALYSIS_ITDK_TOPOLOGY`,
+`IPID_ANALYSIS_ITDK_SOURCE_DIR`, and `IPID_ANALYSIS_ITDK_IFACES`. Set
+`IPID_ANALYSIS_SKIP_ITDK=1` only when deliberately running the legacy analysis
+without ITDK output.
+
+The role plot contains only ITDK-matched addresses and uses two exhaustive
+groups: `Transit-Observed` is `T=true` with either value of `D`, while
+`No Transit Evidence` is `T=false` with either value of `D`. Unmatched addresses
+are reported as coverage but excluded from both bars. The JSON additionally
+reports all four `T`/`D` combinations. `UNCLASSIFIED` and
+`NOT_ENOUGH_SAMPLES` remain distinct in Parquet and raw JSON counts but share
+one `Unclassified` segment in the compact paper plot.
+
+For alias-set consistency, only ITDK nodes with at least two measured,
+classified interfaces are evaluated. The outputs report strict whole-node
+agreement, equally node-weighted pairwise agreement, the transit-evidenced
+subset, and the most frequent strategy combinations among discordant nodes.
+Artifacts are stored beside their source strategy result as:
+
+```text
+*_itdk-strategy-join.pq
+*_itdk-role-strategy-distribution.pq
+*_itdk-role-by-strategy.{pdf,json}
+*_itdk-node-consistency.pq
+*_itdk-discordant-strategy-combinations.{pq,pdf}
+*_itdk-consistency-summary.json
+```
+
 ## Strategy classification by measurement scale
 
 Base measurements classify the position-dependent or cheaply identifiable

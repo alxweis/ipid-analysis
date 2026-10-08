@@ -70,6 +70,12 @@ data: requirements
 analyse:
 	$(PYTHON_INTERPRETER) ipid_analysis/postprocess.py $(filter-out analyse,$(MAKECMDGOALS)) $(ARGS)
 
+## Download/import and cache one CAIDA IPv4 ITDK release
+##   usage: make prepare-itdk ARGS="--release 2025-08 --topology midar-iff-snmp-tnt"
+.PHONY: prepare-itdk
+prepare-itdk:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.caida_itdk $(ARGS)
+
 # allow passing the manifest as a goal (`make analyse data.json`): make it a no-op target
 %.json:
 	@:

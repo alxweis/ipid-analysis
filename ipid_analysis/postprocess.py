@@ -28,6 +28,9 @@ TCP campaigns with a connection-oriented RT-based base measurement produce the
 same OS heatmap for that individual strategy result.
 TCP campaigns also produce a paper plot of the merged strategy distribution
 split by the ZMap ``synack`` and ``rst`` reply classifications.
+Canonical merged results and the TCP RT-based connection result are joined to
+the configured CAIDA ITDK release to produce observed transit-role plots and
+cross-interface strategy-consistency artifacts.
 Every available RT-base/fixed-interval-base pair is also compared with the
 three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
@@ -39,6 +42,13 @@ from pathlib import Path
 from loguru import logger
 import typer
 
+from ipid_analysis.caida_itdk import (
+    DEFAULT_RELEASE as DEFAULT_ITDK_RELEASE,
+)
+from ipid_analysis.caida_itdk import (
+    DEFAULT_TOPOLOGY as DEFAULT_ITDK_TOPOLOGY,
+)
+from ipid_analysis.caida_itdk import prepare_itdk
 from ipid_analysis.comparison import iter_base_comparisons
 from ipid_analysis.config import RAW_DATA_DIR
 from ipid_analysis.coverage import write_coverage
@@ -57,6 +67,7 @@ from ipid_analysis.paper_figures import (
     render_strategy_intersection,
 )
 from ipid_analysis.plot_increments import render as render_increments_plot
+from ipid_analysis.plot_itdk_strategy import render_itdk_analysis
 from ipid_analysis.plot_os_group_strategy import (
     render as render_os_strategy_plot,
 )
@@ -105,10 +116,47 @@ def main(
         None,
         help="GeoLite2/GeoIP2 .mmdb for continent plots; also read from IPID_MAXMIND_DB",
     ),
+    itdk_release: str = typer.Option(
+        DEFAULT_ITDK_RELEASE,
+        envvar="IPID_ANALYSIS_ITDK_RELEASE",
+        help="pinned CAIDA ITDK release",
+    ),
+    itdk_topology: str = typer.Option(
+        DEFAULT_ITDK_TOPOLOGY,
+        envvar="IPID_ANALYSIS_ITDK_TOPOLOGY",
+        help="CAIDA IPv4 topology prefix",
+    ),
+    itdk_source_dir: Path | None = typer.Option(
+        None,
+        envvar="IPID_ANALYSIS_ITDK_SOURCE_DIR",
+        help="local ITDK release directory instead of public download",
+    ),
+    itdk_ifaces: Path | None = typer.Option(
+        None,
+        envvar="IPID_ANALYSIS_ITDK_IFACES",
+        help="local ITDK .ifaces.bz2 instead of public download",
+    ),
+    skip_itdk: bool = typer.Option(
+        False,
+        "--skip-itdk",
+        envvar="IPID_ANALYSIS_SKIP_ITDK",
+        help="skip automatic CAIDA ITDK analysis",
+    ),
 ) -> None:
     manifest = load_manifest(manifest_path)
     measurements = iter_ipid_measurements(manifest)
     logger.info(f"{len(measurements)} ipid measurement(s) in {manifest_path}")
+
+    itdk = None
+    if skip_itdk:
+        logger.info("CAIDA ITDK analysis disabled by --skip-itdk")
+    else:
+        itdk = prepare_itdk(
+            release=itdk_release,
+            topology=itdk_topology,
+            source_dir=itdk_source_dir,
+            ifaces=itdk_ifaces,
+        )
 
     comp = None if compression == "none" else compression
     ok, skipped = 0, 0
@@ -138,9 +186,7 @@ def main(
             compression=comp,
             threads=threads,
         )
-        logger.success(
-            f"automatic Mass missing-reply analysis -> {missing_outputs['pdf']}"
-        )
+        logger.success(f"automatic Mass missing-reply analysis -> {missing_outputs['pdf']}")
     except (FileNotFoundError, ValueError) as exc:
         logger.warning(f"automatic Mass missing-reply analysis failed ({exc}) -- skipped")
 
@@ -173,6 +219,17 @@ def main(
         "tcp.ipid.connection.rt-based.base",
     )
     if connection is not None:
+        if itdk is not None:
+            try:
+                outputs = render_itdk_analysis(connection, itdk, threads=threads)
+                logger.success(
+                    f"[{connection.target}] CAIDA ITDK role plot -> {outputs.role_pdf}; "
+                    f"cross-interface consistency -> {outputs.consistency_json}"
+                )
+            except FileNotFoundError as exc:
+                logger.warning(
+                    f"[{connection.target}] missing CAIDA ITDK analysis input ({exc}) -- skipped"
+                )
         os_measurement_id = resolve_os_measurement_id(manifest, "tcp")
         if os_measurement_id is not None:
             try:
@@ -202,6 +259,13 @@ def main(
                 threads=threads,
             )
             render_merged_strategies_plot(merge)
+            itdk_message = ""
+            if itdk is not None:
+                itdk_outputs = render_itdk_analysis(merge, itdk, threads=threads)
+                itdk_message = (
+                    f"; CAIDA ITDK role plot -> {itdk_outputs.role_pdf}; "
+                    f"cross-interface consistency -> {itdk_outputs.consistency_json}"
+                )
             refinement_pdf, _, _ = render_strategy_refinement_plot(
                 merge,
                 compression=comp,
@@ -253,7 +317,7 @@ def main(
                 f"[{merge.target}] {stats.rows:,} merged IPs, "
                 f"{stats.not_enough_samples:,} not enough samples -> {output}; "
                 f"strategy refinement -> {refinement_pdf}"
-                f"{connection_message}{tcp_flags_message}{os_message}"
+                f"{connection_message}{tcp_flags_message}{os_message}{itdk_message}"
             )
             merged_ok += 1
         except FileNotFoundError as exc:
