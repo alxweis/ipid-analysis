@@ -10,7 +10,14 @@ import pyarrow.parquet as pq
 
 from ipid_analysis.caida_itdk import prepare_itdk
 from ipid_analysis.manifest import IpidMeasurement
-from ipid_analysis.plot_itdk_strategy import render_itdk_analysis
+from ipid_analysis.plot_itdk_strategy import (
+    DISCORDANT_X_LABEL,
+    PLOT_STRATEGIES,
+    _combination_value_label,
+    _format_percentage,
+    render_itdk_analysis,
+)
+from ipid_analysis.plot_strategy_refinement import PLOT_STRATEGY_ORDER
 
 IFACES = """\
 192.0.2.1 N1 L1 T
@@ -27,6 +34,20 @@ not-an-ip N10 D
 
 
 class CaidaITDKTest(unittest.TestCase):
+    def test_paper_order_and_discordant_labels_match_manuscript_style(self):
+        self.assertEqual(
+            PLOT_STRATEGIES,
+            tuple(
+                strategy for strategy in PLOT_STRATEGY_ORDER if strategy != "NOT_ENOUGH_SAMPLES"
+            ),
+        )
+        self.assertEqual(DISCORDANT_X_LABEL, "Discordant Nodes [% (#)]")
+        self.assertEqual(_format_percentage(30.000000), "30")
+        self.assertEqual(_format_percentage(30.235252), "30.2353")
+        self.assertEqual(_format_percentage(50.4200000), "50.42")
+        self.assertEqual(_format_percentage(0.00006), "0.0001")
+        self.assertEqual(_combination_value_label(40.0, 2), "40 (2)")
+
     def _prepare(self, root: Path):
         source = root / "private" / "custom.ifaces.bz2"
         source.parent.mkdir(parents=True, exist_ok=True)

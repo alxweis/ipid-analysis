@@ -117,6 +117,23 @@ STRATEGY_COLORS = {
     "NOT_ENOUGH_SAMPLES": "#B0B0B0",  # medium-light grey
 }
 
+# Shared manuscript order: direct/simple behaviours, scoped counters, then
+# strategies that require the larger follow-up measurements.  Paper figures
+# should derive their legends and stack order from this tuple so that the same
+# color always appears in the same relative position across panels.
+PAPER_STRATEGY_ORDER = (
+    "REFLECTION",
+    "CONSTANT",
+    "SINGLE",
+    "PER_DESTINATION",
+    "PER_CONNECTION",
+    "PER_BUCKET",
+    "MULTI",
+    "RANDOM",
+    "UNCLASSIFIED",
+    "NOT_ENOUGH_SAMPLES",
+)
+
 OUTPUT_SCHEMA = pa.schema(
     [
         ("IP_ADDR", pa.string()),
