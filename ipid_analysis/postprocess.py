@@ -33,6 +33,8 @@ the configured CAIDA ITDK release to produce observed transit-role plots and
 cross-interface strategy-consistency artifacts. When the protocol campaign also
 contains an OS measurement, the same ITDK roles are joined to resolved canonical
 OS groups and rendered as a second compact observed-role distribution.
+The same canonical IP-ID results are joined to observed roles extracted from
+the 28 complete UTC days of RIPE Atlas traceroutes preceding the campaign.
 Every available RT-base/fixed-interval-base pair is also compared with the
 three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
@@ -81,6 +83,7 @@ from ipid_analysis.plot_os_group_strategy import (
     resolve_os_measurement_id,
 )
 from ipid_analysis.plot_probing_intervals import render as render_intervals_plot
+from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
 from ipid_analysis.plot_strategies import (
     render as render_strategies_plot,
 )
@@ -97,6 +100,15 @@ from ipid_analysis.plot_tcp_flags_strategy import render as render_tcp_flags_str
 from ipid_analysis.probing_intervals import extract_probing_intervals
 from ipid_analysis.random_reproducibility_analysis import (
     evaluate_random_reproducibility,
+)
+from ipid_analysis.ripe_atlas import (
+    DEFAULT_DUMP_SAMPLES,
+    infer_campaign_start,
+    parse_datetime,
+    prepare_ripe_atlas,
+)
+from ipid_analysis.ripe_atlas import (
+    DEFAULT_SOURCE as DEFAULT_RIPE_SOURCE,
 )
 from ipid_analysis.strategies import classify_measurement
 from ipid_analysis.strategy_merge import iter_strategy_merges, merge_strategies
@@ -145,6 +157,38 @@ def main(
         envvar="IPID_ANALYSIS_SKIP_ITDK",
         help="skip automatic CAIDA ITDK analysis",
     ),
+    ripe_source: str = typer.Option(
+        DEFAULT_RIPE_SOURCE,
+        envvar="IPID_ANALYSIS_RIPE_SOURCE",
+        help="RIPE Atlas source: daily-dumps or api",
+    ),
+    ripe_measurement_ids: Path | None = typer.Option(
+        None,
+        envvar="IPID_ANALYSIS_RIPE_MEASUREMENT_IDS",
+        help="measurement ID file required for the RIPE API source",
+    ),
+    ripe_input_dir: Path | None = typer.Option(
+        None,
+        envvar="IPID_ANALYSIS_RIPE_INPUT_DIR",
+        help="local RIPE JSONL/BZip2 directory instead of downloading",
+    ),
+    ripe_campaign_start: str | None = typer.Option(
+        None,
+        envvar="IPID_ANALYSIS_RIPE_CAMPAIGN_START",
+        help="override campaign start (ISO-8601); normally inferred from the manifest",
+    ),
+    ripe_dump_samples: int = typer.Option(
+        DEFAULT_DUMP_SAMPLES,
+        min=1,
+        envvar="IPID_ANALYSIS_RIPE_DUMP_SAMPLES",
+        help="evenly distributed hourly daily-dump files in the RIPE window",
+    ),
+    skip_ripe: bool = typer.Option(
+        False,
+        "--skip-ripe",
+        envvar="IPID_ANALYSIS_SKIP_RIPE",
+        help="skip automatic RIPE Atlas analysis",
+    ),
 ) -> None:
     manifest = load_manifest(manifest_path)
     measurements = iter_ipid_measurements(manifest)
@@ -159,6 +203,23 @@ def main(
             topology=itdk_topology,
             source_dir=itdk_source_dir,
             ifaces=itdk_ifaces,
+        )
+
+    ripe = None
+    if skip_ripe:
+        logger.info("RIPE Atlas analysis disabled by --skip-ripe")
+    else:
+        campaign_start = (
+            parse_datetime(ripe_campaign_start)
+            if ripe_campaign_start is not None
+            else infer_campaign_start(manifest)
+        )
+        ripe = prepare_ripe_atlas(
+            campaign_start=campaign_start,
+            source=ripe_source,
+            measurement_ids_file=ripe_measurement_ids,
+            input_dir=ripe_input_dir,
+            dump_samples=ripe_dump_samples,
         )
 
     comp = None if compression == "none" else compression
@@ -222,6 +283,19 @@ def main(
         "tcp.ipid.connection.rt-based.base",
     )
     if connection is not None:
+        if ripe is not None:
+            try:
+                outputs = render_ripe_atlas_analysis(
+                    connection,
+                    ripe,
+                    itdk=itdk,
+                    threads=threads,
+                )
+                logger.success(f"[{connection.target}] RIPE Atlas role plot -> {outputs.role_pdf}")
+            except (FileNotFoundError, ValueError) as exc:
+                logger.warning(
+                    f"[{connection.target}] RIPE Atlas role analysis failed ({exc}) -- skipped"
+                )
         if itdk is not None:
             try:
                 outputs = render_itdk_analysis(connection, itdk, threads=threads)
@@ -287,6 +361,20 @@ def main(
                     f"; CAIDA ITDK role plot -> {itdk_outputs.role_pdf}; "
                     f"cross-interface consistency -> {itdk_outputs.consistency_json}"
                 )
+            ripe_message = ""
+            if ripe is not None:
+                try:
+                    ripe_outputs = render_ripe_atlas_analysis(
+                        merge,
+                        ripe,
+                        itdk=itdk,
+                        threads=threads,
+                    )
+                    ripe_message = f"; RIPE Atlas role plot -> {ripe_outputs.role_pdf}"
+                except (FileNotFoundError, ValueError) as exc:
+                    logger.warning(
+                        f"[{merge.target}] RIPE Atlas role analysis failed ({exc}) -- skipped"
+                    )
             refinement_pdf, _, _ = render_strategy_refinement_plot(
                 merge,
                 compression=comp,
@@ -357,7 +445,7 @@ def main(
                 f"{stats.not_enough_samples:,} not enough samples -> {output}; "
                 f"strategy refinement -> {refinement_pdf}"
                 f"{connection_message}{tcp_flags_message}{os_message}"
-                f"{itdk_message}{itdk_os_message}"
+                f"{itdk_message}{itdk_os_message}{ripe_message}"
             )
             merged_ok += 1
         except FileNotFoundError as exc:

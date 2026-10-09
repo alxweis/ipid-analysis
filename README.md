@@ -205,6 +205,79 @@ Artifacts are stored beside their source strategy result as:
 *_itdk-consistency-summary.json
 ```
 
+### RIPE Atlas observed-role analysis
+
+Normal manifest postprocessing also derives a second observed network-role
+lookup from public RIPE Atlas traceroutes. The campaign start is inferred from
+the timestamped ZMap ID. The lookup always covers the 28 complete UTC days
+immediately before that start; it never waits for data collected after the
+IP-ID campaign:
+
+```text
+[UTC-day(campaign start) - 28 days, UTC-day(campaign start))
+```
+
+The default `daily-dumps` source downloads four reproducibly and evenly
+distributed hourly traceroute archives from that fixed window. Current hourly
+archives are commonly 2--3 GB each; downloading all 672 hours would otherwise
+exceed 1.5 TB for one campaign. Increase `--dump-samples` when deliberately
+allocating more network, storage, and processing capacity. Raw downloads are
+shared and retained below the S3-mounted analysis data directory:
+
+```text
+data/raw/ripe-atlas/daily-dumps/YYYY-MM-DD/
+```
+
+The compact reusable lookup and complete source metadata are stored below:
+
+```text
+data/processed/ripe-atlas/<window>/daily-dumps-s4/
+```
+
+Prepare a window explicitly with:
+
+```bash
+make prepare-ripe-atlas ARGS="--campaign-start 2026-09-21T02:09:12Z"
+```
+
+For explicitly selected public RIPE measurements, use the REST API instead.
+The ID file may contain comma- or whitespace-separated measurement IDs:
+
+```bash
+make prepare-ripe-atlas ARGS="--campaign-start 2026-09-21T02:09:12Z \
+  --source api --measurement-ids-file measurements.txt"
+```
+
+Previously downloaded or privately supplied RIPE JSONL/BZip2 files can be
+imported with `--input-dir`. Automatic postprocessing reads the corresponding
+`IPID_ANALYSIS_RIPE_SOURCE`, `IPID_ANALYSIS_RIPE_MEASUREMENT_IDS`,
+`IPID_ANALYSIS_RIPE_INPUT_DIR`, and `IPID_ANALYSIS_RIPE_DUMP_SAMPLES`
+settings. Set `IPID_ANALYSIS_SKIP_RIPE=1`
+only when deliberately omitting the analysis.
+
+Only globally routable IPv4 replies enter the lookup. An address is
+`Transit-Observed` when it replied as an intermediate hop at least once;
+addresses that replied as a traceroute destination but were never intermediate
+hops are `Destination-Only`. An address observed in both roles remains
+`Transit-Observed`. Unmatched IP-ID targets are reported as coverage and are
+not treated as endpoints. Every matched IP address contributes once to its
+role's strategy distribution, independently of its RIPE observation count.
+
+Canonical stateless results and the TCP connection-oriented RT-base result
+produce these artifacts beside the corresponding CAIDA results:
+
+```text
+*_ripe-atlas-strategy-join.pq
+*_ripe-atlas-role-strategy-distribution.pq
+*_ripe-atlas-role-by-strategy.{pdf,json}
+*_caida-ripe-role-agreement.pq
+```
+
+The PDF uses the same strategy order, colors, typography, and compact legend as
+the existing manuscript figures. When ITDK is enabled, the agreement artifact
+reports the dual-matched populations where both, only CAIDA, only RIPE, or
+neither source observed transit behavior.
+
 ## Strategy classification by measurement scale
 
 Base measurements classify the position-dependent or cheaply identifiable

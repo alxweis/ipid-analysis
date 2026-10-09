@@ -76,6 +76,12 @@ analyse:
 prepare-itdk:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.caida_itdk $(ARGS)
 
+## Download/import and cache RIPE Atlas traceroute roles for one campaign
+##   usage: make prepare-ripe-atlas ARGS="--campaign-start 2026-09-21T02:09:12Z"
+.PHONY: prepare-ripe-atlas
+prepare-ripe-atlas:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.ripe_atlas $(ARGS)
+
 # allow passing the manifest as a goal (`make analyse data.json`): make it a no-op target
 %.json:
 	@:
