@@ -170,6 +170,23 @@ reports all four `T`/`D` combinations. `UNCLASSIFIED` and
 `NOT_ENOUGH_SAMPLES` remain distinct in Parquet and raw JSON counts but share
 one `Unclassified` segment in the compact paper plot.
 
+When the protocol manifest contains an OS measurement, postprocessing also
+creates an `Observed Network Role` by `OS Distribution` plot for the same
+canonical measured population. It joins the ITDK role with the reusable
+`data/processed/os/<os-id>/os-groups.pq` lookup. Only canonical
+`OS_STATUS=resolved` results enter the bars; missing, ambiguous, and
+unclassified OS measurements are excluded rather than mislabeled as an OS and
+their role-specific coverage is recorded in the JSON sidecar. Each role is
+normalized independently over its resolved-OS intersection.
+
+The categorical OS order and color mapping are fixed across ICMP, UDP-DNS, TCP
+no-connection, and TCP connection-oriented plots. If at most ten OS groups are
+represented, all are shown. Otherwise, the nine groups with the largest mean
+role-normalized share are retained and all other resolved groups are combined
+as `Other`. Selected groups still follow the fixed manuscript order, so an OS
+keeps the same relative legend position and color whenever it is present. This
+keeps the two-row legend compact without discarding the tail population.
+
 For alias-set consistency, only ITDK nodes with at least two measured,
 classified interfaces are evaluated. The outputs report strict whole-node
 agreement, equally node-weighted pairwise agreement, the transit-evidenced
@@ -180,6 +197,9 @@ Artifacts are stored beside their source strategy result as:
 *_itdk-strategy-join.pq
 *_itdk-role-strategy-distribution.pq
 *_itdk-role-by-strategy.{pdf,json}
+*_itdk-os-role-join.pq
+*_itdk-role-os-distribution.pq
+*_itdk-role-by-os.{pdf,json}
 *_itdk-node-consistency.pq
 *_itdk-discordant-strategy-combinations.{pq,pdf}
 *_itdk-consistency-summary.json

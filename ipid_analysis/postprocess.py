@@ -30,7 +30,9 @@ TCP campaigns also produce a paper plot of the merged strategy distribution
 split by the ZMap ``synack`` and ``rst`` reply classifications.
 Canonical merged results and the TCP RT-based connection result are joined to
 the configured CAIDA ITDK release to produce observed transit-role plots and
-cross-interface strategy-consistency artifacts.
+cross-interface strategy-consistency artifacts. When the protocol campaign also
+contains an OS measurement, the same ITDK roles are joined to resolved canonical
+OS groups and rendered as a second compact observed-role distribution.
 Every available RT-base/fixed-interval-base pair is also compared with the
 three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
@@ -67,6 +69,7 @@ from ipid_analysis.paper_figures import (
     render_strategy_intersection,
 )
 from ipid_analysis.plot_increments import render as render_increments_plot
+from ipid_analysis.plot_itdk_os import render_itdk_os_analysis
 from ipid_analysis.plot_itdk_strategy import render_itdk_analysis
 from ipid_analysis.plot_os_group_strategy import (
     render as render_os_strategy_plot,
@@ -248,6 +251,24 @@ def main(
                     f"[{connection.target}] connection-oriented OS strategy heatmap "
                     f"failed ({exc}) -- skipped"
                 )
+            if itdk is not None:
+                try:
+                    outputs = render_itdk_os_analysis(
+                        connection,
+                        itdk,
+                        os_measurement_id,
+                        compression=comp,
+                        threads=threads,
+                    )
+                    logger.success(
+                        f"[{connection.target}] connection-oriented CAIDA ITDK OS role plot "
+                        f"-> {outputs.role_pdf}"
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    logger.warning(
+                        f"[{connection.target}] connection-oriented CAIDA ITDK OS role plot "
+                        f"failed ({exc}) -- skipped"
+                    )
 
     merged_ok, merged_skipped = 0, 0
     for merge in iter_strategy_merges(manifest):
@@ -272,6 +293,7 @@ def main(
                 threads=threads,
             )
             os_pdf = None
+            itdk_os_pdf = None
             os_measurement_id = resolve_os_measurement_id(manifest, merge.protocol)
             if os_measurement_id is not None:
                 try:
@@ -285,6 +307,20 @@ def main(
                     logger.warning(
                         f"[{merge.target}] OS strategy heatmap failed ({exc}) -- skipped"
                     )
+                if itdk is not None:
+                    try:
+                        itdk_os_outputs = render_itdk_os_analysis(
+                            merge,
+                            itdk,
+                            os_measurement_id,
+                            compression=comp,
+                            threads=threads,
+                        )
+                        itdk_os_pdf = itdk_os_outputs.role_pdf
+                    except (FileNotFoundError, ValueError) as exc:
+                        logger.warning(
+                            f"[{merge.target}] CAIDA ITDK OS role plot failed ({exc}) -- skipped"
+                        )
             tcp_flags_pdf = None
             connection_pdf = None
             if merge.protocol == "tcp":
@@ -310,6 +346,9 @@ def main(
                 else ""
             )
             os_message = f"; OS strategy heatmap -> {os_pdf}" if os_pdf is not None else ""
+            itdk_os_message = (
+                f"; CAIDA ITDK OS role plot -> {itdk_os_pdf}" if itdk_os_pdf is not None else ""
+            )
             tcp_flags_message = (
                 f"; TCP flags by strategy -> {tcp_flags_pdf}" if tcp_flags_pdf is not None else ""
             )
@@ -317,7 +356,8 @@ def main(
                 f"[{merge.target}] {stats.rows:,} merged IPs, "
                 f"{stats.not_enough_samples:,} not enough samples -> {output}; "
                 f"strategy refinement -> {refinement_pdf}"
-                f"{connection_message}{tcp_flags_message}{os_message}{itdk_message}"
+                f"{connection_message}{tcp_flags_message}{os_message}"
+                f"{itdk_message}{itdk_os_message}"
             )
             merged_ok += 1
         except FileNotFoundError as exc:

@@ -188,6 +188,67 @@ GROUP_INFO = {
     ),
 }
 
+# Stable order and color assignment for categorical OS paper figures.  The
+# priority prefix follows the common families in the measurement taxonomy and
+# the ordering used by the earlier manuscript prototype.  Remaining groups
+# retain the declaration order from GROUP_INFO, so additions at the end do not
+# disturb the established high-frequency categories.
+PAPER_OS_GROUP_PRIORITY = (
+    "ubuntu",
+    "debian",
+    "linux",
+    "rhel",
+    "centos",
+    "fedora",
+    "windows",
+    "freebsd",
+    "openbsd",
+    "cisco",
+    "huawei",
+    "mikrotik",
+    "juniper",
+    "fortinet",
+    "openwrt",
+    "ubiquiti",
+    "router",
+    "server",
+    "embedded",
+)
+PAPER_OS_GROUP_ORDER = PAPER_OS_GROUP_PRIORITY + tuple(
+    group for group in GROUP_INFO if group not in PAPER_OS_GROUP_PRIORITY
+)
+
+# Interleaved qualitative colors keep adjacent high-priority groups visually
+# distinct.  Mapping by the stable order means one OS group always has the same
+# color across protocols and figures.
+PAPER_OS_COLOR_PALETTE = (
+    "#E6C84F",
+    "#4E79A7",
+    "#F28E2B",
+    "#E15759",
+    "#76B7B2",
+    "#B07AA1",
+    "#59A14F",
+    "#ED7DB4",
+    "#9C755F",
+    "#86BCB6",
+    "#FF9DA7",
+    "#AF7AA1",
+    "#8CD17D",
+    "#B6992D",
+    "#499894",
+    "#D37295",
+    "#79706E",
+    "#D4A6C8",
+    "#FABFD2",
+    "#A0CBE8",
+)
+PAPER_OS_GROUP_COLORS = {
+    group: PAPER_OS_COLOR_PALETTE[index % len(PAPER_OS_COLOR_PALETTE)]
+    for index, group in enumerate(PAPER_OS_GROUP_ORDER)
+}
+PAPER_OS_OTHER_COLOR = "#A6A6A6"
+
 # Every canonical measurement tag maps to exactly one analysis group. Product
 # variants are combined only where the group represents the same vendor/family.
 GROUP_ONLY_IDENTIFIERS = frozenset({"brocade", "hpe-network", "extreme", "nokia", "dell"})
