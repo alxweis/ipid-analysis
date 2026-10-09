@@ -1,5 +1,6 @@
 import bz2
 from datetime import date, datetime, timezone
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -15,6 +16,7 @@ from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
 from ipid_analysis.ripe_atlas import (
     RipeAtlasDataset,
     _available_dump_days,
+    _download,
     build_role_lookup,
     campaign_window,
     infer_campaign_start,
@@ -22,6 +24,18 @@ from ipid_analysis.ripe_atlas import (
     sampled_available_dump_slots,
     sampled_dump_slots,
 )
+
+
+class _HTTPResponse(io.BytesIO):
+    def __init__(self, data: bytes, *, status: int):
+        super().__init__(data)
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
 
 
 def _record(
@@ -94,6 +108,36 @@ class RipeAtlasTest(unittest.TestCase):
         with patch("ipid_analysis.ripe_atlas.urlopen", return_value=response):
             days = _available_dump_days("https://example.invalid/dumps")
         self.assertEqual(days, (date(2026, 9, 9), date(2026, 9, 10)))
+
+    def test_download_retains_and_resumes_incomplete_stream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "dump.bz2"
+            with patch(
+                "ipid_analysis.ripe_atlas.urlopen",
+                return_value=_HTTPResponse(b"abc", status=200),
+            ):
+                with self.assertRaisesRegex(OSError, "3/5 bytes"):
+                    _download("https://example.invalid/dump", destination, expected_size=5)
+            self.assertFalse(destination.exists())
+            self.assertEqual(destination.with_suffix(".bz2.part").read_bytes(), b"abc")
+
+            with patch(
+                "ipid_analysis.ripe_atlas.urlopen",
+                return_value=_HTTPResponse(b"de", status=206),
+            ):
+                _download("https://example.invalid/dump", destination, expected_size=5)
+            self.assertEqual(destination.read_bytes(), b"abcde")
+
+    def test_download_recovers_truncated_final_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "dump.bz2"
+            destination.write_bytes(b"abc")
+            with patch(
+                "ipid_analysis.ripe_atlas.urlopen",
+                return_value=_HTTPResponse(b"de", status=206),
+            ):
+                _download("https://example.invalid/dump", destination, expected_size=5)
+            self.assertEqual(destination.read_bytes(), b"abcde")
 
     def test_daily_dump_slots_reject_missing_overlap(self):
         window = campaign_window(datetime(2026, 9, 21, 2, 9, 12, tzinfo=timezone.utc))
