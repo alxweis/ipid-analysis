@@ -16,7 +16,7 @@ import bz2
 from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from datetime import time as datetime_time
 import hashlib
 import ipaddress
@@ -47,10 +47,11 @@ DEFAULT_LOOKBACK_DAYS = 28
 DEFAULT_DUMP_SAMPLES = 4
 DEFAULT_DUMP_BASE_URL = "https://data-store.ripe.net/datasets/atlas-daily-dumps"
 DEFAULT_API_BASE_URL = "https://atlas.ripe.net/api/v2"
-RIPE_CACHE_VERSION = "1"
+RIPE_CACHE_VERSION = "2"
 _MEASUREMENT_TIMESTAMP_RE = re.compile(
     r"_(?P<stamp>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:$|[^0-9])"
 )
+_DUMP_DAY_RE = re.compile(r'href=["\'](?P<day>\d{4}-\d{2}-\d{2})/["\']')
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,48 @@ def sampled_dump_slots(window: RipeWindow, samples: int) -> tuple[datetime, ...]
     return tuple(slots)
 
 
+def sampled_available_dump_slots(
+    window: RipeWindow,
+    samples: int,
+    available_days: Iterable[date],
+) -> tuple[datetime, ...]:
+    """Select reproducible slots from available dump days inside *window*."""
+    days = tuple(
+        day
+        for day in sorted(set(available_days))
+        if window.start.date() <= day < window.end.date()
+    )
+    if not days:
+        raise FileNotFoundError(
+            "no RIPE Atlas daily dumps overlap the requested window "
+            f"[{window.start.date()}, {window.end.date()}); use --source api with "
+            "--measurement-ids-file, or provide --input-dir"
+        )
+    if not 1 <= samples <= len(days) * 24:
+        raise ValueError(f"RIPE dump samples must be in [1, {len(days) * 24}]")
+
+    slots: list[datetime] = []
+    used: set[datetime] = set()
+    for index in range(samples):
+        day_index = min(int((index + 0.5) * len(days) / samples), len(days) - 1)
+        hour = (index * 7) % 24
+        attempt = 0
+        while True:
+            candidate_day = days[(day_index + attempt // 24) % len(days)]
+            candidate_hour = (hour + attempt) % 24
+            slot = datetime.combine(
+                candidate_day,
+                datetime_time(candidate_hour),
+                tzinfo=timezone.utc,
+            )
+            if slot not in used:
+                break
+            attempt += 1
+        used.add(slot)
+        slots.append(slot)
+    return tuple(slots)
+
+
 def _dataset_paths(
     window: RipeWindow,
     source_key: str,
@@ -220,6 +263,26 @@ def _download(url: str, destination: Path, *, resume: bool = True) -> None:
         with partial.open(mode) as output:
             shutil.copyfileobj(response, output, length=8 * 1024 * 1024)
     partial.replace(destination)
+
+
+def _available_dump_days(base_url: str) -> tuple[date, ...]:
+    request = Request(
+        f"{base_url.rstrip('/')}/",
+        headers={"User-Agent": "ipid-analysis/ripe-atlas"},
+    )
+    with urlopen(request, timeout=120) as response:
+        listing = response.read().decode("utf-8", errors="replace")
+    days = tuple(
+        sorted(
+            {
+                datetime.strptime(match.group("day"), "%Y-%m-%d").date()
+                for match in _DUMP_DAY_RE.finditer(listing)
+            }
+        )
+    )
+    if not days:
+        raise ValueError(f"no dated RIPE Atlas daily-dump directories found at {base_url}")
+    return days
 
 
 def _copy_atomic(source: Path, destination: Path) -> None:
@@ -430,9 +493,22 @@ def _daily_dump_files(
     samples: int,
     raw_root: Path,
     base_url: str,
-) -> list[Path]:
+) -> tuple[list[Path], tuple[datetime, ...], tuple[date, ...]]:
+    available_days = _available_dump_days(base_url)
+    days_in_window = tuple(
+        day for day in available_days if window.start.date() <= day < window.end.date()
+    )
+    slots = sampled_available_dump_slots(window, samples, available_days)
+    requested_days = (window.end.date() - window.start.date()).days
+    if len(days_in_window) < requested_days:
+        logger.warning(
+            "RIPE Atlas daily-dump retention covers only "
+            f"{days_in_window[0]} through {days_in_window[-1]} "
+            f"({len(days_in_window)}/{requested_days} requested UTC days); "
+            f"sampling {len(slots)} available slots inside the requested window"
+        )
     files = []
-    for slot in sampled_dump_slots(window, samples):
+    for slot in slots:
         day = slot.date().isoformat()
         filename = f"traceroute-{slot:%Y-%m-%dT%H00}.bz2"
         destination = Path(raw_root) / "ripe-atlas" / "daily-dumps" / day / filename
@@ -441,7 +517,7 @@ def _daily_dump_files(
             logger.info(f"downloading RIPE Atlas daily dump: {url}")
             _download(url, destination)
         files.append(destination)
-    return files
+    return files, slots, days_in_window
 
 
 def _api_files(
@@ -533,11 +609,13 @@ def prepare_ripe_atlas(
             logger.info(f"reusing RIPE Atlas role cache: {dataset.roles_path}")
             return dataset
 
+        dump_slots: tuple[datetime, ...] = ()
+        dump_days: tuple[date, ...] = ()
         if input_dir is not None:
             files = _local_files(input_dir, raw_root, window)
             source_kind = "local-files"
         elif source == "daily-dumps":
-            files = _daily_dump_files(
+            files, dump_slots, dump_days = _daily_dump_files(
                 window,
                 samples=dump_samples,
                 raw_root=raw_root,
@@ -574,9 +652,16 @@ def prepare_ripe_atlas(
             "dump_base_url": dump_base_url if source == "daily-dumps" else None,
             "api_base_url": api_base_url if source == "api" else None,
             "sampled_dump_slots": (
-                [slot.isoformat() for slot in sampled_dump_slots(window, dump_samples)]
+                [slot.isoformat() for slot in dump_slots]
                 if source == "daily-dumps" and input_dir is None
                 else []
+            ),
+            "daily_dump_days_in_window": [day.isoformat() for day in dump_days],
+            "daily_dump_available_day_count": len(dump_days),
+            "daily_dump_requested_day_count": (
+                (window.end.date() - window.start.date()).days
+                if source == "daily-dumps" and input_dir is None
+                else None
             ),
             "measurement_ids": list(measurement_ids),
             "files": file_metadata,

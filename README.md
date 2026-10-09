@@ -224,6 +224,15 @@ exceed 1.5 TB for one campaign. Increase `--dump-samples` when deliberately
 allocating more network, storage, and processing capacity. Raw downloads are
 shared and retained below the S3-mounted analysis data directory:
 
+RIPE exposes these dumps as a rolling archive. Preparation reads the public
+directory index before selecting files. When retention has removed the start
+of the requested window but some days still overlap it, the samples are spread
+over the available overlap, a warning reports the reduced day coverage, and
+the exact available days and selected hours are recorded in `source.json`.
+No dump at or after the campaign start is substituted. If no archived day
+overlaps the requested window, use the API with an explicit measurement-ID
+file or import previously retained files with `--input-dir`.
+
 ```text
 data/raw/ripe-atlas/daily-dumps/YYYY-MM-DD/
 ```

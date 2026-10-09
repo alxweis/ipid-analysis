@@ -1,10 +1,10 @@
 import bz2
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -14,10 +14,12 @@ from ipid_analysis.manifest import IpidMeasurement
 from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
 from ipid_analysis.ripe_atlas import (
     RipeAtlasDataset,
+    _available_dump_days,
     build_role_lookup,
     campaign_window,
     infer_campaign_start,
     prepare_ripe_atlas,
+    sampled_available_dump_slots,
     sampled_dump_slots,
 )
 
@@ -65,6 +67,38 @@ class RipeAtlasTest(unittest.TestCase):
         self.assertEqual(len(set(slots)), 4)
         self.assertTrue(all(window.start <= slot < window.end for slot in slots))
         self.assertEqual([slot.hour for slot in slots], [0, 7, 14, 21])
+
+    def test_daily_dump_slots_use_available_overlap_only(self):
+        window = campaign_window(datetime(2026, 9, 21, 2, 9, 12, tzinfo=timezone.utc))
+        available = [date(2026, 9, day) for day in range(9, 21)]
+        slots = sampled_available_dump_slots(window, 4, available)
+        self.assertEqual(
+            [slot.isoformat() for slot in slots],
+            [
+                "2026-09-10T00:00:00+00:00",
+                "2026-09-13T07:00:00+00:00",
+                "2026-09-16T14:00:00+00:00",
+                "2026-09-19T21:00:00+00:00",
+            ],
+        )
+        self.assertTrue(all(window.start <= slot < window.end for slot in slots))
+
+    def test_daily_dump_directory_index_is_parsed(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b"""
+            <a href="2026-09-10/">2026-09-10/</a>
+            <a href="not-a-day/">not-a-day/</a>
+            <a href="2026-09-09/">2026-09-09/</a>
+        """
+        with patch("ipid_analysis.ripe_atlas.urlopen", return_value=response):
+            days = _available_dump_days("https://example.invalid/dumps")
+        self.assertEqual(days, (date(2026, 9, 9), date(2026, 9, 10)))
+
+    def test_daily_dump_slots_reject_missing_overlap(self):
+        window = campaign_window(datetime(2026, 9, 21, 2, 9, 12, tzinfo=timezone.utc))
+        with self.assertRaisesRegex(FileNotFoundError, "--source api"):
+            sampled_available_dump_slots(window, 4, [date(2026, 10, 1)])
 
     def _dataset(self, root: Path) -> RipeAtlasDataset:
         campaign_start = datetime(2026, 1, 29, 12, tzinfo=timezone.utc)
