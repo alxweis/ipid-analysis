@@ -340,17 +340,31 @@ def render_itdk_os_analysis(
         _write_query(
             con,
             f"""
+            WITH grouped AS (
+                SELECT
+                    OBSERVED_ROLE,
+                    OS_GROUP,
+                    count(*)::BIGINT AS COUNT
+                FROM read_parquet('{_sql_path(outputs.joined)}')
+                WHERE ITDK_MATCH AND OS_RESOLVED
+                GROUP BY OBSERVED_ROLE, OS_GROUP
+            ),
+            role_totals AS (
+                SELECT
+                    OBSERVED_ROLE,
+                    sum(COUNT)::BIGINT AS ROLE_RESOLVED_TOTAL
+                FROM grouped
+                GROUP BY OBSERVED_ROLE
+            )
             SELECT
-                OBSERVED_ROLE,
-                OS_GROUP,
-                count(*)::BIGINT AS COUNT,
-                sum(count(*)) OVER (PARTITION BY OBSERVED_ROLE)::BIGINT AS ROLE_RESOLVED_TOTAL,
-                100.0 * count(*) / sum(count(*)) OVER (PARTITION BY OBSERVED_ROLE)
-                    AS PERCENTAGE
-            FROM read_parquet('{_sql_path(outputs.joined)}')
-            WHERE ITDK_MATCH AND OS_RESOLVED
-            GROUP BY OBSERVED_ROLE, OS_GROUP
-            ORDER BY OBSERVED_ROLE, OS_GROUP
+                g.OBSERVED_ROLE,
+                g.OS_GROUP,
+                g.COUNT,
+                t.ROLE_RESOLVED_TOTAL,
+                100.0 * g.COUNT / t.ROLE_RESOLVED_TOTAL AS PERCENTAGE
+            FROM grouped AS g
+            JOIN role_totals AS t USING (OBSERVED_ROLE)
+            ORDER BY g.OBSERVED_ROLE, g.OS_GROUP
             """,
             outputs.distribution,
         )

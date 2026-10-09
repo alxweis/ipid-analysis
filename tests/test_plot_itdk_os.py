@@ -160,6 +160,10 @@ class ITDKOSPlotTest(unittest.TestCase):
 
             for output in outputs.__dict__.values():
                 self.assertTrue(output.is_file(), output)
+            distribution = pq.read_table(outputs.distribution).to_pylist()
+            self.assertEqual(len(distribution), 4)
+            self.assertTrue(all(row["ROLE_RESOLVED_TOTAL"] == 2 for row in distribution))
+            self.assertTrue(all(row["PERCENTAGE"] == 50.0 for row in distribution))
             report = json.loads(outputs.role_json.read_text())
             self.assertEqual(report["coverage"]["total_measured"], 8)
             self.assertEqual(report["coverage"]["itdk_matched"], 7)
