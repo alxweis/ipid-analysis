@@ -572,9 +572,6 @@ def _build_role_part(
         for address, item in sorted(stats.items())
     ]
     part.parent.mkdir(parents=True, exist_ok=True)
-    temporary = part.with_suffix(".pq.part")
-    pq.write_table(pa.Table.from_pylist(rows, schema=_PART_SCHEMA), temporary, compression="zstd")
-    temporary.replace(part)
     info = {
         "cache_version": RIPE_PART_CACHE_VERSION,
         "source": str(path),
@@ -584,19 +581,57 @@ def _build_role_part(
         "addresses": len(stats),
         **counters,
     }
-    metadata.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    temporary = part.with_name(f".{part.name}.{os.getpid()}.part")
+    metadata_temporary = metadata.with_name(f".{metadata.name}.{os.getpid()}.part")
+    temporary.unlink(missing_ok=True)
+    metadata_temporary.unlink(missing_ok=True)
+    try:
+        pq.write_table(
+            pa.Table.from_pylist(rows, schema=_PART_SCHEMA),
+            temporary,
+            compression="zstd",
+        )
+        metadata_temporary.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+        metadata.unlink(missing_ok=True)
+        temporary.replace(part)
+        metadata_temporary.replace(metadata)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        metadata_temporary.unlink(missing_ok=True)
+        raise
+    return info
+
+
+def _cached_role_part(part: Path, metadata: Path) -> dict | None:
+    """Return validated metadata for a complete reusable part."""
+    if not part.is_file() or not metadata.is_file():
+        return None
+    try:
+        info = json.loads(metadata.read_text(encoding="utf-8"))
+        schema = pq.ParquetFile(part).schema_arrow
+    except (OSError, ValueError, TypeError):
+        return None
+    if info.get("cache_version") != RIPE_PART_CACHE_VERSION:
+        return None
+    if not schema.equals(_PART_SCHEMA, check_metadata=False):
+        return None
     return info
 
 
 def _prepare_role_part(arguments: tuple[str, str, str, str, str, bool]) -> tuple[str, dict]:
     source, part, metadata, start, end, apply_window = arguments
-    info = _build_role_part(
-        Path(source),
-        Path(part),
-        Path(metadata),
-        RipeWindow(datetime.fromisoformat(start), datetime.fromisoformat(end)),
-        apply_window=apply_window,
-    )
+    part_path = Path(part)
+    metadata_path = Path(metadata)
+    with _exclusive_lock(part_path.with_suffix(".lock")):
+        info = _cached_role_part(part_path, metadata_path)
+        if info is None:
+            info = _build_role_part(
+                Path(source),
+                part_path,
+                metadata_path,
+                RipeWindow(datetime.fromisoformat(start), datetime.fromisoformat(end)),
+                apply_window=apply_window,
+            )
     return part, info
 
 
@@ -631,9 +666,11 @@ def build_role_lookup(
         key = _part_cache_key(path, window, apply_window=apply_window)
         part = parts_root / f"{key}.pq"
         metadata = parts_root / f"{key}.json"
-        if part.is_file() and metadata.is_file():
+        with _exclusive_lock(part.with_suffix(".lock")):
+            cached_info = _cached_role_part(part, metadata)
+        if cached_info is not None:
             prepared.append(part)
-            metadata_rows.append(json.loads(metadata.read_text(encoding="utf-8")))
+            metadata_rows.append(cached_info)
         else:
             pending.append(
                 (

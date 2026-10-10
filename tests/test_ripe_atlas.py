@@ -1,15 +1,19 @@
 import bz2
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 import io
 import json
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ipid_analysis import ripe_atlas as ripe_atlas_module
 from ipid_analysis.caida_itdk import ITDKDataset
 from ipid_analysis.manifest import IpidMeasurement
 from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
@@ -413,6 +417,93 @@ class RipeAtlasTest(unittest.TestCase):
                 {path: path.stat().st_mtime_ns for path in parts},
                 part_mtimes,
             )
+
+            parts[0].write_bytes(b"not a parquet file")
+            repaired_destination = (
+                root
+                / "processed"
+                / "ripe-atlas"
+                / "repaired-window"
+                / "daily-dumps-s2"
+                / "roles.pq"
+            )
+            repaired = build_role_lookup(
+                files,
+                repaired_destination,
+                window=neighboring_window,
+                source="daily-dumps-s2",
+                workers=2,
+            )
+            self.assertEqual(repaired["addresses"], 3)
+            self.assertGreater(pq.ParquetFile(parts[0]).metadata.num_rows, 0)
+
+    def test_concurrent_campaigns_build_shared_daily_dump_part_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "traceroute.bz2"
+            timestamp = int(datetime(2026, 1, 15, 12, tzinfo=timezone.utc).timestamp())
+            with bz2.open(source, "wt", encoding="utf-8") as output:
+                output.write(
+                    json.dumps(
+                        _record(
+                            timestamp,
+                            "1.1.1.1",
+                            ["8.8.8.8", "1.1.1.1"],
+                            measurement=10,
+                            probe=100,
+                        )
+                    )
+                    + "\n"
+                )
+            windows = [
+                campaign_window(datetime(2026, 1, day, 12, tzinfo=timezone.utc))
+                for day in (29, 30)
+            ]
+            destinations = [
+                root / "processed" / "ripe-atlas" / window.label / "daily-dumps-s1" / "roles.pq"
+                for window in windows
+            ]
+            original_build = ripe_atlas_module._build_role_part
+            state_lock = threading.Lock()
+            calls = 0
+            active = 0
+            max_active = 0
+
+            def slow_build(*args, **kwargs):
+                nonlocal calls, active, max_active
+                with state_lock:
+                    calls += 1
+                    active += 1
+                    max_active = max(max_active, active)
+                try:
+                    time.sleep(0.2)
+                    return original_build(*args, **kwargs)
+                finally:
+                    with state_lock:
+                        active -= 1
+
+            def build(index: int):
+                return build_role_lookup(
+                    [source],
+                    destinations[index],
+                    window=windows[index],
+                    source="daily-dumps-s1",
+                    workers=1,
+                )
+
+            with patch.object(ripe_atlas_module, "_build_role_part", side_effect=slow_build):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(build, range(2)))
+
+            self.assertEqual(calls, 1)
+            self.assertEqual(max_active, 1)
+            self.assertEqual([result["addresses"] for result in results], [2, 2])
+            for destination in destinations:
+                self.assertEqual(pq.ParquetFile(destination).metadata.num_rows, 2)
+            parts_root = root / "processed" / "ripe-atlas" / "file-parts"
+            self.assertEqual(len(list(parts_root.glob("*.pq"))), 1)
+            self.assertEqual(list(parts_root.glob("*.lock")), [])
+            self.assertEqual(list(parts_root.glob("*.part")), [])
 
     def test_prepare_local_input_is_copied_and_cached(self):
         with tempfile.TemporaryDirectory() as directory:
