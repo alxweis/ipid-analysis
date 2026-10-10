@@ -142,9 +142,25 @@ SYNTHETIC_GENERATOR_PARAMETERS = {
         "increment_range_inclusive": [1, MAX_INC],
     },
     "MULTI": {
+        "model": "randomly interleaved independent advancing counters",
+        "counter_count_range_inclusive": [2, MULTI_MAX_CLUSTERS],
+        "counter_start_range_inclusive": [0, MODULUS - 1],
+        "baseline_increment_range_inclusive": [1, MULTI_MAX_INC],
+        "deviation_limit": (
+            "uniform integer from 1 through max(1, MULTI_MAX_INC - baseline); "
+            "one limit per counter"
+        ),
+        "increment_range_inclusive": [1, MULTI_MAX_INC],
+        "counter_observation_counts": "balanced within one observation",
+        "counter_separation": "not enforced; natural overlap and merging are retained",
+    },
+    "MULTI_SEPARATED_SANITY_CHECK": {
+        "model": "definition-conforming separated circular clusters",
         "cluster_count_range_inclusive": [2, MULTI_MAX_CLUSTERS],
         "cluster_start_range_inclusive": [0, MODULUS - 1],
         "within_cluster_offset_range_inclusive": [0, MULTI_MAX_INC],
+        "minimum_cluster_start_gap": 2 * MULTI_MAX_INC + 1,
+        "included_in_confusion_matrices": False,
     },
     "RANDOM": {"value_range_inclusive": [0, MODULUS - 1]},
 }
@@ -188,7 +204,85 @@ def _generate_multi_sequences(
     sequence_length: int,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Draw 2..MULTI_MAX_CLUSTERS circular clusters over the full IP-ID space."""
+    """Interleave 2..MULTI_MAX_CLUSTERS independently advancing counters.
+
+    Counter values may overlap or merge in the observed 16-bit space.  Ground
+    truth follows the generating mechanism rather than guaranteeing that the
+    clustering heuristic can identify every generated counter.
+    """
+    counter_counts = rng.integers(
+        2,
+        MULTI_MAX_CLUSTERS + 1,
+        size=sample_count,
+    )
+    sequences = np.empty((sample_count, sequence_length), dtype=np.uint16)
+
+    for counter_count in range(2, MULTI_MAX_CLUSTERS + 1):
+        rows = np.flatnonzero(counter_counts == counter_count)
+        if not len(rows):
+            continue
+
+        row_count = len(rows)
+        balanced_labels = np.broadcast_to(
+            np.arange(sequence_length, dtype=np.int64) % counter_count,
+            (row_count, sequence_length),
+        )
+        labels = np.take_along_axis(
+            balanced_labels,
+            np.argsort(rng.random((row_count, sequence_length)), axis=1),
+            axis=1,
+        )
+
+        starts = rng.integers(
+            0,
+            MODULUS,
+            size=(row_count, counter_count),
+            dtype=np.int64,
+        )
+        mean_increments = rng.integers(
+            1,
+            MULTI_MAX_INC + 1,
+            size=(row_count, counter_count),
+            dtype=np.int64,
+        )
+        deviation_limits = np.maximum(1, MULTI_MAX_INC - mean_increments)
+        maximum_observations = (sequence_length + counter_count - 1) // counter_count
+        noise = (
+            np.floor(
+                rng.random((row_count, counter_count, maximum_observations))
+                * (2 * deviation_limits[:, :, None] + 1)
+            ).astype(np.int64)
+            - deviation_limits[:, :, None]
+        )
+        increments = np.clip(
+            mean_increments[:, :, None] + noise,
+            1,
+            MULTI_MAX_INC,
+        )
+        counter_values = (
+            starts[:, :, None] + np.cumsum(increments, axis=2, dtype=np.int64)
+        ) % MODULUS
+
+        occurrences = np.zeros(labels.shape, dtype=np.int64)
+        for counter in range(counter_count):
+            selected = labels == counter
+            occurrences[selected] = (np.cumsum(selected, axis=1) - 1)[selected]
+        values = counter_values[
+            np.arange(row_count)[:, None],
+            labels,
+            occurrences,
+        ]
+        sequences[rows] = values.astype(np.uint16)
+
+    return sequences
+
+
+def _generate_separated_multi_sequences(
+    sample_count: int,
+    sequence_length: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Draw unambiguously separated clusters as a classifier sanity check."""
     cluster_counts = rng.integers(
         2,
         MULTI_MAX_CLUSTERS + 1,
@@ -1469,7 +1563,7 @@ def validate_classifier(
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "classifier_version": CLASSIFIER_VERSION,
         "random_structure_score": random_score_metadata,
-        "synthetic_generator_version": "3",
+        "synthetic_generator_version": "4",
         "seed": seed,
         "samples_per_strategy": samples_per_strategy,
         "trivial_samples_per_strategy": TRIVIAL_SAMPLES_PER_STRATEGY,

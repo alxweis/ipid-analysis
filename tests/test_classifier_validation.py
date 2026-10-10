@@ -35,6 +35,7 @@ from ipid_analysis.classifier_validation import (
     _confusion_metrics,
     _format_matrix_percentage,
     _generate_multi_sequences,
+    _generate_separated_multi_sequences,
     apply_fixed_interval_impairments,
     apply_reordering,
     generate_fixed_sequences,
@@ -147,16 +148,19 @@ class ClassifierValidationTest(unittest.TestCase):
             self.assertEqual(values.shape, (16, 100))
             with patch(
                 "ipid_analysis.strategies.random_structure_scores",
-                return_value=np.ones(len(values)),
+                side_effect=lambda sequences, _present, _config, **_kwargs: np.ones(
+                    len(sequences)
+                ),
             ):
                 detected = classify_batch_mass(
                     pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64())),
                     FIXED_CONFIG,
                 )
-            self.assertTrue(
-                np.all(detected == int(IPIDStrategy[strategy])),
-                strategy,
-            )
+            if strategy != "MULTI":
+                self.assertTrue(
+                    np.all(detected == int(IPIDStrategy[strategy])),
+                    strategy,
+                )
 
     def test_impairments_remove_twenty_and_reorder_present_values_only(self):
         ideal = np.tile(np.arange(100, dtype=np.uint16), (8, 1))
@@ -187,8 +191,27 @@ class ClassifierValidationTest(unittest.TestCase):
             )
             self.assertTrue(np.any(reordered_only[row_index] != ideal[row_index, :16]))
 
-    def test_multi_generator_uses_complete_cluster_count_range(self):
+    def test_multi_generator_retains_natural_counter_ambiguity(self):
         values = _generate_multi_sequences(2_048, 100, np.random.default_rng(5))
+        ipids = pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64()))
+        lengths, present, padded = _mass_padded(ipids)
+        cluster_counts = _cluster_counts_mass(padded, present, lengths)
+        self.assertTrue(np.any(cluster_counts == 1))
+        self.assertTrue(np.any((cluster_counts > 1) & (cluster_counts <= MULTI_MAX_CLUSTERS)))
+        detected = classify_batch_mass(
+            ipids,
+            FIXED_CONFIG,
+            random_score_function=lambda residual, *_args, **_kwargs: np.zeros(len(residual)),
+        )
+        self.assertTrue(np.any(detected == int(IPIDStrategy.MULTI)))
+        self.assertTrue(np.any(detected != int(IPIDStrategy.MULTI)))
+
+    def test_separated_multi_sanity_check_covers_all_supported_cluster_counts(self):
+        values = _generate_separated_multi_sequences(
+            2_048,
+            100,
+            np.random.default_rng(5),
+        )
         lengths, present, padded = _mass_padded(
             pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64()))
         )
@@ -197,6 +220,12 @@ class ClassifierValidationTest(unittest.TestCase):
             set(cluster_counts.tolist()),
             set(range(2, MULTI_MAX_CLUSTERS + 1)),
         )
+        detected = classify_batch_mass(
+            pa.array(values.astype(np.int64).tolist(), type=pa.list_(pa.int64())),
+            FIXED_CONFIG,
+            random_score_function=lambda residual, *_args, **_kwargs: np.zeros(len(residual)),
+        )
+        self.assertTrue(np.all(detected == int(IPIDStrategy.MULTI)))
 
     def test_validation_writes_sequences_metrics_and_figures(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -354,6 +383,21 @@ class ClassifierValidationTest(unittest.TestCase):
             self.assertEqual(
                 base_3_report["samples_by_dataset_and_strategy"][RT_OUT_OF_SCOPE_DATASET],
                 {"MULTI": 8, "RANDOM": 8},
+            )
+            self.assertEqual(base_3_report["synthetic_generator_version"], "4")
+            multi_parameters = base_3_report["synthetic_generator_parameters"]["MULTI"]
+            self.assertEqual(
+                multi_parameters["model"],
+                "randomly interleaved independent advancing counters",
+            )
+            self.assertEqual(
+                multi_parameters["counter_separation"],
+                "not enforced; natural overlap and merging are retained",
+            )
+            self.assertFalse(
+                base_3_report["synthetic_generator_parameters"]["MULTI_SEPARATED_SANITY_CHECK"][
+                    "included_in_confusion_matrices"
+                ]
             )
             self.assertNotIn(
                 "UNCLASSIFIED",
