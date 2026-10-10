@@ -267,12 +267,14 @@ nontrivial strategies.
 
 Every synthetic generator samples uniformly across its complete valid
 classifier domain: 16-bit starts and values use `0..65535`, `SINGLE` and
-`PER_BUCKET` increments use `1..21845`, and `MULTI` uses a uniformly selected
-cluster count from 2 through 16 with randomized cluster positions and offsets
-through the inclusive 800 threshold. All cumulative counters wrap naturally
-modulo 2^16. The validation generates only values within the strategy
-definitions; it does not inject invalid boundary cases. The exact generator
-parameters are also recorded in every validation JSON sidecar.
+`PER_BUCKET` increments use `1..21845`, and `MULTI` uses 2 through 16
+independently advancing counters with 16-bit starts, variable increments from
+`1..800`, and randomly interleaved observations. Counter separation is not
+enforced: natural overlap, merging, and wraparound remain in the standard
+validation, and ground truth follows the generating mechanism. The previous
+unambiguously separated circular-cluster model remains an implementation sanity
+check but is excluded from the confusion matrices. The exact generator
+parameters are recorded in every validation JSON sidecar.
 
 The Base validation uses the real 4 x 4 round/connection interleaving and
 evaluates `REFLECTION`, `CONSTANT`, `SINGLE`, `PER_CONNECTION`,
