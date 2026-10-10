@@ -17,6 +17,8 @@ from ipid_analysis.ripe_atlas import (
     RipeAtlasDataset,
     _available_dump_days,
     _download,
+    _iter_json_lines,
+    _open_json_lines,
     build_role_lookup,
     campaign_window,
     infer_campaign_start,
@@ -176,6 +178,15 @@ class RipeAtlasTest(unittest.TestCase):
             self.assertEqual(result, partial)
             self.assertFalse(destination.exists())
             self.assertEqual(partial.read_bytes(), b"abcde")
+
+    def test_validated_bzip2_partial_is_decompressed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "traceroute.jsonl.bz2.part"
+            record = {"af": 4, "type": "traceroute", "dst_addr": "1.1.1.1"}
+            with bz2.open(source, "wt", encoding="utf-8") as output:
+                output.write(json.dumps(record) + "\n")
+            with _open_json_lines(source) as input_file:
+                self.assertEqual(list(_iter_json_lines(input_file)), [record])
 
     def test_daily_dump_slots_reject_missing_overlap(self):
         window = campaign_window(datetime(2026, 9, 21, 2, 9, 12, tzinfo=timezone.utc))
