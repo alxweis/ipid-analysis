@@ -223,7 +223,8 @@ archives are commonly 2--3 GB each; downloading all 672 hours would otherwise
 exceed 1.5 TB for one campaign. Four worker processes parse independent dumps
 in parallel. Each file produces a reusable compact part below
 `data/processed/ripe-atlas/file-parts`; overlapping campaign windows therefore
-do not parse that dump again. Adjust `--dump-samples` and
+do not parse that dump again. Per-file locks and atomic replacement protect
+these shared parts when several protocol analyses start concurrently. Adjust `--dump-samples` and
 `--preprocess-workers` when deliberately changing coverage or CPU pressure.
 Raw downloads are shared and retained below the S3-mounted analysis data
 directory:
@@ -309,6 +310,12 @@ changed. To rerun only these analyses for an already completed campaign, use:
 make analyse-network-roles \
   MANIFEST=data/analysis-jobs/icmp_2026-09-21_02-09-12/manifest.json
 ```
+
+`make benchmark-network-roles` exercises the matched-only join design with
+synthetic local Parquet files. Its timings demonstrate join/storage scaling,
+not production end-to-end runtime: downloading, BZip2 decompression, JSON
+parsing, RIPE preprocessing, object-storage I/O, and realistic data
+compressibility are deliberately outside that benchmark.
 
 ## Strategy classification by measurement scale
 

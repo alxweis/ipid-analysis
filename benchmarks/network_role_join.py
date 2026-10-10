@@ -1,5 +1,10 @@
 """Synthetic benchmark for population-scale matched-only role joins.
 
+This is an architectural regression benchmark over local, highly compressible
+fixtures. It deliberately excludes download, BZip2 decompression, JSON parsing,
+RIPE preprocessing, and object-storage I/O; it is not an end-to-end runtime
+estimate for a production campaign.
+
 Example on the analysis VM::
 
     python benchmarks/network_role_join.py --rows 300000000 --match-stride 1000
@@ -80,6 +85,10 @@ def main() -> None:
     ).fetchone()[0]
     con.close()
     report = {
+        "scope": (
+            "synthetic local matched-only join; excludes download, decompression, "
+            "JSON parsing, RIPE preprocessing, and object-storage I/O"
+        ),
         "rows": arguments.rows,
         "match_stride": arguments.match_stride,
         "matched_rows": matched_rows,
