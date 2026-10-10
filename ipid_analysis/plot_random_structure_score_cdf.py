@@ -603,9 +603,7 @@ def render(
                         "increment_uniformity": (
                             null_table_seed + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
                         ),
-                        "gap_uniformity": (
-                            null_table_seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
-                        ),
+                        "gap_uniformity": (null_table_seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET),
                     },
                     "pvalue_resolution": 1.0 / (null_table_samples + 1.0),
                 },

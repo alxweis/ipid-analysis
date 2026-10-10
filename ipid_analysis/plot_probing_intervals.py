@@ -1,8 +1,8 @@
 """Plot the probing-interval histogram of one measurement.
 
-    python ipid_analysis/plot_probing_intervals.py tcp.ipid.no-connection.fixed-interval.base
-    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_probing-intervals.pdf
-    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_probing-intervals.json
+python ipid_analysis/plot_probing_intervals.py tcp.ipid.no-connection.fixed-interval.base
+-> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_probing-intervals.pdf
+-> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_probing-intervals.json
 """
 
 from __future__ import annotations

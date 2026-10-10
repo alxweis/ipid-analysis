@@ -13,20 +13,26 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.patches import Patch  # noqa: E402
-from matplotlib.ticker import MultipleLocator  # noqa: E402
+from matplotlib.patches import Patch
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
-from ipid_analysis.caida_itdk import ITDKDataset  # noqa: E402
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR  # noqa: E402
-from ipid_analysis.manifest import IpidMeasurement  # noqa: E402
-from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
-from ipid_analysis.strategies import (  # noqa: E402
+from ipid_analysis.caida_itdk import ITDKDataset
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
+from ipid_analysis.manifest import IpidMeasurement
+from ipid_analysis.network_role_utils import (
+    NETWORK_ROLE_ANALYSIS_VERSION,
+    log_cache_reuse,
+    output_cache_is_current,
+    role_count_label,
+)
+from ipid_analysis.paper_figures import configure_paper_style
+from ipid_analysis.strategies import (
     PAPER_STRATEGY_ORDER,
     STRATEGY_COLORS,
     STRATEGY_PRETTY,
 )
-from ipid_analysis.strategy_merge import StrategyMerge  # noqa: E402
+from ipid_analysis.strategy_merge import StrategyMerge
 
 TRANSIT_ROLE = "Transit-Observed"
 NO_TRANSIT_ROLE = "No Transit Evidence"
@@ -118,7 +124,11 @@ def _role_plot_data(rows: list[tuple[str, str, int]]) -> dict[str, dict[str, flo
     return percentages
 
 
-def _plot_roles(percentages: dict[str, dict[str, float]], output: Path) -> None:
+def _plot_roles(
+    percentages: dict[str, dict[str, float]],
+    role_totals: dict[str, int],
+    output: Path,
+) -> None:
     configure_paper_style()
     fig, ax = plt.subplots(figsize=(7.16, 2.45))
     plot_roles = (TRANSIT_ROLE, NO_TRANSIT_ROLE)
@@ -157,7 +167,10 @@ def _plot_roles(percentages: dict[str, dict[str, float]], output: Path) -> None:
     ax.set_ylim(-0.52, len(plot_roles) - 0.48)
     ax.set_yticks(
         [y_positions[role] for role in plot_roles],
-        ["Transit-Observed", "No Transit\nEvidence"],
+        [
+            role_count_label("Transit-Observed", role_totals.get(TRANSIT_ROLE, 0)),
+            role_count_label("No Transit Evidence", role_totals.get(NO_TRANSIT_ROLE, 0)),
+        ],
     )
     ax.set_xlabel("IP-ID Selection Strategy [%]")
     ax.set_ylabel("Observed Network Role")
@@ -319,6 +332,14 @@ def render_itdk_analysis(
         processed_root=processed_root,
         figures_root=figures_root,
     )
+    cached_outputs = tuple(asdict(outputs).values())
+    if output_cache_is_current(
+        metadata_path=outputs.role_json,
+        outputs=cached_outputs,
+        inputs=(strategies, dataset.interfaces_path),
+    ):
+        log_cache_reuse(source.target, outputs.role_json)
+        return outputs
     con = duckdb.connect(config={"threads": threads} if threads else {})
     strategy_path = _sql_path(strategies)
     interface_path = _sql_path(dataset.interfaces_path)
@@ -334,14 +355,13 @@ def render_itdk_analysis(
                 i.NODE_ID,
                 i.T,
                 i.D,
-                i.IP_ADDR IS NOT NULL AS ITDK_MATCH,
+                TRUE AS ITDK_MATCH,
                 CASE
-                    WHEN i.IP_ADDR IS NULL THEN NULL
                     WHEN i.T THEN '{TRANSIT_ROLE}'
                     ELSE '{NO_TRANSIT_ROLE}'
                 END AS OBSERVED_ROLE
             FROM read_parquet('{strategy_path}') AS s
-            LEFT JOIN read_parquet('{interface_path}') AS i USING (IP_ADDR)
+            INNER JOIN read_parquet('{interface_path}') AS i USING (IP_ADDR)
             """,
             outputs.joined,
         )
@@ -355,7 +375,6 @@ def render_itdk_analysis(
                 100.0 * count(*) / sum(count(*)) OVER (PARTITION BY OBSERVED_ROLE)
                     AS PERCENTAGE
             FROM read_parquet('{joined_path}')
-            WHERE ITDK_MATCH
             GROUP BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
             ORDER BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
             """,
@@ -367,20 +386,25 @@ def render_itdk_analysis(
             FROM read_parquet('{_sql_path(outputs.distribution)}')
             """
         ).fetchall()
-        coverage = con.execute(
+        match_counts = con.execute(
             f"""
             SELECT
-                count(*)::BIGINT AS total,
-                count(*) FILTER (WHERE ITDK_MATCH)::BIGINT AS matched,
-                count(*) FILTER (WHERE NOT ITDK_MATCH)::BIGINT AS unmatched,
-                count(*) FILTER (WHERE ITDK_MATCH AND T AND D)::BIGINT AS t1_d1,
-                count(*) FILTER (WHERE ITDK_MATCH AND T AND NOT D)::BIGINT AS t1_d0,
-                count(*) FILTER (WHERE ITDK_MATCH AND NOT T AND D)::BIGINT AS t0_d1,
-                count(*) FILTER (WHERE ITDK_MATCH AND NOT T AND NOT D)::BIGINT AS t0_d0
+                count(*)::BIGINT AS matched,
+                count(*) FILTER (WHERE T AND D)::BIGINT AS t1_d1,
+                count(*) FILTER (WHERE T AND NOT D)::BIGINT AS t1_d0,
+                count(*) FILTER (WHERE NOT T AND D)::BIGINT AS t0_d1,
+                count(*) FILTER (WHERE NOT T AND NOT D)::BIGINT AS t0_d0
             FROM read_parquet('{joined_path}')
             """
         ).fetchone()
-        if not coverage[1]:
+        total = int(
+            con.execute(
+                f"SELECT count(*)::BIGINT FROM read_parquet('{strategy_path}')"
+            ).fetchone()[0]
+        )
+        matched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, match_counts)
+        coverage = (total, matched, total - matched, t1_d1, t1_d0, t0_d1, t0_d0)
+        if not matched:
             raise ValueError(f"{source.target}: no measured IP address matched CAIDA ITDK")
 
         _write_query(
@@ -389,8 +413,7 @@ def render_itdk_analysis(
             WITH classified AS (
                 SELECT NODE_ID, IP_ADDR, IPID_SELECTION_STRATEGY, T
                 FROM read_parquet('{joined_path}')
-                WHERE ITDK_MATCH
-                  AND NODE_ID IS NOT NULL
+                WHERE NODE_ID IS NOT NULL
                   AND IPID_SELECTION_STRATEGY NOT IN ('UNCLASSIFIED', 'NOT_ENOUGH_SAMPLES')
             ), strategy_counts AS (
                 SELECT
@@ -460,7 +483,7 @@ def render_itdk_analysis(
             FROM (
                 SELECT NODE_ID
                 FROM read_parquet('{joined_path}')
-                WHERE ITDK_MATCH AND NODE_ID IS NOT NULL
+                WHERE NODE_ID IS NOT NULL
                 GROUP BY NODE_ID
                 HAVING count(DISTINCT IP_ADDR) >= 2
             )
@@ -477,12 +500,17 @@ def render_itdk_analysis(
         con.close()
 
     percentages = _role_plot_data(role_rows)
-    _plot_roles(percentages, outputs.role_pdf)
+    role_totals = {
+        role: sum(int(count) for row_role, _, count in role_rows if row_role == role)
+        for role in ROLE_ORDER
+    }
+    _plot_roles(percentages, role_totals, outputs.role_pdf)
     _plot_combinations(combination_rows, outputs.combinations_pdf)
 
     total, matched, unmatched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, coverage)
     role_report = {
         **_source_metadata(source),
+        "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "itdk": {
             "release": dataset.release,
@@ -505,6 +533,10 @@ def render_itdk_analysis(
             "t0_d0": t0_d0,
         },
         "plot_percentages": percentages,
+        "plot_role_totals": role_totals,
+        "artifact_semantics": {
+            "joined": "matched-only measured addresses; unmatched addresses are not materialized",
+        },
         "raw_distribution": [
             {"role": role, "strategy": strategy, "count": int(count)}
             for role, strategy, count in role_rows
@@ -520,6 +552,7 @@ def render_itdk_analysis(
     transit_strict = int(transit_strict or 0)
     consistency_report = {
         **_source_metadata(source),
+        "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "itdk_release": dataset.release,
         "itdk_topology": dataset.topology,

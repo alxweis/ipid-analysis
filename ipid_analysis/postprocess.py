@@ -83,6 +83,7 @@ from ipid_analysis.plot_os_group_strategy import (
     resolve_os_measurement_id,
 )
 from ipid_analysis.plot_probing_intervals import render as render_intervals_plot
+from ipid_analysis.plot_ripe_atlas_os import render_ripe_atlas_os_analysis
 from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
 from ipid_analysis.plot_strategies import (
     render as render_strategies_plot,
@@ -103,6 +104,7 @@ from ipid_analysis.random_reproducibility_analysis import (
 )
 from ipid_analysis.ripe_atlas import (
     DEFAULT_DUMP_SAMPLES,
+    DEFAULT_PREPROCESS_WORKERS,
     infer_campaign_start,
     parse_datetime,
     prepare_ripe_atlas,
@@ -183,6 +185,12 @@ def main(
         envvar="IPID_ANALYSIS_RIPE_DUMP_SAMPLES",
         help="evenly distributed hourly daily-dump files in the RIPE window",
     ),
+    ripe_preprocess_workers: int = typer.Option(
+        DEFAULT_PREPROCESS_WORKERS,
+        min=1,
+        envvar="IPID_ANALYSIS_RIPE_WORKERS",
+        help="parallel RIPE Atlas preprocessing processes",
+    ),
     skip_ripe: bool = typer.Option(
         False,
         "--skip-ripe",
@@ -220,6 +228,7 @@ def main(
             measurement_ids_file=ripe_measurement_ids,
             input_dir=ripe_input_dir,
             dump_samples=ripe_dump_samples,
+            preprocess_workers=ripe_preprocess_workers,
         )
 
     comp = None if compression == "none" else compression
@@ -343,6 +352,24 @@ def main(
                         f"[{connection.target}] connection-oriented CAIDA ITDK OS role plot "
                         f"failed ({exc}) -- skipped"
                     )
+            if ripe is not None:
+                try:
+                    ripe_os_outputs = render_ripe_atlas_os_analysis(
+                        connection,
+                        ripe,
+                        os_measurement_id,
+                        compression=comp,
+                        threads=threads,
+                    )
+                    logger.success(
+                        f"[{connection.target}] connection-oriented RIPE Atlas OS role plot "
+                        f"-> {ripe_os_outputs.role_pdf}"
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    logger.warning(
+                        f"[{connection.target}] connection-oriented RIPE Atlas OS role plot "
+                        f"failed ({exc}) -- skipped"
+                    )
 
     merged_ok, merged_skipped = 0, 0
     for merge in iter_strategy_merges(manifest):
@@ -382,6 +409,7 @@ def main(
             )
             os_pdf = None
             itdk_os_pdf = None
+            ripe_os_pdf = None
             os_measurement_id = resolve_os_measurement_id(manifest, merge.protocol)
             if os_measurement_id is not None:
                 try:
@@ -408,6 +436,20 @@ def main(
                     except (FileNotFoundError, ValueError) as exc:
                         logger.warning(
                             f"[{merge.target}] CAIDA ITDK OS role plot failed ({exc}) -- skipped"
+                        )
+                if ripe is not None:
+                    try:
+                        ripe_os_outputs = render_ripe_atlas_os_analysis(
+                            merge,
+                            ripe,
+                            os_measurement_id,
+                            compression=comp,
+                            threads=threads,
+                        )
+                        ripe_os_pdf = ripe_os_outputs.role_pdf
+                    except (FileNotFoundError, ValueError) as exc:
+                        logger.warning(
+                            f"[{merge.target}] RIPE Atlas OS role plot failed ({exc}) -- skipped"
                         )
             tcp_flags_pdf = None
             connection_pdf = None
@@ -437,6 +479,9 @@ def main(
             itdk_os_message = (
                 f"; CAIDA ITDK OS role plot -> {itdk_os_pdf}" if itdk_os_pdf is not None else ""
             )
+            ripe_os_message = (
+                f"; RIPE Atlas OS role plot -> {ripe_os_pdf}" if ripe_os_pdf is not None else ""
+            )
             tcp_flags_message = (
                 f"; TCP flags by strategy -> {tcp_flags_pdf}" if tcp_flags_pdf is not None else ""
             )
@@ -445,7 +490,7 @@ def main(
                 f"{stats.not_enough_samples:,} not enough samples -> {output}; "
                 f"strategy refinement -> {refinement_pdf}"
                 f"{connection_message}{tcp_flags_message}{os_message}"
-                f"{itdk_message}{itdk_os_message}{ripe_message}"
+                f"{itdk_message}{itdk_os_message}{ripe_message}{ripe_os_message}"
             )
             merged_ok += 1
         except FileNotFoundError as exc:

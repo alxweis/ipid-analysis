@@ -108,6 +108,12 @@ class StrategyMergeTest(unittest.TestCase):
             self.assertEqual(stats.rows, 4)
             self.assertEqual(stats.not_enough_samples, 1)
 
+            output_mtime = output.stat().st_mtime_ns
+            cached_output, cached_stats = merge_strategies(self.merge, processed_root=processed)
+            self.assertEqual(cached_output, output)
+            self.assertEqual(cached_stats, stats)
+            self.assertEqual(output.stat().st_mtime_ns, output_mtime)
+
             pdf_path, json_path = render_merged(
                 self.merge,
                 processed_root=processed,

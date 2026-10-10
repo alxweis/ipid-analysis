@@ -82,6 +82,18 @@ prepare-itdk:
 prepare-ripe-atlas:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.ripe_atlas $(ARGS)
 
+## Rebuild only CAIDA/RIPE role analyses from existing strategy/OS artifacts
+##   usage: make analyse-network-roles MANIFEST=data/analysis-jobs/.../manifest.json
+.PHONY: analyse-network-roles
+analyse-network-roles:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.network_roles $(MANIFEST) $(ARGS)
+
+## Benchmark matched-only network-role joins on a synthetic population
+##   usage: make benchmark-network-roles ARGS="--rows 300000000 --match-stride 1000"
+.PHONY: benchmark-network-roles
+benchmark-network-roles:
+	$(PYTHON_INTERPRETER) benchmarks/network_role_join.py $(ARGS)
+
 # allow passing the manifest as a goal (`make analyse data.json`): make it a no-op target
 %.json:
 	@:

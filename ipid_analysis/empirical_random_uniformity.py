@@ -57,9 +57,9 @@ def _spacing_cvm_statistics(values: np.ndarray, present: np.ndarray) -> np.ndarr
         )
         transformed.sort(axis=1)
         target = (2.0 * np.arange(1, sample_count + 1) - 1.0) / (2.0 * sample_count)
-        result[rows] = 1.0 / (12.0 * sample_count) + np.square(
-            transformed - target[None, :]
-        ).sum(axis=1)
+        result[rows] = 1.0 / (12.0 * sample_count) + np.square(transformed - target[None, :]).sum(
+            axis=1
+        )
     return result
 
 

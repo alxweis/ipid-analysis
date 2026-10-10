@@ -1,8 +1,8 @@
 """Plot the IPID-increment CDF (one line per strategy) of one measurement.
 
-    python ipid_analysis/plot_increments.py tcp.ipid.no-connection.fixed-interval.base
-    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.pdf
-    -> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.json
+python ipid_analysis/plot_increments.py tcp.ipid.no-connection.fixed-interval.base
+-> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.pdf
+-> reports/figures/<zmap_id>/no-connection/fixed-interval-base/n-fi-b_increments.json
 """
 
 from __future__ import annotations

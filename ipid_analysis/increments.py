@@ -170,12 +170,18 @@ def extract_increments(
     skip_first = (m.protocol == "tcp") and not mass
     output_path = increments_output_path(m)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    newest_input = max(input_path.stat().st_mtime_ns, snapshot_path.stat().st_mtime_ns)
+    if output_path.is_file() and output_path.stat().st_mtime_ns >= newest_input:
+        logger.info(f"[{m.target}] reusing increments -> {output_path}")
+        return output_path
+    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary.unlink(missing_ok=True)
 
     read_sql = READ_SQL_MASS if mass else READ_SQL
     reader_batch = min(batch_size, MASS_BATCH_CAP) if mass else batch_size
     con = duckdb.connect(config={"threads": threads} if threads else {})
     reader = con.execute(read_sql, {"input": str(input_path)}).to_arrow_reader(reader_batch)
-    writer = pq.ParquetWriter(output_path, OUTPUT_SCHEMA, compression=compression)
+    writer = pq.ParquetWriter(temporary, OUTPUT_SCHEMA, compression=compression)
 
     logger.info(
         f"[{m.target}] {m.measurement_id}: extracting increments ({'mass' if mass else 'base'})"
@@ -209,9 +215,15 @@ def extract_increments(
             writer.write_batch(
                 pa.record_batch([ip_addr, strategy, increments], schema=OUTPUT_SCHEMA)
             )
-    finally:
+    except Exception:
+        writer.close()
+        temporary.unlink(missing_ok=True)
+        con.close()
+        raise
+    else:
         writer.close()
         con.close()
+        temporary.replace(output_path)
 
     logger.success(f"[{m.target}] increments in {time.monotonic() - start:.1f}s -> {output_path}")
     return output_path

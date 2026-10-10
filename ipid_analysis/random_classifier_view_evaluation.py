@@ -85,9 +85,7 @@ TARGET_RANDOM_FALSE_REJECTION_RATES = (0.0001, 0.00025, 0.0005, 0.001)
 DEFAULT_OUTPUT_DIR = (
     PROCESSED_DATA_DIR / "classifier-validation" / "random-classifier-view-evaluation"
 )
-DEFAULT_FIGURE_DIR = (
-    FIGURES_DIR / "classifier-validation" / "random-classifier-view-evaluation"
-)
+DEFAULT_FIGURE_DIR = FIGURES_DIR / "classifier-validation" / "random-classifier-view-evaluation"
 
 
 @dataclass(frozen=True)
@@ -210,7 +208,7 @@ def _candidates() -> tuple[Candidate, ...]:
                     True,
                     False,
                 )
-                )
+            )
     selected = "multiscale-e2:inc-aggregate:gap-full"
     candidates.extend(
         Candidate(
@@ -233,8 +231,7 @@ ALL_CANDIDATES = _candidates()
 BASELINE_NAME = "raw+multiscale-e2:inc-minimum:gap-full"
 SELECTED_CANDIDATE_NAME = "raw+multiscale-e2:inc-aggregate:gap-full"
 RAW_ABLATION_CANDIDATE_NAMES = tuple(
-    f"raw{bin_count}+multiscale-e2:inc-aggregate:gap-full"
-    for bin_count in RAW_BIN_COUNTS[:-1]
+    f"raw{bin_count}+multiscale-e2:inc-aggregate:gap-full" for bin_count in RAW_BIN_COUNTS[:-1]
 ) + (SELECTED_CANDIDATE_NAME,)
 
 
@@ -247,8 +244,7 @@ def _required_rules(candidates: tuple[Candidate, ...]) -> tuple[IncrementBinRule
 
 def _requires_gap_aggregate(candidates: tuple[Candidate, ...]) -> bool:
     return any(
-        candidate.include_gap and candidate.gap_mode == "aggregate"
-        for candidate in candidates
+        candidate.include_gap and candidate.gap_mode == "aggregate" for candidate in candidates
     )
 
 
@@ -439,8 +435,10 @@ def _generate_profile(
     sample_count: int,
     rng: np.random.Generator,
 ) -> dict[str, GeneratedBatch]:
-    return _paper_batches(sample_count, rng) if profile == "paper" else generate_v2_sequences(
-        sample_count, rng, "heldout"
+    return (
+        _paper_batches(sample_count, rng)
+        if profile == "paper"
+        else generate_v2_sequences(sample_count, rng, "heldout")
     )
 
 
@@ -506,9 +504,7 @@ def _calibrate(
                 "threshold": threshold,
                 "threshold_by_condition": thresholds,
                 "false_rejection_by_condition": {
-                    condition.name: float(
-                        (arrays[index][:, candidate_index] < threshold).mean()
-                    )
+                    condition.name: float((arrays[index][:, candidate_index] < threshold).mean())
                     for index, condition in enumerate(CORE_CONDITIONS)
                 },
             }
@@ -535,9 +531,7 @@ def _score_schema(
         ("RAW", pa.float32()),
     ]
     fields.extend(
-        (f"RAW_{bin_count}", pa.float32())
-        for bin_count in RAW_BIN_COUNTS
-        if bin_count != 16
+        (f"RAW_{bin_count}", pa.float32()) for bin_count in RAW_BIN_COUNTS if bin_count != 16
     )
     gap_names = VIEW_NAMES if include_gap_aggregate else VIEW_NAMES[:1]
     fields.extend((f"GAP_{name.upper()}", pa.float32()) for name in gap_names)
@@ -661,8 +655,7 @@ def _evaluate(
                                 "operating_points"
                             ].items():
                                 accepted = (
-                                    scores[:, candidate_index]
-                                    >= operating_point["threshold"]
+                                    scores[:, candidate_index] >= operating_point["threshold"]
                                 )
                                 operating_key = (
                                     profile,
@@ -682,14 +675,17 @@ def _evaluate(
                             component_names = tuple(sorted(component))
                             mask = np.zeros(size, dtype=np.uint8)
                             for bit, name in enumerate(component_names):
-                                mask |= ((component[name] < threshold).astype(np.uint8) << bit)
+                                mask |= (component[name] < threshold).astype(np.uint8) << bit
                             unique, frequencies = np.unique(mask, return_counts=True)
                             for trigger_mask, frequency in zip(unique, frequencies, strict=True):
-                                label = "+".join(
-                                    name
-                                    for bit, name in enumerate(component_names)
-                                    if int(trigger_mask) & (1 << bit)
-                                ) or "none"
+                                label = (
+                                    "+".join(
+                                        name
+                                        for bit, name in enumerate(component_names)
+                                        if int(trigger_mask) & (1 << bit)
+                                    )
+                                    or "none"
+                                )
                                 catch_key = (
                                     profile,
                                     candidate.name,
@@ -800,9 +796,7 @@ def _benchmark(
                 gap_views = gap_view_pvalues(ideal, present, spacing_tables)
                 components.append(hierarchical_score(gap_views, _gap_valid_views(present)))
             if candidate.include_raw:
-                components.append(
-                    raw_uniformity_pvalues(ideal, present, candidate.raw_bin_count)
-                )
+                components.append(raw_uniformity_pvalues(ideal, present, candidate.raw_bin_count))
             return np.minimum.reduce(components)
 
         calculate()
@@ -886,12 +880,8 @@ def _operating_point_summaries(
                 ]
                 if not selected:
                     continue
-                random_rows = [
-                    row for row in selected if row["generator_strategy"] == "RANDOM"
-                ]
-                structured = [
-                    row for row in selected if row["generator_strategy"] != "RANDOM"
-                ]
+                random_rows = [row for row in selected if row["generator_strategy"] == "RANDOM"]
+                structured = [row for row in selected if row["generator_strategy"] != "RANDOM"]
                 structured_rates = [row["error_rate"] for row in structured]
                 worst = max(structured, key=lambda row: row["error_rate"])
 
@@ -910,9 +900,7 @@ def _operating_point_summaries(
                     {
                         "profile": profile,
                         "candidate": candidate.name,
-                        "raw_bin_count": candidate.raw_bin_count
-                        if candidate.include_raw
-                        else "",
+                        "raw_bin_count": candidate.raw_bin_count if candidate.include_raw else "",
                         "target_random_false_rejection_rate": target,
                         "threshold": selected[0]["threshold"],
                         "observed_random_false_rejection_rate": sum(
@@ -1060,10 +1048,7 @@ def _plot_final_tuning(operating_rows: list[dict], path: Path) -> None:
         )
         axes[1].plot(
             x,
-            [
-                100 * row["per_bucket_lossy_reordered_false_random_rate"]
-                for row in paper
-            ],
+            [100 * row["per_bucket_lossy_reordered_false_random_rate"] for row in paper],
             marker="o",
             color=colors[bin_count],
             label=f"{bin_count} raw bins",
@@ -1300,9 +1285,7 @@ def main(
             "gap_null_tables": gap_seed,
         },
         "target_random_false_rejection_rate": TARGET_RANDOM_FALSE_REJECTION_RATE,
-        "target_random_false_rejection_rates": list(
-            TARGET_RANDOM_FALSE_REJECTION_RATES
-        ),
+        "target_random_false_rejection_rates": list(TARGET_RANDOM_FALSE_REJECTION_RATES),
         "expected_calibration_tail_observations_per_condition": expected_tail,
         "expected_calibration_tail_observations_by_target": {
             f"{rate:.8g}": config.calibration_samples * rate
@@ -1311,9 +1294,7 @@ def main(
         "exploratory_tail_calibration": expected_tail < 20,
         "conditions": [condition.__dict__ for condition in CORE_CONDITIONS],
         "bin_rules": [rule.__dict__ for rule in required_rules],
-        "gap_views_computed": "full+subsequences"
-        if include_gap_aggregate
-        else "full-only",
+        "gap_views_computed": "full+subsequences" if include_gap_aggregate else "full-only",
         "candidates": [candidate.__dict__ for candidate in selected],
         "calibration": calibrated,
         "raw_bin_counts": list(RAW_BIN_COUNTS),

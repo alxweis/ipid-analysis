@@ -361,6 +361,14 @@ class StrategyClassificationTest(unittest.TestCase):
                 pq.read_table(output)["IPID_SELECTION_STRATEGY"].to_pylist(),
                 ["UNCLASSIFIED"],
             )
+            output_mtime = output.stat().st_mtime_ns
+            cached_output = classify_measurement(
+                measurement,
+                raw_root=raw,
+                processed_root=processed,
+            )
+            self.assertEqual(cached_output, output)
+            self.assertEqual(output.stat().st_mtime_ns, output_mtime)
 
     def test_reclassify_ignores_existing_processed_strategies(self):
         with tempfile.TemporaryDirectory() as directory:

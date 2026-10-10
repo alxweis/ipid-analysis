@@ -12,20 +12,26 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from matplotlib.patches import Patch  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.ticker import MultipleLocator  # noqa: E402
+from matplotlib.patches import Patch
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
-from ipid_analysis.caida_itdk import ITDKDataset  # noqa: E402
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR  # noqa: E402
-from ipid_analysis.manifest import IpidMeasurement  # noqa: E402
-from ipid_analysis.paper_figures import configure_paper_style  # noqa: E402
-from ipid_analysis.plot_itdk_strategy import (  # noqa: E402
+from ipid_analysis.caida_itdk import ITDKDataset
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.manifest import IpidMeasurement
+from ipid_analysis.network_role_utils import (
+    NETWORK_ROLE_ANALYSIS_VERSION,
+    log_cache_reuse,
+    output_cache_is_current,
+    role_count_label,
+)
+from ipid_analysis.paper_figures import configure_paper_style
+from ipid_analysis.plot_itdk_strategy import (
     NO_TRANSIT_ROLE,
     ROLE_ORDER,
     TRANSIT_ROLE,
 )
-from ipid_analysis.plot_os_group_strategy import (  # noqa: E402
+from ipid_analysis.plot_os_group_strategy import (
     GROUP_INFO,
     OS_GROUP_INPUT_NAME,
     OS_INPUT_NAME,
@@ -34,7 +40,7 @@ from ipid_analysis.plot_os_group_strategy import (  # noqa: E402
     PAPER_OS_OTHER_COLOR,
     write_os_groups,
 )
-from ipid_analysis.strategy_merge import StrategyMerge  # noqa: E402
+from ipid_analysis.strategy_merge import StrategyMerge
 
 KIND = "itdk-role-by-os"
 MAX_LEGEND_GROUPS = 10
@@ -194,7 +200,12 @@ def _label_percentage(value: float) -> str:
     return f"{value:.0f}"
 
 
-def _plot_roles(data: OSRolePlotData, output: Path) -> None:
+def _plot_roles(
+    data: OSRolePlotData,
+    output: Path,
+    *,
+    subject: str = "CAIDA ITDK transit evidence and resolved OS groups",
+) -> None:
     configure_paper_style()
     fig, ax = plt.subplots(figsize=(7.16, 2.45))
     plot_roles = (TRANSIT_ROLE, NO_TRANSIT_ROLE)
@@ -232,7 +243,10 @@ def _plot_roles(data: OSRolePlotData, output: Path) -> None:
     ax.set_ylim(-0.52, len(plot_roles) - 0.48)
     ax.set_yticks(
         [y_positions[role] for role in plot_roles],
-        ["Transit-Observed", "No Transit\nEvidence"],
+        [
+            role_count_label("Transit-Observed", data.role_totals.get(TRANSIT_ROLE, 0)),
+            role_count_label("No Transit Evidence", data.role_totals.get(NO_TRANSIT_ROLE, 0)),
+        ],
     )
     ax.set_xlabel("OS Distribution [%]")
     ax.set_ylabel("Observed Network Role")
@@ -273,7 +287,7 @@ def _plot_roles(data: OSRolePlotData, output: Path) -> None:
         pad_inches=0.02,
         metadata={
             "Title": "Observed network role by operating-system distribution",
-            "Subject": "CAIDA ITDK transit evidence and resolved OS groups",
+            "Subject": subject,
             "Creator": "ipid-analysis",
         },
     )
@@ -309,31 +323,41 @@ def render_itdk_os_analysis(
         processed_root=processed_root,
         figures_root=figures_root,
     )
+    if output_cache_is_current(
+        metadata_path=outputs.role_json,
+        outputs=tuple(outputs.__dict__.values()),
+        inputs=(strategies, dataset.interfaces_path, os_path, group_path),
+    ):
+        log_cache_reuse(source.target, outputs.role_json)
+        return outputs
     con = duckdb.connect(config={"threads": threads} if threads else {})
     try:
         _write_query(
             con,
             f"""
             WITH population AS (
-                SELECT DISTINCT CAST(IP_ADDR AS VARCHAR) AS IP_ADDR
-                FROM read_parquet('{_sql_path(strategies)}')
+                SELECT DISTINCT CAST(s.IP_ADDR AS VARCHAR) AS IP_ADDR,
+                    i.NODE_ID,
+                    i.T,
+                    i.D
+                FROM read_parquet('{_sql_path(strategies)}') AS s
+                INNER JOIN read_parquet('{_sql_path(dataset.interfaces_path)}') AS i
+                    USING (IP_ADDR)
             )
             SELECT
                 p.IP_ADDR,
-                i.NODE_ID,
-                i.T,
-                i.D,
-                i.IP_ADDR IS NOT NULL AS ITDK_MATCH,
+                p.NODE_ID,
+                p.T,
+                p.D,
+                TRUE AS ITDK_MATCH,
                 g.OS_GROUP,
-                g.OS_GROUP IS NOT NULL AS OS_RESOLVED,
+                TRUE AS OS_RESOLVED,
                 CASE
-                    WHEN i.IP_ADDR IS NULL THEN NULL
-                    WHEN i.T THEN '{TRANSIT_ROLE}'
+                    WHEN p.T THEN '{TRANSIT_ROLE}'
                     ELSE '{NO_TRANSIT_ROLE}'
                 END AS OBSERVED_ROLE
             FROM population AS p
-            LEFT JOIN read_parquet('{_sql_path(dataset.interfaces_path)}') AS i USING (IP_ADDR)
-            LEFT JOIN read_parquet('{_sql_path(group_path)}') AS g USING (IP_ADDR)
+            INNER JOIN read_parquet('{_sql_path(group_path)}') AS g USING (IP_ADDR)
             """,
             outputs.joined,
         )
@@ -346,7 +370,6 @@ def render_itdk_os_analysis(
                     OS_GROUP,
                     count(*)::BIGINT AS COUNT
                 FROM read_parquet('{_sql_path(outputs.joined)}')
-                WHERE ITDK_MATCH AND OS_RESOLVED
                 GROUP BY OBSERVED_ROLE, OS_GROUP
             ),
             role_totals AS (
@@ -377,20 +400,34 @@ def render_itdk_os_analysis(
         ).fetchall()
         coverage = con.execute(
             f"""
+            WITH population AS (
+                SELECT DISTINCT CAST(IP_ADDR AS VARCHAR) AS IP_ADDR
+                FROM read_parquet('{_sql_path(strategies)}')
+            ), itdk_matches AS (
+                SELECT p.IP_ADDR, i.T
+                FROM population AS p
+                INNER JOIN read_parquet('{_sql_path(dataset.interfaces_path)}') AS i
+                    USING (IP_ADDR)
+            ), os_matches AS (
+                SELECT p.IP_ADDR
+                FROM population AS p
+                INNER JOIN read_parquet('{_sql_path(group_path)}') AS g USING (IP_ADDR)
+            ), resolved_roles AS (
+                SELECT T FROM read_parquet('{_sql_path(outputs.joined)}')
+            )
             SELECT
-                count(*)::BIGINT AS total,
-                count(*) FILTER (WHERE ITDK_MATCH)::BIGINT AS itdk_matched,
-                count(*) FILTER (WHERE NOT ITDK_MATCH)::BIGINT AS itdk_unmatched,
-                count(*) FILTER (WHERE OS_RESOLVED)::BIGINT AS os_resolved,
-                count(*) FILTER (WHERE ITDK_MATCH AND OS_RESOLVED)::BIGINT
-                    AS itdk_os_resolved,
-                count(*) FILTER (WHERE ITDK_MATCH AND T)::BIGINT AS transit_total,
-                count(*) FILTER (WHERE ITDK_MATCH AND T AND OS_RESOLVED)::BIGINT
+                (SELECT count(*)::BIGINT FROM population) AS total,
+                (SELECT count(*)::BIGINT FROM itdk_matches) AS itdk_matched,
+                (SELECT count(*)::BIGINT FROM os_matches) AS os_resolved,
+                (SELECT count(*)::BIGINT FROM resolved_roles) AS itdk_os_resolved,
+                (SELECT count(*) FILTER (WHERE T)::BIGINT FROM itdk_matches)
+                    AS transit_total,
+                (SELECT count(*) FILTER (WHERE T)::BIGINT FROM resolved_roles)
                     AS transit_os_resolved,
-                count(*) FILTER (WHERE ITDK_MATCH AND NOT T)::BIGINT AS no_transit_total,
-                count(*) FILTER (WHERE ITDK_MATCH AND NOT T AND OS_RESOLVED)::BIGINT
+                (SELECT count(*) FILTER (WHERE NOT T)::BIGINT FROM itdk_matches)
+                    AS no_transit_total,
+                (SELECT count(*) FILTER (WHERE NOT T)::BIGINT FROM resolved_roles)
                     AS no_transit_os_resolved
-            FROM read_parquet('{_sql_path(outputs.joined)}')
             """
         ).fetchone()
     finally:
@@ -406,7 +443,6 @@ def render_itdk_os_analysis(
     (
         total,
         itdk_matched,
-        itdk_unmatched,
         os_resolved,
         itdk_os_resolved,
         transit_total,
@@ -414,8 +450,10 @@ def render_itdk_os_analysis(
         no_transit_total,
         no_transit_os_resolved,
     ) = map(int, coverage)
+    itdk_unmatched = total - itdk_matched
     report = {
         **_source_metadata(source),
+        "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "itdk": {
             "release": dataset.release,
@@ -479,6 +517,9 @@ def render_itdk_os_analysis(
             "joined": str(outputs.joined),
             "distribution": str(outputs.distribution),
             "pdf": str(outputs.role_pdf),
+        },
+        "artifact_semantics": {
+            "joined": "matched ITDK addresses with a resolved OS group only",
         },
     }
     _write_json(outputs.role_json, report)

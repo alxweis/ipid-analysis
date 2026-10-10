@@ -114,17 +114,19 @@ class RipeAtlasTest(unittest.TestCase):
     def test_download_retains_and_resumes_incomplete_stream(self):
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "dump.bz2"
-            with patch(
-                "ipid_analysis.ripe_atlas.urlopen",
-                return_value=_HTTPResponse(b"abc", status=200),
+            with (
+                patch(
+                    "ipid_analysis.ripe_atlas.urlopen",
+                    return_value=_HTTPResponse(b"abc", status=200),
+                ),
+                self.assertRaisesRegex(OSError, "3/5 bytes after 1 attempts"),
             ):
-                with self.assertRaisesRegex(OSError, "3/5 bytes after 1 attempts"):
-                    _download(
-                        "https://example.invalid/dump",
-                        destination,
-                        expected_size=5,
-                        max_attempts=1,
-                    )
+                _download(
+                    "https://example.invalid/dump",
+                    destination,
+                    expected_size=5,
+                    max_attempts=1,
+                )
             self.assertFalse(destination.exists())
             self.assertEqual(destination.with_suffix(".bz2.part").read_bytes(), b"abc")
 
@@ -319,11 +321,98 @@ class RipeAtlasTest(unittest.TestCase):
             self.assertEqual(report["coverage"]["t1_d1"], 1)
             self.assertEqual(report["coverage"]["t1_d0"], 1)
             self.assertEqual(report["coverage"]["t0_d1"], 1)
-            self.assertEqual(report["plot_percentages"]["Destination-Only"]["RANDOM"], 100.0)
+            self.assertEqual(report["plot_percentages"]["No Transit Evidence"]["RANDOM"], 100.0)
+            self.assertEqual(pq.ParquetFile(outputs.joined).metadata.num_rows, 3)
+            self.assertTrue(outputs.caida_agreement_pdf.is_file())
+            self.assertTrue(outputs.caida_intersection.is_file())
+            self.assertTrue(outputs.caida_intersection_pdf.is_file())
+            self.assertTrue(outputs.caida_intersection_json.is_file())
+            with patch(
+                "ipid_analysis.plot_ripe_atlas_strategy._write_query",
+                side_effect=AssertionError("current outputs must be reused"),
+            ):
+                reused = render_ripe_atlas_analysis(
+                    measurement,
+                    dataset,
+                    itdk=itdk,
+                    processed_root=processed,
+                    figures_root=figures,
+                )
+            self.assertEqual(reused, outputs)
             agreement = {row["category"]: row["count"] for row in report["caida_ripe_agreement"]}
             self.assertEqual(agreement["Both Transit-Observed"], 1)
             self.assertEqual(agreement["RIPE Only Transit-Observed"], 1)
             self.assertEqual(agreement["Neither Transit-Observed"], 1)
+
+    def test_role_lookup_parallel_parts_merge_exact_role_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            window = campaign_window(datetime(2026, 1, 29, 12, tzinfo=timezone.utc))
+            timestamp = int(datetime(2026, 1, 15, 12, tzinfo=timezone.utc).timestamp())
+            files = []
+            records = [
+                _record(
+                    timestamp,
+                    "1.1.1.1",
+                    ["8.8.8.8", "1.1.1.1"],
+                    measurement=10,
+                    probe=100,
+                ),
+                _record(
+                    timestamp + 60,
+                    "8.8.8.8",
+                    ["9.9.9.9", "8.8.8.8"],
+                    measurement=11,
+                    probe=101,
+                ),
+            ]
+            for index, record in enumerate(records):
+                path = root / f"trace-{index}.bz2"
+                with bz2.open(path, "wt", encoding="utf-8") as output:
+                    output.write(json.dumps(record) + "\n")
+                files.append(path)
+            destination = root / "processed" / "ripe-atlas" / window.label / "test" / "roles.pq"
+            stats = build_role_lookup(
+                files,
+                destination,
+                window=window,
+                source="daily-dumps-s2",
+                workers=2,
+            )
+            rows = {row["IP_ADDR"]: row for row in pq.read_table(destination).to_pylist()}
+            self.assertEqual(stats["reusable_file_parts"], 2)
+            self.assertEqual(stats["traces"], 2)
+            self.assertTrue(rows["8.8.8.8"]["T"])
+            self.assertTrue(rows["8.8.8.8"]["D"])
+            self.assertEqual(rows["8.8.8.8"]["MEASUREMENT_COUNT"], 2)
+            self.assertEqual(rows["8.8.8.8"]["PROBE_COUNT"], 2)
+
+            parts = sorted((root / "processed" / "ripe-atlas" / "file-parts").glob("*.pq"))
+            part_mtimes = {path: path.stat().st_mtime_ns for path in parts}
+            neighboring_window = campaign_window(datetime(2026, 1, 30, 12, tzinfo=timezone.utc))
+            neighboring_destination = (
+                root
+                / "processed"
+                / "ripe-atlas"
+                / neighboring_window.label
+                / "daily-dumps-s2"
+                / "roles.pq"
+            )
+            build_role_lookup(
+                files,
+                neighboring_destination,
+                window=neighboring_window,
+                source="daily-dumps-s2",
+                workers=2,
+            )
+            self.assertEqual(
+                sorted((root / "processed" / "ripe-atlas" / "file-parts").glob("*.pq")),
+                parts,
+            )
+            self.assertEqual(
+                {path: path.stat().st_mtime_ns for path in parts},
+                part_mtimes,
+            )
 
     def test_prepare_local_input_is_copied_and_cached(self):
         with tempfile.TemporaryDirectory() as directory:

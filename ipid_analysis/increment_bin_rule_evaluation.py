@@ -62,9 +62,7 @@ DEFAULT_CALIBRATION_SAMPLES_PER_CONDITION = 250_000
 DEFAULT_NULL_TABLE_SAMPLES = 500_000
 DEFAULT_TARGET_RANDOM_FALSE_REJECTION_RATE = 0.0001
 DEFAULT_BATCH_SIZE = 10_000
-DEFAULT_OUTPUT_DIR = (
-    PROCESSED_DATA_DIR / "classifier-validation" / "increment-bin-rule-evaluation"
-)
+DEFAULT_OUTPUT_DIR = PROCESSED_DATA_DIR / "classifier-validation" / "increment-bin-rule-evaluation"
 DEFAULT_FIGURE_DIR = FIGURES_DIR / "classifier-validation" / "increment-bin-rule-evaluation"
 MIN_INCREMENT_TRANSITIONS = 10
 MAX_POWER_OF_TWO_BINS = 16
@@ -191,9 +189,7 @@ def selected_bin_counts(rule: IncrementBinRule, transition_count: int) -> tuple[
 
 def _discrete_bin_probabilities(bin_count: int) -> np.ndarray:
     """Exact bin probabilities for floor(delta*k/65536), including thirds."""
-    boundaries = (
-        np.arange(bin_count + 1, dtype=np.int64) * MODULUS + bin_count - 1
-    ) // bin_count
+    boundaries = (np.arange(bin_count + 1, dtype=np.int64) * MODULUS + bin_count - 1) // bin_count
     return np.diff(boundaries).astype(float) / MODULUS
 
 
@@ -467,9 +463,7 @@ def _calibrate(
             "threshold": threshold,
             "threshold_by_condition": condition_thresholds,
             "false_rejection_by_condition": {
-                condition.name: float(
-                    (by_condition[index][:, rule_index] < threshold).mean()
-                )
+                condition.name: float((by_condition[index][:, rule_index] < threshold).mean())
                 for index, condition in enumerate(CONDITIONS)
             },
         }
@@ -589,7 +583,9 @@ def _summary_rows(
     for profile in PROFILE_NAMES:
         for rule in BIN_RULES:
             selected = [
-                row for row in details if row["profile"] == profile and row["bin_rule"] == rule.name
+                row
+                for row in details
+                if row["profile"] == profile and row["bin_rule"] == rule.name
             ]
             random_rows = [row for row in selected if row["generator_strategy"] == "RANDOM"]
             structured_rows = [row for row in selected if row["generator_strategy"] != "RANDOM"]
@@ -703,8 +699,7 @@ def _plot_heatmap(details: list[dict], output_path: Path) -> Path:
                     [
                         row["error_rate"]
                         for row in heldout
-                        if row["bin_rule"] == rule.name
-                        and row["generator_strategy"] == strategy
+                        if row["bin_rule"] == rule.name and row["generator_strategy"] == strategy
                     ]
                 )
                 for strategy in strategies
@@ -714,7 +709,9 @@ def _plot_heatmap(details: list[dict], output_path: Path) -> Path:
     )
     figure, axis = plt.subplots(figsize=(11.0, 5.2))
     image = axis.imshow(matrix * 100.0, aspect="auto", cmap="magma_r", vmin=0.0, vmax=100.0)
-    axis.set_xticks(range(len(strategies)), [name.replace("_", " ").title() for name in strategies])
+    axis.set_xticks(
+        range(len(strategies)), [name.replace("_", " ").title() for name in strategies]
+    )
     axis.set_yticks(range(len(BIN_RULES)), [rule.name for rule in BIN_RULES])
     axis.tick_params(axis="x", rotation=55)
     axis.set_xlabel("Held-out generator")
@@ -729,9 +726,7 @@ def _plot_heatmap(details: list[dict], output_path: Path) -> Path:
 def _plot_summary(summaries: list[dict], details: list[dict], output_path: Path) -> Path:
     _configure_evaluation_style()
     names = [rule.name for rule in BIN_RULES]
-    heldout = {
-        row["bin_rule"]: row for row in summaries if row["profile"] == "heldout"
-    }
+    heldout = {row["bin_rule"]: row for row in summaries if row["profile"] == "heldout"}
     paper = {row["bin_rule"]: row for row in summaries if row["profile"] == "paper"}
     x = np.arange(len(names))
     figure, axes = plt.subplots(1, 3, figsize=(15.5, 4.0), sharex=True)
@@ -748,10 +743,7 @@ def _plot_summary(summaries: list[dict], details: list[dict], output_path: Path)
     axes[2].bar(
         x,
         [
-            100
-            * np.mean(
-                [row["error_rate"] for row in paper_details if row["bin_rule"] == name]
-            )
+            100 * np.mean([row["error_rate"] for row in paper_details if row["bin_rule"] == name])
             for name in names
         ],
     )
@@ -935,9 +927,7 @@ def evaluate_increment_bin_rules(
         "thirds_bin_cap": MAX_THIRDS_BINS,
         "multiscale_bins": list(MULTISCALE_BINS),
         "multiscale_bin_sets": {
-            rule.name: list(rule.bin_counts)
-            for rule in BIN_RULES
-            if rule.family == "multiscale"
+            rule.name: list(rule.bin_counts) for rule in BIN_RULES if rule.family == "multiscale"
         },
         "bin_rules": [rule.__dict__ for rule in BIN_RULES],
         "exact_discrete_bin_probabilities": True,
