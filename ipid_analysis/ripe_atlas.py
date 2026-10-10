@@ -45,6 +45,7 @@ DEFAULT_LOOKBACK_DAYS = 28
 # Four evenly distributed hours keep automatic preparation practical: a full
 # 28-day archive currently exceeds 1.5 TB of compressed traceroute data.
 DEFAULT_DUMP_SAMPLES = 4
+DEFAULT_DOWNLOAD_ATTEMPTS = 5
 DEFAULT_DUMP_BASE_URL = "https://data-store.ripe.net/datasets/atlas-daily-dumps"
 DEFAULT_API_BASE_URL = "https://atlas.ripe.net/api/v2"
 RIPE_CACHE_VERSION = "2"
@@ -263,7 +264,10 @@ def _download(
     *,
     resume: bool = True,
     expected_size: int | None = None,
+    max_attempts: int = DEFAULT_DOWNLOAD_ATTEMPTS,
 ) -> Path:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_suffix(destination.suffix + ".part")
     work_path = partial
@@ -284,38 +288,48 @@ def _download(
             # returned to callers until it has the expected remote size.
             work_path = destination
 
-    offset = work_path.stat().st_size if resume and work_path.is_file() else 0
-    if expected_size is not None and offset > expected_size:
-        logger.warning(f"discarding oversized RIPE partial download: {work_path}")
-        work_path.unlink()
-        offset = 0
-    if expected_size is not None and offset == expected_size:
-        return _finalize_download(work_path, destination, expected_size)
-    headers = {"User-Agent": "ipid-analysis/ripe-atlas"}
-    if offset:
-        headers["Range"] = f"bytes={offset}-"
-    request = Request(url, headers=headers)
-    try:
-        response = urlopen(request, timeout=120)
-    except HTTPError as exc:
-        if exc.code == 416 and expected_size is not None and offset == expected_size:
+    for attempt in range(1, max_attempts + 1):
+        offset = work_path.stat().st_size if resume and work_path.is_file() else 0
+        if expected_size is not None and offset > expected_size:
+            logger.warning(f"discarding oversized RIPE partial download: {work_path}")
+            work_path.unlink()
+            offset = 0
+        if expected_size is not None and offset == expected_size:
             return _finalize_download(work_path, destination, expected_size)
-        raise
-    with response:
-        resumed = offset > 0 and getattr(response, "status", None) == 206
-        mode = "ab" if resumed else "wb"
-        if offset and not resumed:
-            logger.warning(f"server did not honor Range for {url}; restarting download")
-        with work_path.open(mode) as output:
-            shutil.copyfileobj(response, output, length=8 * 1024 * 1024)
-    if expected_size is not None:
+        headers = {"User-Agent": "ipid-analysis/ripe-atlas"}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+        request = Request(url, headers=headers)
+        try:
+            response = urlopen(request, timeout=120)
+        except HTTPError as exc:
+            if exc.code == 416 and expected_size is not None and offset == expected_size:
+                return _finalize_download(work_path, destination, expected_size)
+            raise
+        with response:
+            resumed = offset > 0 and getattr(response, "status", None) == 206
+            mode = "ab" if resumed else "wb"
+            if offset and not resumed:
+                logger.warning(f"server did not honor Range for {url}; restarting download")
+            with work_path.open(mode) as output:
+                shutil.copyfileobj(response, output, length=8 * 1024 * 1024)
+        if expected_size is None:
+            return _finalize_download(work_path, destination, expected_size)
         actual_size = work_path.stat().st_size
-        if actual_size != expected_size:
-            raise OSError(
+        if actual_size == expected_size:
+            return _finalize_download(work_path, destination, expected_size)
+        if attempt < max_attempts:
+            logger.warning(
                 f"incomplete RIPE download retained at {work_path}: "
-                f"{actual_size:,}/{expected_size:,} bytes"
+                f"{actual_size:,}/{expected_size:,} bytes; automatically resuming "
+                f"(attempt {attempt + 1}/{max_attempts})"
             )
-    return _finalize_download(work_path, destination, expected_size)
+            continue
+        raise OSError(
+            f"incomplete RIPE download retained at {work_path}: "
+            f"{actual_size:,}/{expected_size:,} bytes after {max_attempts} attempts"
+        )
+    raise AssertionError("unreachable")
 
 
 def _finalize_download(
