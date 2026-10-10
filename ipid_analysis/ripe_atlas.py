@@ -240,10 +240,51 @@ def _exclusive_lock(path: Path, timeout_seconds: float = 3600.0):
         path.unlink(missing_ok=True)
 
 
-def _download(url: str, destination: Path, *, resume: bool = True) -> None:
+def _remote_file_size(url: str) -> int:
+    request = Request(
+        url,
+        method="HEAD",
+        headers={"User-Agent": "ipid-analysis/ripe-atlas"},
+    )
+    with urlopen(request, timeout=120) as response:
+        value = response.headers.get("Content-Length")
+    try:
+        size = int(value)
+    except (TypeError, ValueError) as exc:
+        raise OSError(f"RIPE source did not report a valid Content-Length: {url}") from exc
+    if size <= 0:
+        raise OSError(f"RIPE source reported an invalid Content-Length ({size}): {url}")
+    return size
+
+
+def _download(
+    url: str,
+    destination: Path,
+    *,
+    resume: bool = True,
+    expected_size: int | None = None,
+) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_suffix(destination.suffix + ".part")
+    if destination.is_file():
+        actual_size = destination.stat().st_size
+        if expected_size is None or actual_size == expected_size:
+            return
+        logger.warning(
+            f"incomplete RIPE download {destination}: {actual_size:,}/{expected_size:,} bytes; "
+            "resuming"
+        )
+        if partial.is_file() and partial.stat().st_size >= actual_size:
+            destination.unlink()
+        else:
+            partial.unlink(missing_ok=True)
+            destination.replace(partial)
+
     offset = partial.stat().st_size if resume and partial.is_file() else 0
+    if expected_size is not None and offset > expected_size:
+        logger.warning(f"discarding oversized RIPE partial download: {partial}")
+        partial.unlink()
+        offset = 0
     headers = {"User-Agent": "ipid-analysis/ripe-atlas"}
     if offset:
         headers["Range"] = f"bytes={offset}-"
@@ -251,7 +292,7 @@ def _download(url: str, destination: Path, *, resume: bool = True) -> None:
     try:
         response = urlopen(request, timeout=120)
     except HTTPError as exc:
-        if exc.code == 416 and offset:
+        if exc.code == 416 and expected_size is not None and offset == expected_size:
             partial.replace(destination)
             return
         raise
@@ -262,6 +303,13 @@ def _download(url: str, destination: Path, *, resume: bool = True) -> None:
             logger.warning(f"server did not honor Range for {url}; restarting download")
         with partial.open(mode) as output:
             shutil.copyfileobj(response, output, length=8 * 1024 * 1024)
+    if expected_size is not None:
+        actual_size = partial.stat().st_size
+        if actual_size != expected_size:
+            raise OSError(
+                f"incomplete RIPE download retained at {partial}: "
+                f"{actual_size:,}/{expected_size:,} bytes"
+            )
     partial.replace(destination)
 
 
@@ -512,10 +560,11 @@ def _daily_dump_files(
         day = slot.date().isoformat()
         filename = f"traceroute-{slot:%Y-%m-%dT%H00}.bz2"
         destination = Path(raw_root) / "ripe-atlas" / "daily-dumps" / day / filename
-        if not destination.is_file():
-            url = f"{base_url.rstrip('/')}/{day}/{filename}"
+        url = f"{base_url.rstrip('/')}/{day}/{filename}"
+        expected_size = _remote_file_size(url)
+        if not destination.is_file() or destination.stat().st_size != expected_size:
             logger.info(f"downloading RIPE Atlas daily dump: {url}")
-            _download(url, destination)
+        _download(url, destination, expected_size=expected_size)
         files.append(destination)
     return files, slots, days_in_window
 
