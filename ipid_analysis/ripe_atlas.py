@@ -263,28 +263,34 @@ def _download(
     *,
     resume: bool = True,
     expected_size: int | None = None,
-) -> None:
+) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_suffix(destination.suffix + ".part")
+    work_path = partial
     if destination.is_file():
         actual_size = destination.stat().st_size
         if expected_size is None or actual_size == expected_size:
-            return
+            return destination
         logger.warning(
             f"incomplete RIPE download {destination}: {actual_size:,}/{expected_size:,} bytes; "
             "resuming"
         )
         if partial.is_file() and partial.stat().st_size >= actual_size:
-            destination.unlink()
+            work_path = partial
         else:
             partial.unlink(missing_ok=True)
-            destination.replace(partial)
+            # Renaming an existing object may fail on object-storage FUSE mounts.
+            # Resume the validated-size final path in place instead. It is never
+            # returned to callers until it has the expected remote size.
+            work_path = destination
 
-    offset = partial.stat().st_size if resume and partial.is_file() else 0
+    offset = work_path.stat().st_size if resume and work_path.is_file() else 0
     if expected_size is not None and offset > expected_size:
-        logger.warning(f"discarding oversized RIPE partial download: {partial}")
-        partial.unlink()
+        logger.warning(f"discarding oversized RIPE partial download: {work_path}")
+        work_path.unlink()
         offset = 0
+    if expected_size is not None and offset == expected_size:
+        return _finalize_download(work_path, destination, expected_size)
     headers = {"User-Agent": "ipid-analysis/ripe-atlas"}
     if offset:
         headers["Range"] = f"bytes={offset}-"
@@ -293,24 +299,52 @@ def _download(
         response = urlopen(request, timeout=120)
     except HTTPError as exc:
         if exc.code == 416 and expected_size is not None and offset == expected_size:
-            partial.replace(destination)
-            return
+            return _finalize_download(work_path, destination, expected_size)
         raise
     with response:
         resumed = offset > 0 and getattr(response, "status", None) == 206
         mode = "ab" if resumed else "wb"
         if offset and not resumed:
             logger.warning(f"server did not honor Range for {url}; restarting download")
-        with partial.open(mode) as output:
+        with work_path.open(mode) as output:
             shutil.copyfileobj(response, output, length=8 * 1024 * 1024)
     if expected_size is not None:
-        actual_size = partial.stat().st_size
+        actual_size = work_path.stat().st_size
         if actual_size != expected_size:
             raise OSError(
-                f"incomplete RIPE download retained at {partial}: "
+                f"incomplete RIPE download retained at {work_path}: "
                 f"{actual_size:,}/{expected_size:,} bytes"
             )
-    partial.replace(destination)
+    return _finalize_download(work_path, destination, expected_size)
+
+
+def _finalize_download(
+    work_path: Path,
+    destination: Path,
+    expected_size: int | None,
+) -> Path:
+    if work_path == destination:
+        return destination
+    try:
+        work_path.replace(destination)
+        return destination
+    except OSError:
+        # Some object-storage FUSE mounts cannot rename objects reliably. A
+        # complete, size-validated .part object is safe for immediate parsing
+        # and can be reused by the next run without downloading it again.
+        if work_path.is_file() and (
+            expected_size is None or work_path.stat().st_size == expected_size
+        ):
+            logger.warning(
+                f"RIPE download is complete but the storage mount could not rename "
+                f"{work_path} to {destination}; using the validated partial object"
+            )
+            return work_path
+        if destination.is_file() and (
+            expected_size is None or destination.stat().st_size == expected_size
+        ):
+            return destination
+        raise
 
 
 def _available_dump_days(base_url: str) -> tuple[date, ...]:
@@ -564,8 +598,10 @@ def _daily_dump_files(
         expected_size = _remote_file_size(url)
         if not destination.is_file() or destination.stat().st_size != expected_size:
             logger.info(f"downloading RIPE Atlas daily dump: {url}")
-        _download(url, destination, expected_size=expected_size)
-        files.append(destination)
+            source_path = _download(url, destination, expected_size=expected_size)
+        else:
+            source_path = destination
+        files.append(source_path)
     return files, slots, days_in_window
 
 
@@ -598,8 +634,10 @@ def _api_files(
                 )
                 url = f"{base_url.rstrip('/')}/measurements/{measurement_id}/results/?{query}"
                 logger.info(f"downloading RIPE Atlas measurement {measurement_id}: {day.date()}")
-                _download(url, destination, resume=False)
-            files.append(destination)
+                source_path = _download(url, destination, resume=False)
+            else:
+                source_path = destination
+            files.append(source_path)
         day = next_day
     return files
 

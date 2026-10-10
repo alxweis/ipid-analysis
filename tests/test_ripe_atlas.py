@@ -136,8 +136,26 @@ class RipeAtlasTest(unittest.TestCase):
                 "ipid_analysis.ripe_atlas.urlopen",
                 return_value=_HTTPResponse(b"de", status=206),
             ):
-                _download("https://example.invalid/dump", destination, expected_size=5)
+                result = _download("https://example.invalid/dump", destination, expected_size=5)
+            self.assertEqual(result, destination)
             self.assertEqual(destination.read_bytes(), b"abcde")
+
+    def test_download_uses_complete_partial_when_mount_rejects_rename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "dump.bz2"
+            partial = destination.with_suffix(".bz2.part")
+            partial.write_bytes(b"abc")
+            with (
+                patch(
+                    "ipid_analysis.ripe_atlas.urlopen",
+                    return_value=_HTTPResponse(b"de", status=206),
+                ),
+                patch.object(Path, "replace", side_effect=OSError(5, "I/O error")),
+            ):
+                result = _download("https://example.invalid/dump", destination, expected_size=5)
+            self.assertEqual(result, partial)
+            self.assertFalse(destination.exists())
+            self.assertEqual(partial.read_bytes(), b"abcde")
 
     def test_daily_dump_slots_reject_missing_overlap(self):
         window = campaign_window(datetime(2026, 9, 21, 2, 9, 12, tzinfo=timezone.utc))
