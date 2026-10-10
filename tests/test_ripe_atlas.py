@@ -116,8 +116,13 @@ class RipeAtlasTest(unittest.TestCase):
                 "ipid_analysis.ripe_atlas.urlopen",
                 return_value=_HTTPResponse(b"abc", status=200),
             ):
-                with self.assertRaisesRegex(OSError, "3/5 bytes"):
-                    _download("https://example.invalid/dump", destination, expected_size=5)
+                with self.assertRaisesRegex(OSError, "3/5 bytes after 1 attempts"):
+                    _download(
+                        "https://example.invalid/dump",
+                        destination,
+                        expected_size=5,
+                        max_attempts=1,
+                    )
             self.assertFalse(destination.exists())
             self.assertEqual(destination.with_suffix(".bz2.part").read_bytes(), b"abc")
 
@@ -126,6 +131,21 @@ class RipeAtlasTest(unittest.TestCase):
                 return_value=_HTTPResponse(b"de", status=206),
             ):
                 _download("https://example.invalid/dump", destination, expected_size=5)
+            self.assertEqual(destination.read_bytes(), b"abcde")
+
+    def test_download_automatically_resumes_truncated_http_stream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "dump.bz2"
+            with patch(
+                "ipid_analysis.ripe_atlas.urlopen",
+                side_effect=[
+                    _HTTPResponse(b"abc", status=200),
+                    _HTTPResponse(b"de", status=206),
+                ],
+            ) as mocked_urlopen:
+                result = _download("https://example.invalid/dump", destination, expected_size=5)
+            self.assertEqual(mocked_urlopen.call_count, 2)
+            self.assertEqual(result, destination)
             self.assertEqual(destination.read_bytes(), b"abcde")
 
     def test_download_recovers_truncated_final_file(self):
