@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import bz2
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -31,10 +32,16 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+import duckdb
 from loguru import logger
 import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
+
+try:
+    import orjson
+except ImportError:  # pragma: no cover - compatibility for existing environments
+    orjson = None
 
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 
@@ -42,13 +49,15 @@ app = typer.Typer()
 
 DEFAULT_SOURCE = "daily-dumps"
 DEFAULT_LOOKBACK_DAYS = 28
-# Four evenly distributed hours keep automatic preparation practical: a full
-# 28-day archive currently exceeds 1.5 TB of compressed traceroute data.
-DEFAULT_DUMP_SAMPLES = 4
+# Twelve evenly distributed hours improve coverage while bounded parallel
+# preprocessing keeps the one-time cache construction practical.
+DEFAULT_DUMP_SAMPLES = 12
+DEFAULT_PREPROCESS_WORKERS = 4
 DEFAULT_DOWNLOAD_ATTEMPTS = 5
 DEFAULT_DUMP_BASE_URL = "https://data-store.ripe.net/datasets/atlas-daily-dumps"
 DEFAULT_API_BASE_URL = "https://atlas.ripe.net/api/v2"
-RIPE_CACHE_VERSION = "2"
+RIPE_CACHE_VERSION = "3"
+RIPE_PART_CACHE_VERSION = "1"
 _MEASUREMENT_TIMESTAMP_RE = re.compile(
     r"_(?P<stamp>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:$|[^0-9])"
 )
@@ -414,8 +423,8 @@ def _iter_json_lines(stream: TextIO) -> Iterator[dict]:
         if not line.strip():
             continue
         try:
-            value = json.loads(line)
-        except json.JSONDecodeError as exc:
+            value = orjson.loads(line) if orjson is not None else json.loads(line)
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"invalid RIPE JSON on line {number}: {exc}") from exc
         if isinstance(value, dict):
             yield value
@@ -452,14 +461,28 @@ def _trace_addresses(record: dict) -> dict[str, tuple[bool, bool]]:
     return {address: (flags[0], flags[1]) for address, flags in observed.items()}
 
 
-def build_role_lookup(
-    files: Iterable[Path],
-    destination: Path,
+_PART_SCHEMA = pa.schema(
+    [
+        ("IP_ADDR", pa.string()),
+        ("T", pa.bool_()),
+        ("D", pa.bool_()),
+        ("TRACE_COUNT", pa.int64()),
+        ("PROBES", pa.list_(pa.int64())),
+        ("MEASUREMENTS", pa.list_(pa.int64())),
+        ("FIRST_SEEN", pa.int64()),
+        ("LAST_SEEN", pa.int64()),
+        ("PROTOCOLS", pa.list_(pa.string())),
+    ]
+)
+
+
+def _parse_role_file(
+    path: Path,
     *,
     window: RipeWindow,
-    source: str,
-) -> dict[str, int]:
-    """Aggregate RIPE JSONL/BZip2 files into one address-level Parquet lookup."""
+    apply_window: bool = True,
+) -> tuple[dict[str, _AddressStats], dict]:
+    """Parse one dump. Kept process-local so independent files run in parallel."""
     stats: dict[str, _AddressStats] = {}
     traces = 0
     skipped_outside_window = 0
@@ -467,93 +490,252 @@ def build_role_lookup(
     start_timestamp = int(window.start.timestamp())
     end_timestamp = int(window.end.timestamp())
 
-    for path in files:
-        logger.info(f"parsing RIPE Atlas traceroutes: {path}")
-        with _open_json_lines(path) as input_file:
-            for record in _iter_json_lines(input_file):
-                if record.get("af") != 4 or record.get("type", "traceroute") != "traceroute":
-                    skipped_non_ipv4 += 1
-                    continue
-                timestamp = record.get("timestamp", record.get("endtime"))
-                if not isinstance(timestamp, (int, float)):
-                    continue
-                timestamp = int(timestamp)
-                if not start_timestamp <= timestamp < end_timestamp:
-                    skipped_outside_window += 1
-                    continue
-                addresses = _trace_addresses(record)
-                if not addresses:
-                    continue
-                traces += 1
-                probe = record.get("prb_id")
-                measurement = record.get("msm_id")
-                protocol = str(record.get("proto", "UNKNOWN")).upper()
-                for address, (transit, destination_observed) in addresses.items():
-                    item = stats.setdefault(address, _AddressStats())
-                    item.transit |= transit
-                    item.destination |= destination_observed
-                    item.trace_count += 1
-                    if isinstance(probe, int):
-                        item.probes.add(probe)
-                    if isinstance(measurement, int):
-                        item.measurements.add(measurement)
-                    item.protocols.add(protocol)
-                    item.first_seen = (
-                        timestamp if item.first_seen is None else min(item.first_seen, timestamp)
-                    )
-                    item.last_seen = (
-                        timestamp if item.last_seen is None else max(item.last_seen, timestamp)
-                    )
+    logger.info(f"parsing RIPE Atlas traceroutes: {path}")
+    with _open_json_lines(path) as input_file:
+        for record in _iter_json_lines(input_file):
+            if record.get("af") != 4 or record.get("type", "traceroute") != "traceroute":
+                skipped_non_ipv4 += 1
+                continue
+            timestamp = record.get("timestamp", record.get("endtime"))
+            if not isinstance(timestamp, (int, float)):
+                continue
+            timestamp = int(timestamp)
+            if apply_window and not start_timestamp <= timestamp < end_timestamp:
+                skipped_outside_window += 1
+                continue
+            addresses = _trace_addresses(record)
+            if not addresses:
+                continue
+            traces += 1
+            probe = record.get("prb_id")
+            measurement = record.get("msm_id")
+            protocol = str(record.get("proto", "UNKNOWN")).upper()
+            for address, (transit, destination_observed) in addresses.items():
+                item = stats.setdefault(address, _AddressStats())
+                item.transit |= transit
+                item.destination |= destination_observed
+                item.trace_count += 1
+                if isinstance(probe, int):
+                    item.probes.add(probe)
+                if isinstance(measurement, int):
+                    item.measurements.add(measurement)
+                item.protocols.add(protocol)
+                item.first_seen = (
+                    timestamp if item.first_seen is None else min(item.first_seen, timestamp)
+                )
+                item.last_seen = (
+                    timestamp if item.last_seen is None else max(item.last_seen, timestamp)
+                )
 
-    if not stats:
-        raise ValueError("RIPE Atlas inputs contain no public IPv4 traceroute replies")
-
-    schema = pa.schema(
-        [
-            ("IP_ADDR", pa.string()),
-            ("T", pa.bool_()),
-            ("D", pa.bool_()),
-            ("TRACE_COUNT", pa.int64()),
-            ("PROBE_COUNT", pa.int64()),
-            ("MEASUREMENT_COUNT", pa.int64()),
-            ("FIRST_SEEN", pa.int64()),
-            ("LAST_SEEN", pa.int64()),
-            ("PROTOCOLS", pa.string()),
-        ],
-        metadata={
-            b"ripe_cache_version": RIPE_CACHE_VERSION.encode(),
-            b"ripe_source": source.encode(),
-            b"window_start": window.start.isoformat().encode(),
-            b"window_end": window.end.isoformat().encode(),
-        },
-    )
-    rows = []
-    for address in sorted(stats):
-        item = stats[address]
-        rows.append(
-            {
-                "IP_ADDR": address,
-                "T": item.transit,
-                "D": item.destination,
-                "TRACE_COUNT": item.trace_count,
-                "PROBE_COUNT": len(item.probes),
-                "MEASUREMENT_COUNT": len(item.measurements),
-                "FIRST_SEEN": item.first_seen or 0,
-                "LAST_SEEN": item.last_seen or 0,
-                "PROTOCOLS": ",".join(sorted(item.protocols)),
-            }
-        )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    partial = destination.with_suffix(destination.suffix + ".part")
-    pq.write_table(pa.Table.from_pylist(rows, schema=schema), partial, compression="zstd")
-    partial.replace(destination)
-    return {
+    return stats, {
         "traces": traces,
-        "addresses": len(stats),
-        "transit_addresses": sum(item.transit for item in stats.values()),
-        "destination_addresses": sum(item.destination for item in stats.values()),
         "skipped_outside_window": skipped_outside_window,
         "skipped_non_ipv4": skipped_non_ipv4,
+    }
+
+
+def _part_cache_key(path: Path, window: RipeWindow, *, apply_window: bool) -> str:
+    stat = path.stat()
+    identity_parts = [
+        RIPE_PART_CACHE_VERSION,
+        str(path.resolve()),
+        str(stat.st_size),
+        str(stat.st_mtime_ns),
+    ]
+    if apply_window:
+        identity_parts.extend((window.start.isoformat(), window.end.isoformat()))
+    identity = "|".join(identity_parts)
+    return hashlib.sha256(identity.encode()).hexdigest()
+
+
+def _build_role_part(
+    path: Path,
+    part: Path,
+    metadata: Path,
+    window: RipeWindow,
+    *,
+    apply_window: bool,
+) -> dict:
+    stats, counters = _parse_role_file(path, window=window, apply_window=apply_window)
+    rows = [
+        {
+            "IP_ADDR": address,
+            "T": item.transit,
+            "D": item.destination,
+            "TRACE_COUNT": item.trace_count,
+            "PROBES": sorted(item.probes),
+            "MEASUREMENTS": sorted(item.measurements),
+            "FIRST_SEEN": item.first_seen or 0,
+            "LAST_SEEN": item.last_seen or 0,
+            "PROTOCOLS": sorted(item.protocols),
+        }
+        for address, item in sorted(stats.items())
+    ]
+    part.parent.mkdir(parents=True, exist_ok=True)
+    temporary = part.with_suffix(".pq.part")
+    pq.write_table(pa.Table.from_pylist(rows, schema=_PART_SCHEMA), temporary, compression="zstd")
+    temporary.replace(part)
+    info = {
+        "cache_version": RIPE_PART_CACHE_VERSION,
+        "source": str(path),
+        "source_size": path.stat().st_size,
+        "source_sha256": _sha256(path),
+        "window_filter_applied": apply_window,
+        "addresses": len(stats),
+        **counters,
+    }
+    metadata.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    return info
+
+
+def _prepare_role_part(arguments: tuple[str, str, str, str, str, bool]) -> tuple[str, dict]:
+    source, part, metadata, start, end, apply_window = arguments
+    info = _build_role_part(
+        Path(source),
+        Path(part),
+        Path(metadata),
+        RipeWindow(datetime.fromisoformat(start), datetime.fromisoformat(end)),
+        apply_window=apply_window,
+    )
+    return part, info
+
+
+def _sql_paths(paths: Iterable[Path]) -> str:
+    values = ", ".join(f"'{str(path).replace(chr(39), chr(39) * 2)}'" for path in paths)
+    return f"[{values}]"
+
+
+def build_role_lookup(
+    files: Iterable[Path],
+    destination: Path,
+    *,
+    window: RipeWindow,
+    source: str,
+    workers: int = DEFAULT_PREPROCESS_WORKERS,
+) -> dict[str, int]:
+    """Aggregate RIPE dumps through reusable per-file Parquet parts."""
+    source_files = [Path(path) for path in files]
+    if not source_files:
+        raise ValueError("RIPE Atlas input list is empty")
+    if workers < 1:
+        raise ValueError("RIPE preprocessing workers must be positive")
+    # An hourly public dump selected for a window is wholly inside that window,
+    # so its part can be shared by s4/s12 and neighboring campaign windows.
+    # API/local files can span arbitrary periods and retain the exact filter.
+    apply_window = not source.startswith("daily-dumps")
+    parts_root = destination.parents[2] / "file-parts"
+    prepared: list[Path] = []
+    metadata_rows: list[dict] = []
+    pending = []
+    for path in source_files:
+        key = _part_cache_key(path, window, apply_window=apply_window)
+        part = parts_root / f"{key}.pq"
+        metadata = parts_root / f"{key}.json"
+        if part.is_file() and metadata.is_file():
+            prepared.append(part)
+            metadata_rows.append(json.loads(metadata.read_text(encoding="utf-8")))
+        else:
+            pending.append(
+                (
+                    str(path),
+                    str(part),
+                    str(metadata),
+                    window.start.isoformat(),
+                    window.end.isoformat(),
+                    apply_window,
+                )
+            )
+
+    worker_count = min(workers, len(pending))
+    if pending and worker_count > 1:
+        logger.info(
+            f"preprocessing {len(pending)} RIPE dump(s) with {worker_count} parallel workers"
+        )
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            for part, info in executor.map(_prepare_role_part, pending):
+                prepared.append(Path(part))
+                metadata_rows.append(info)
+    else:
+        for arguments in pending:
+            part, info = _prepare_role_part(arguments)
+            prepared.append(Path(part))
+            metadata_rows.append(info)
+
+    if not prepared:
+        raise ValueError("RIPE Atlas inputs contain no public IPv4 traceroute replies")
+    part_sources = _sql_paths(prepared)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_suffix(destination.suffix + ".part")
+    partial.unlink(missing_ok=True)
+    con = duckdb.connect()
+    try:
+        con.execute(
+            f"""
+            COPY (
+                WITH all_parts AS (
+                    SELECT * FROM read_parquet({part_sources})
+                ), base AS (
+                    SELECT
+                        IP_ADDR,
+                        bool_or(T) AS T,
+                        bool_or(D) AS D,
+                        sum(TRACE_COUNT)::BIGINT AS TRACE_COUNT,
+                        min(FIRST_SEEN)::BIGINT AS FIRST_SEEN,
+                        max(LAST_SEEN)::BIGINT AS LAST_SEEN
+                    FROM all_parts GROUP BY IP_ADDR
+                ), probes AS (
+                    SELECT IP_ADDR, count(DISTINCT probe)::BIGINT AS PROBE_COUNT
+                    FROM all_parts, unnest(PROBES) AS u(probe) GROUP BY IP_ADDR
+                ), measurements AS (
+                    SELECT IP_ADDR, count(DISTINCT measurement)::BIGINT AS MEASUREMENT_COUNT
+                    FROM all_parts, unnest(MEASUREMENTS) AS u(measurement) GROUP BY IP_ADDR
+                ), protocols AS (
+                    SELECT
+                        IP_ADDR,
+                        string_agg(DISTINCT protocol, ',' ORDER BY protocol) AS PROTOCOLS
+                    FROM all_parts, unnest(PROTOCOLS) AS u(protocol) GROUP BY IP_ADDR
+                )
+                SELECT
+                    b.IP_ADDR,
+                    b.T,
+                    b.D,
+                    b.TRACE_COUNT,
+                    coalesce(p.PROBE_COUNT, 0)::BIGINT AS PROBE_COUNT,
+                    coalesce(m.MEASUREMENT_COUNT, 0)::BIGINT AS MEASUREMENT_COUNT,
+                    b.FIRST_SEEN,
+                    b.LAST_SEEN,
+                    coalesce(r.PROTOCOLS, '') AS PROTOCOLS
+                FROM base AS b
+                LEFT JOIN probes AS p USING (IP_ADDR)
+                LEFT JOIN measurements AS m USING (IP_ADDR)
+                LEFT JOIN protocols AS r USING (IP_ADDR)
+                ORDER BY b.IP_ADDR
+            ) TO '{str(partial).replace(chr(39), chr(39) * 2)}'
+            (FORMAT PARQUET, COMPRESSION ZSTD)
+            """
+        )
+        addresses, transit_addresses, destination_addresses = con.execute(
+            f"""
+            SELECT
+                count(*)::BIGINT,
+                count(*) FILTER (WHERE T)::BIGINT,
+                count(*) FILTER (WHERE D)::BIGINT
+            FROM read_parquet('{str(partial).replace(chr(39), chr(39) * 2)}')
+            """
+        ).fetchone()
+    finally:
+        con.close()
+    partial.replace(destination)
+
+    return {
+        "traces": sum(int(row["traces"]) for row in metadata_rows),
+        "addresses": int(addresses),
+        "transit_addresses": int(transit_addresses),
+        "destination_addresses": int(destination_addresses),
+        "skipped_outside_window": sum(int(row["skipped_outside_window"]) for row in metadata_rows),
+        "skipped_non_ipv4": sum(int(row["skipped_non_ipv4"]) for row in metadata_rows),
+        "preprocess_workers": min(workers, len(source_files)),
+        "reusable_file_parts": len(prepared),
     }
 
 
@@ -682,6 +864,7 @@ def prepare_ripe_atlas(
     input_dir: Path | None = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     dump_samples: int = DEFAULT_DUMP_SAMPLES,
+    preprocess_workers: int = DEFAULT_PREPROCESS_WORKERS,
     raw_root: Path = RAW_DATA_DIR,
     processed_root: Path = PROCESSED_DATA_DIR,
     dump_base_url: str = DEFAULT_DUMP_BASE_URL,
@@ -707,8 +890,14 @@ def prepare_ripe_atlas(
 
     with _exclusive_lock(dataset.directory / ".prepare.lock"):
         if not force and dataset.roles_path.is_file() and dataset.metadata_path.is_file():
-            logger.info(f"reusing RIPE Atlas role cache: {dataset.roles_path}")
-            return dataset
+            try:
+                cached_info = json.loads(dataset.metadata_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                cached_info = {}
+            if cached_info.get("cache_version") == RIPE_CACHE_VERSION:
+                logger.info(f"reusing RIPE Atlas role cache: {dataset.roles_path}")
+                return dataset
+            logger.info(f"rebuilding outdated RIPE Atlas role cache: {dataset.roles_path}")
 
         dump_slots: tuple[datetime, ...] = ()
         dump_days: tuple[date, ...] = ()
@@ -732,15 +921,29 @@ def prepare_ripe_atlas(
             )
             source_kind = "public-api"
 
-        stats = build_role_lookup(files, dataset.roles_path, window=window, source=key)
-        file_metadata = [
-            {
-                "path": str(path),
-                "size": path.stat().st_size,
-                "sha256": _sha256(path),
-            }
-            for path in files
-        ]
+        stats = build_role_lookup(
+            files,
+            dataset.roles_path,
+            window=window,
+            source=key,
+            workers=preprocess_workers,
+        )
+        parts_root = dataset.roles_path.parents[2] / "file-parts"
+        file_metadata = []
+        part_applies_window = not key.startswith("daily-dumps")
+        for path in files:
+            part_metadata_path = parts_root / (
+                f"{_part_cache_key(path, window, apply_window=part_applies_window)}.json"
+            )
+            part_metadata = json.loads(part_metadata_path.read_text(encoding="utf-8"))
+            file_metadata.append(
+                {
+                    "path": str(path),
+                    "size": path.stat().st_size,
+                    "sha256": part_metadata["source_sha256"],
+                    "part": str(part_metadata_path.with_suffix(".pq")),
+                }
+            )
         info = {
             "cache_version": RIPE_CACHE_VERSION,
             "source": source,
@@ -750,6 +953,7 @@ def prepare_ripe_atlas(
             "window_end": window.end.isoformat(),
             "lookback_days": lookback_days,
             "dump_samples": dump_samples if source == "daily-dumps" else None,
+            "preprocess_workers": preprocess_workers,
             "dump_base_url": dump_base_url if source == "daily-dumps" else None,
             "api_base_url": api_base_url if source == "api" else None,
             "sampled_dump_slots": (
@@ -808,6 +1012,12 @@ def main(
         min=1,
         help="evenly distributed hourly daily-dump files within the window",
     ),
+    preprocess_workers: int = typer.Option(
+        DEFAULT_PREPROCESS_WORKERS,
+        min=1,
+        envvar="IPID_ANALYSIS_RIPE_WORKERS",
+        help="parallel RIPE dump preprocessing processes",
+    ),
     raw_root: Path = typer.Option(RAW_DATA_DIR),
     processed_root: Path = typer.Option(PROCESSED_DATA_DIR),
     force: bool = typer.Option(False, help="rebuild an existing cache"),
@@ -819,6 +1029,7 @@ def main(
             measurement_ids_file=measurement_ids_file,
             input_dir=input_dir,
             dump_samples=dump_samples,
+            preprocess_workers=preprocess_workers,
             raw_root=raw_root,
             processed_root=processed_root,
             force=force,

@@ -136,9 +136,7 @@ def _diagnostics(
         null_tables,
         config=cfg,
     )
-    cluster_count = int(
-        _cluster_counts_mass(values, present, lengths, ordered=ordered)[0]
-    )
+    cluster_count = int(_cluster_counts_mass(values, present, lengths, ordered=ordered)[0])
     raw = float(components.raw_uniformity[0])
     increment = float(components.increment_uniformity[0])
     gap = float(components.gap_uniformity[0])
@@ -195,10 +193,7 @@ def _classify_sequences(
     if not sequences:
         return []
     ipid_lists = pa.array(
-        [
-            [int(value) for value in sequence]
-            for sequence in sequences
-        ],
+        [[int(value) for value in sequence] for sequence in sequences],
         type=pa.list_(pa.int64()),
     )
     codes = classify_batch_mass(ipid_lists, cfg, random_null_tables=null_tables)
@@ -232,9 +227,7 @@ def _default_output_directories(
     if not measurement.zmap_id:
         raise ValueError(f"{measurement.target}: zmap id is required for output paths")
     relative = (
-        Path(measurement.zmap_id)
-        / measurement.artifact_directory
-        / "random-reproducibility"
+        Path(measurement.zmap_id) / measurement.artifact_directory / "random-reproducibility"
     )
     return processed_root / relative, figures_root / relative
 
@@ -258,8 +251,7 @@ def _proportional_stratified_sample(
         }
         groups = {component: values for component, values in groups.items() if values}
         exact = {
-            component: maximum * len(values) / len(rows)
-            for component, values in groups.items()
+            component: maximum * len(values) / len(rows) for component, values in groups.items()
         }
         quotas = {
             component: min(len(groups[component]), math.floor(value))
@@ -357,9 +349,7 @@ def prepare_random_reproducibility_paths(
         raise ValueError("control_count must be non-negative")
     wanted = min(wanted, len(random_rows), maximum_targets - len(unclassified))
     near_count = (wanted + 1) // 2
-    near = sorted(random_rows, key=lambda row: (row["RANDOM_SCORE"], row["IP_ADDR"]))[
-        :near_count
-    ]
+    near = sorted(random_rows, key=lambda row: (row["RANDOM_SCORE"], row["IP_ADDR"]))[:near_count]
     near_ips = {str(row["IP_ADDR"]) for row in near}
     far_candidates = [row for row in random_rows if str(row["IP_ADDR"]) not in near_ips]
     far = sorted(far_candidates, key=lambda row: _stable_key(str(row["IP_ADDR"]), seed))[
@@ -545,32 +535,22 @@ def _summary_rows(long_rows: list[dict[str, object]], cohort: pa.Table) -> list[
             "MODE_CLASS_FRACTION": mode_count / n if n else 0.0,
             "CLASS_ENTROPY_BITS": entropy,
             "BASELINE_CLASS_AGREEMENT": (
-                sum(row["CLASS"] == base["BASELINE_CLASS"] for row in observed) / n
-                if n
-                else 0.0
+                sum(row["CLASS"] == base["BASELINE_CLASS"] for row in observed) / n if n else 0.0
             ),
             "CLASS_COUNTS": json.dumps(dict(sorted(class_counts.items()))),
         }
         for component in COMPONENTS:
             summary[f"{component}_REJECTION_FRACTION"] = (
-                sum(bool(row[f"{component}_REJECTS_RANDOM"]) for row in observed) / n
-                if n
-                else 0.0
+                sum(bool(row[f"{component}_REJECTS_RANDOM"]) for row in observed) / n if n else 0.0
             )
             summary[f"{component}_LIMITING_FRACTION"] = (
-                sum(row["LIMITING_COMPONENT"] == component for row in observed) / n
-                if n
-                else 0.0
+                sum(row["LIMITING_COMPONENT"] == component for row in observed) / n if n else 0.0
             )
             values = [float(row[f"P_{component}"]) for row in observed]
             summary[f"{component}_P_MEDIAN"] = float(np.median(values)) if values else None
-        deterministic = Counter(
-            str(row["CLOSEST_DETERMINISTIC_CLASS"]) for row in observed
-        )
+        deterministic = Counter(str(row["CLOSEST_DETERMINISTIC_CLASS"]) for row in observed)
         if deterministic:
-            closest, count = min(
-                deterministic.items(), key=lambda item: (-item[1], item[0])
-            )
+            closest, count = min(deterministic.items(), key=lambda item: (-item[1], item[0]))
             summary["MODAL_CLOSEST_DETERMINISTIC_CLASS"] = closest
             summary["MODAL_CLOSEST_DETERMINISTIC_FRACTION"] = count / n
         else:
@@ -589,7 +569,9 @@ def _render_summary(
     observed = [row for row in long_rows if row["OBSERVED"]]
     figure, axes = plt.subplots(1, 3, figsize=(12, 3.6), constrained_layout=True)
 
-    class_names = [strategy.name for strategy in IPIDStrategy if strategy != IPIDStrategy.NOT_ENOUGH_SAMPLES]
+    class_names = [
+        strategy.name for strategy in IPIDStrategy if strategy != IPIDStrategy.NOT_ENOUGH_SAMPLES
+    ]
     bottoms = np.zeros(len(cohorts))
     for class_name in class_names:
         values = []
@@ -628,7 +610,9 @@ def _render_summary(
             for row in summary_rows
             if row["COHORT"] == cohort
         ]
-        axes[2].hist(values, bins=np.arange(-2.5, 105, 5), alpha=0.65, label=cohort.title(), color=color)
+        axes[2].hist(
+            values, bins=np.arange(-2.5, 105, 5), alpha=0.65, label=cohort.title(), color=color
+        )
     axes[2].set(
         xlabel="Modal-class share per address [%]",
         ylabel="Addresses",
@@ -763,9 +747,7 @@ def evaluate_random_reproducibility(
         "repeat_count": len(repeat_ids),
         "repeats": repeat_metadata,
         "component_rejections": {
-            component.lower(): sum(
-                bool(row[f"{component}_REJECTS_RANDOM"]) for row in observed
-            )
+            component.lower(): sum(bool(row[f"{component}_REJECTS_RANDOM"]) for row in observed)
             for component in COMPONENTS
         },
         "methodology": {

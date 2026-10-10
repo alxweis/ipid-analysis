@@ -472,13 +472,9 @@ def _classify_mass(
         FIXED_CONFIG,
         random_null_tables=candidate_null_tables,
         random_threshold=(
-            LEGACY_RANDOM_STRUCTURE_MIN_SCORE
-            if legacy_random_score
-            else candidate_threshold
+            LEGACY_RANDOM_STRUCTURE_MIN_SCORE if legacy_random_score else candidate_threshold
         ),
-        random_score_function=(
-            legacy_random_structure_scores if legacy_random_score else None
-        ),
+        random_score_function=(legacy_random_structure_scores if legacy_random_score else None),
     )
     return codes
 
@@ -1438,8 +1434,7 @@ def validate_classifier(
                 "base_seed": candidate_null_table_seed,
                 "component_seeds": {
                     "increment_uniformity": (
-                        candidate_null_table_seed
-                        + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
+                        candidate_null_table_seed + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
                     ),
                     "gap_uniformity": (
                         candidate_null_table_seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET

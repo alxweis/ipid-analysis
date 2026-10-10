@@ -64,6 +64,9 @@ def extract_probing_intervals(
         raise FileNotFoundError(input_path)
     output_path = probing_intervals_output_path(m)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.is_file() and output_path.stat().st_mtime_ns >= input_path.stat().st_mtime_ns:
+        logger.info(f"[{m.target}] reusing probing intervals -> {output_path}")
+        return output_path
 
     logger.info(f"[{m.target}] {m.measurement_id}: extracting probing intervals")
     start = time.monotonic()

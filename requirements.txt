@@ -4,6 +4,7 @@ matplotlib
 geoip2
 mkdocs
 numpy
+orjson
 pip
 pyarrow
 python-dotenv

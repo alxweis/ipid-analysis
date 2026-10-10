@@ -127,9 +127,7 @@ def parse_sequence(raw_sequence: str, sequence_length: int) -> np.ndarray:
 def sequence_diagnostics(sequence: np.ndarray, cfg: MeasurementConfig) -> SequenceDiagnostics:
     """Calculate the same RANDOM-score components used by production classification."""
     if sequence.shape != (cfg.sequence_length,):
-        raise ValueError(
-            f"sequence shape is {sequence.shape}, expected ({cfg.sequence_length},)"
-        )
+        raise ValueError(f"sequence shape is {sequence.shape}, expected ({cfg.sequence_length},)")
 
     values = sequence[None, :]
     present = values >= 0
@@ -146,9 +144,7 @@ def sequence_diagnostics(sequence: np.ndarray, cfg: MeasurementConfig) -> Sequen
 
     components = {
         "raw uniformity": float(score_components.raw_uniformity[0]),
-        "aggregated increment uniformity": float(
-            score_components.increment_uniformity[0]
-        ),
+        "aggregated increment uniformity": float(score_components.increment_uniformity[0]),
         "circular gap uniformity": float(score_components.gap_uniformity[0]),
     }
     return SequenceDiagnostics(

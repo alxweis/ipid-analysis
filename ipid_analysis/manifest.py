@@ -165,9 +165,7 @@ def resolve_random_reproducibility(
     baseline_target = f"{protocol}.ipid.no-connection.fixed-interval.mass"
     baseline = resolve(manifest, baseline_target)
     if baseline is None:
-        raise ValueError(
-            f"{protocol}.random_reproducibility requires {baseline_target}"
-        )
+        raise ValueError(f"{protocol}.random_reproducibility requires {baseline_target}")
     baseline_id = value.get("baseline")
     if baseline_id != baseline.measurement_id:
         raise ValueError(
@@ -197,9 +195,7 @@ def resolve_random_reproducibility(
     def required_name(field: str) -> str:
         result = value.get(field)
         if not isinstance(result, str) or not result or Path(result).name != result:
-            raise ValueError(
-                f"{protocol}.random_reproducibility.{field} must be a file name"
-            )
+            raise ValueError(f"{protocol}.random_reproducibility.{field} must be a file name")
         return result
 
     return RandomReproducibility(

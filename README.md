@@ -217,12 +217,16 @@ IP-ID campaign:
 [UTC-day(campaign start) - 28 days, UTC-day(campaign start))
 ```
 
-The default `daily-dumps` source downloads four reproducibly and evenly
+The default `daily-dumps` source downloads twelve reproducibly and evenly
 distributed hourly traceroute archives from that fixed window. Current hourly
 archives are commonly 2--3 GB each; downloading all 672 hours would otherwise
-exceed 1.5 TB for one campaign. Increase `--dump-samples` when deliberately
-allocating more network, storage, and processing capacity. Raw downloads are
-shared and retained below the S3-mounted analysis data directory:
+exceed 1.5 TB for one campaign. Four worker processes parse independent dumps
+in parallel. Each file produces a reusable compact part below
+`data/processed/ripe-atlas/file-parts`; overlapping campaign windows therefore
+do not parse that dump again. Adjust `--dump-samples` and
+`--preprocess-workers` when deliberately changing coverage or CPU pressure.
+Raw downloads are shared and retained below the S3-mounted analysis data
+directory:
 
 RIPE exposes these dumps as a rolling archive. Preparation reads the public
 directory index before selecting files. When retention has removed the start
@@ -240,7 +244,7 @@ data/raw/ripe-atlas/daily-dumps/YYYY-MM-DD/
 The compact reusable lookup and complete source metadata are stored below:
 
 ```text
-data/processed/ripe-atlas/<window>/daily-dumps-s4/
+data/processed/ripe-atlas/<window>/daily-dumps-s12/
 ```
 
 Prepare a window explicitly with:
@@ -260,14 +264,17 @@ make prepare-ripe-atlas ARGS="--campaign-start 2026-09-21T02:09:12Z \
 Previously downloaded or privately supplied RIPE JSONL/BZip2 files can be
 imported with `--input-dir`. Automatic postprocessing reads the corresponding
 `IPID_ANALYSIS_RIPE_SOURCE`, `IPID_ANALYSIS_RIPE_MEASUREMENT_IDS`,
-`IPID_ANALYSIS_RIPE_INPUT_DIR`, and `IPID_ANALYSIS_RIPE_DUMP_SAMPLES`
+`IPID_ANALYSIS_RIPE_INPUT_DIR`, `IPID_ANALYSIS_RIPE_DUMP_SAMPLES`, and
+`IPID_ANALYSIS_RIPE_WORKERS`
 settings. Set `IPID_ANALYSIS_SKIP_RIPE=1`
 only when deliberately omitting the analysis.
 
 Only globally routable IPv4 replies enter the lookup. An address is
 `Transit-Observed` when it replied as an intermediate hop at least once;
 addresses that replied as a traceroute destination but were never intermediate
-hops are `Destination-Only`. An address observed in both roles remains
+hops are `No Transit Evidence`. Within the RIPE lookup this is exactly the
+destination-only population because only observed transit or destination
+replies enter the lookup. An address observed in both roles remains
 `Transit-Observed`. Unmatched IP-ID targets are reported as coverage and are
 not treated as endpoints. Every matched IP address contributes once to its
 role's strategy distribution, independently of its RIPE observation count.
@@ -279,13 +286,29 @@ produce these artifacts beside the corresponding CAIDA results:
 *_ripe-atlas-strategy-join.pq
 *_ripe-atlas-role-strategy-distribution.pq
 *_ripe-atlas-role-by-strategy.{pdf,json}
+*_ripe-atlas-os-role-join.pq
+*_ripe-atlas-role-os-distribution.pq
+*_ripe-atlas-role-by-os.{pdf,json}
 *_caida-ripe-role-agreement.pq
+*_caida-ripe-role-agreement.pdf
+*_caida-ripe-intersection-by-strategy.pq
+*_caida-ripe-intersection-role-by-strategy.{pdf,json}
 ```
 
 The PDF uses the same strategy order, colors, typography, and compact legend as
 the existing manuscript figures. When ITDK is enabled, the agreement artifact
 reports the dual-matched populations where both, only CAIDA, only RIPE, or
 neither source observed transit behavior.
+
+All CAIDA/RIPE join artifacts are matched-only: unmatched measurement rows are
+counted for coverage but are never copied into population-sized Parquet files.
+Current outputs are reused when their strategy, role, and OS inputs have not
+changed. To rerun only these analyses for an already completed campaign, use:
+
+```bash
+make analyse-network-roles \
+  MANIFEST=data/analysis-jobs/icmp_2026-09-21_02-09-12/manifest.json
+```
 
 ## Strategy classification by measurement scale
 

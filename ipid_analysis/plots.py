@@ -31,8 +31,7 @@ def strategy_counts(strategies_path: Path) -> dict[str, int]:
     """Absolute count per strategy (canonical order, missing ones as 0)."""
     con = duckdb.connect()
     rows = con.execute(
-        "SELECT IPID_SELECTION_STRATEGY AS s, count(*) AS n "
-        "FROM read_parquet($p) GROUP BY 1",
+        "SELECT IPID_SELECTION_STRATEGY AS s, count(*) AS n FROM read_parquet($p) GROUP BY 1",
         {"p": str(strategies_path)},
     ).fetchall()
     con.close()
@@ -143,8 +142,9 @@ def plot_probing_intervals(stats: dict, output_pdf: Path, title: str | None = No
         width = (edges[1] - edges[0]) * 0.95 if len(edges) > 1 else 1
         ax.bar(centers, counts, width=width, color=BAR_COLOR, align="center")
         if "p50" in stats:
-            ax.axvline(stats["p50"], color=ACCENT, ls="--", lw=1,
-                       label=f"median {stats['p50']:,} µs")
+            ax.axvline(
+                stats["p50"], color=ACCENT, ls="--", lw=1, label=f"median {stats['p50']:,} µs"
+            )
             ax.legend()
     ax.set_xlabel("Probing interval (µs)")
     ax.set_ylabel("Count")

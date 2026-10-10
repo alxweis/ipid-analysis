@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 from functools import lru_cache
+import json
 import math
 from pathlib import Path
 import re
@@ -820,9 +821,39 @@ def classify_measurement(
     snapshot_path = raw_dir / SNAPSHOT_NAME
     persisted_path = raw_dir / OUTPUT_NAME
     output_path = strategies_output_path(m, processed_root)
+    publish_metadata_path = output_path.with_suffix(".published.json")
+    if reclassify:
+        publish_metadata_path.unlink(missing_ok=True)
 
     if persisted_path.is_file() and not reclassify:
+        persisted_stat = persisted_path.stat()
+        try:
+            publish_metadata = json.loads(publish_metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            publish_metadata = {}
+        if output_path.is_file() and publish_metadata == {
+            "source": str(persisted_path),
+            "size": persisted_stat.st_size,
+            "mtime_ns": persisted_stat.st_mtime_ns,
+        }:
+            n = pq.ParquetFile(output_path).metadata.num_rows
+            logger.info(
+                f"[{m.target}] reusing {n:,} published workflow classifications -> {output_path}"
+            )
+            return output_path
         n = _publish_persisted_strategies(persisted_path, output_path)
+        publish_metadata_path.write_text(
+            json.dumps(
+                {
+                    "source": str(persisted_path),
+                    "size": persisted_stat.st_size,
+                    "mtime_ns": persisted_stat.st_mtime_ns,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         logger.success(
             f"[{m.target}] reused {n:,} workflow-classified IPs "
             f"from {persisted_path} -> {output_path}"
