@@ -422,7 +422,7 @@ def _iter_json_lines(stream: TextIO) -> Iterator[dict]:
 
 
 def _open_json_lines(path: Path) -> AbstractContextManager[TextIO]:
-    if path.suffix == ".bz2":
+    if ".bz2" in path.suffixes:
         return bz2.open(path, "rt", encoding="utf-8", errors="strict")
     return path.open("rt", encoding="utf-8", errors="strict")
 
