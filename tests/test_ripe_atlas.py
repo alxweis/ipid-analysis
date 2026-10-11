@@ -1,8 +1,10 @@
 import bz2
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
+import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -70,6 +72,62 @@ def _record(
 
 
 class RipeAtlasTest(unittest.TestCase):
+    def test_lock_recovers_dead_legacy_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / ".prepare.lock"
+            lock.write_text("pid=512719\n", encoding="utf-8")
+
+            with (
+                patch.object(ripe_atlas_module, "_pid_is_alive", return_value=False),
+                ripe_atlas_module._exclusive_lock(
+                    lock,
+                    timeout_seconds=0.1,
+                    poll_seconds=0.001,
+                ),
+            ):
+                owner = json.loads(lock.read_text(encoding="utf-8"))
+                self.assertEqual(owner["version"], ripe_atlas_module.RIPE_LOCK_VERSION)
+                self.assertEqual(owner["pid"], os.getpid())
+
+            self.assertFalse(lock.exists())
+
+    def test_lock_never_steals_active_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / ".prepare.lock"
+            content = f"pid={os.getpid()}\n"
+            lock.write_text(content, encoding="utf-8")
+
+            with (
+                patch.object(ripe_atlas_module, "_pid_is_alive", return_value=True),
+                self.assertRaisesRegex(TimeoutError, "state=active"),
+                ripe_atlas_module._exclusive_lock(
+                    lock,
+                    timeout_seconds=0.02,
+                    poll_seconds=0.001,
+                ),
+            ):
+                self.fail("active lock was stolen")
+
+            self.assertEqual(lock.read_text(encoding="utf-8"), content)
+
+    def test_lock_release_does_not_unlink_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / ".prepare.lock"
+            with ripe_atlas_module._exclusive_lock(lock):
+                lock.unlink()
+                lock.write_text("replacement\n", encoding="utf-8")
+            self.assertEqual(lock.read_text(encoding="utf-8"), "replacement\n")
+
+    def test_lock_is_removed_when_protected_work_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / ".prepare.lock"
+            with (
+                self.assertRaisesRegex(RuntimeError, "failed work"),
+                ripe_atlas_module._exclusive_lock(lock),
+            ):
+                raise RuntimeError("failed work")
+            self.assertFalse(lock.exists())
+
     def test_campaign_window_prefers_zmap_and_samples_evenly(self):
         manifest = {
             "icmp": {
@@ -491,9 +549,11 @@ class RipeAtlasTest(unittest.TestCase):
                     workers=1,
                 )
 
-            with patch.object(ripe_atlas_module, "_build_role_part", side_effect=slow_build):
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    results = list(executor.map(build, range(2)))
+            with (
+                patch.object(ripe_atlas_module, "_build_role_part", side_effect=slow_build),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                results = list(executor.map(build, range(2)))
 
             self.assertEqual(calls, 1)
             self.assertEqual(max_active, 1)
@@ -504,6 +564,50 @@ class RipeAtlasTest(unittest.TestCase):
             self.assertEqual(len(list(parts_root.glob("*.pq"))), 1)
             self.assertEqual(list(parts_root.glob("*.lock")), [])
             self.assertEqual(list(parts_root.glob("*.part")), [])
+
+    def test_role_lookup_recovers_stale_per_dump_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "traceroute.bz2"
+            window = campaign_window(datetime(2026, 1, 29, 12, tzinfo=timezone.utc))
+            timestamp = int(datetime(2026, 1, 15, 12, tzinfo=timezone.utc).timestamp())
+            with bz2.open(source, "wt", encoding="utf-8") as output:
+                output.write(
+                    json.dumps(
+                        _record(
+                            timestamp,
+                            "1.1.1.1",
+                            ["8.8.8.8", "1.1.1.1"],
+                            measurement=10,
+                            probe=100,
+                        )
+                    )
+                    + "\n"
+                )
+            destination = (
+                root / "processed" / "ripe-atlas" / window.label / "daily-dumps-s1" / "roles.pq"
+            )
+            part_key = ripe_atlas_module._part_cache_key(
+                source,
+                window,
+                apply_window=False,
+            )
+            part_lock = destination.parents[2] / "file-parts" / f"{part_key}.lock"
+            part_lock.parent.mkdir(parents=True)
+            part_lock.write_text("pid=512719\n", encoding="utf-8")
+
+            with patch.object(ripe_atlas_module, "_pid_is_alive", return_value=False):
+                result = build_role_lookup(
+                    [source],
+                    destination,
+                    window=window,
+                    source="daily-dumps-s1",
+                    workers=1,
+                )
+
+            self.assertEqual(result["addresses"], 2)
+            self.assertFalse(part_lock.exists())
+            self.assertEqual(pq.ParquetFile(destination).metadata.num_rows, 2)
 
     def test_prepare_local_input_is_copied_and_cached(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -530,9 +634,23 @@ class RipeAtlasTest(unittest.TestCase):
                 "raw_root": root / "raw",
                 "processed_root": root / "processed",
             }
-            first = prepare_ripe_atlas(**arguments)
+            window = campaign_window(arguments["campaign_start"])
+            local_digest = hashlib.sha256(str(source_dir.resolve()).encode()).hexdigest()[:12]
+            prepare_lock = (
+                root
+                / "processed"
+                / "ripe-atlas"
+                / window.label
+                / f"local-{local_digest}"
+                / ".prepare.lock"
+            )
+            prepare_lock.parent.mkdir(parents=True)
+            prepare_lock.write_text("pid=512719\n", encoding="utf-8")
+            with patch.object(ripe_atlas_module, "_pid_is_alive", return_value=False):
+                first = prepare_ripe_atlas(**arguments)
             second = prepare_ripe_atlas(**arguments)
             self.assertEqual(first, second)
+            self.assertFalse(prepare_lock.exists())
             self.assertTrue(first.roles_path.is_file())
             metadata = json.loads(first.metadata_path.read_text())
             self.assertEqual(metadata["source_kind"], "local-files")
