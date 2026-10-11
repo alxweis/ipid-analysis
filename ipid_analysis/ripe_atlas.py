@@ -26,11 +26,13 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import time
 from typing import TextIO
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+import uuid
 
 import duckdb
 from loguru import logger
@@ -56,8 +58,12 @@ DEFAULT_PREPROCESS_WORKERS = 4
 DEFAULT_DOWNLOAD_ATTEMPTS = 5
 DEFAULT_DUMP_BASE_URL = "https://data-store.ripe.net/datasets/atlas-daily-dumps"
 DEFAULT_API_BASE_URL = "https://atlas.ripe.net/api/v2"
+DEFAULT_LOCK_TIMEOUT_SECONDS = 6 * 3600.0
+DEFAULT_LOCK_POLL_SECONDS = 1.0
+MALFORMED_LOCK_GRACE_SECONDS = 300.0
 RIPE_CACHE_VERSION = "3"
 RIPE_PART_CACHE_VERSION = "1"
+RIPE_LOCK_VERSION = 1
 _MEASUREMENT_TIMESTAMP_RE = re.compile(
     r"_(?P<stamp>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:$|[^0-9])"
 )
@@ -230,24 +236,212 @@ def _dataset_paths(
     )
 
 
+def _boot_id() -> str | None:
+    """Return the Linux boot ID used to reject locks left by an earlier boot."""
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+    except OSError:
+        return None
+
+
+def _process_start_token(pid: int) -> str | None:
+    """Return Linux process start ticks so a reused PID is not mistaken for the owner."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except OSError:
+        return None
+    # The command in field 2 is parenthesized and may contain spaces or ')'.
+    closing_parenthesis = stat.rfind(")")
+    if closing_parenthesis < 0:
+        return None
+    fields_from_state = stat[closing_parenthesis + 2 :].split()
+    # starttime is field 22; the list above starts at field 3.
+    return fields_from_state[19] if len(fields_from_state) > 19 else None
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        # Unlike POSIX, Windows implements os.kill(pid, 0) through
+        # TerminateProcess.  Query the process handle instead so the liveness
+        # check can never stop the lock owner.
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        process_query_limited_information = 0x1000
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        # ERROR_INVALID_PARAMETER means that the PID does not exist.  Access
+        # denied and unknown errors are treated conservatively as active.
+        return ctypes.get_last_error() != 87
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        # Unknown platform-specific errors must not make us steal a possibly
+        # active lock.
+        return True
+    return True
+
+
+def _new_lock_owner() -> dict[str, object]:
+    pid = os.getpid()
+    return {
+        "version": RIPE_LOCK_VERSION,
+        "token": uuid.uuid4().hex,
+        "pid": pid,
+        "hostname": socket.gethostname(),
+        "boot_id": _boot_id(),
+        "process_start": _process_start_token(pid),
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def _read_lock_owner(path: Path) -> tuple[dict[str, object] | None, str]:
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        return None, f"unreadable ({exc})"
+    try:
+        owner = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        # PR #97 wrote this legacy format. Keep it recoverable after upgrade.
+        match = re.fullmatch(r"pid=(\d+)", content)
+        if match is None:
+            return None, "malformed"
+        owner = {"version": 0, "pid": int(match.group(1))}
+    if not isinstance(owner, dict) or not isinstance(owner.get("pid"), int):
+        return None, "malformed"
+    return owner, "parsed"
+
+
+def _lock_owner_state(owner: dict[str, object] | None) -> tuple[str, str]:
+    """Return active, stale, foreign, or malformed plus a diagnostic owner string."""
+    if owner is None:
+        return "malformed", "unknown owner"
+    pid = int(owner["pid"])
+    hostname = owner.get("hostname")
+    description = f"pid={pid}"
+    if hostname:
+        description += f", host={hostname}"
+        if hostname != socket.gethostname():
+            return "foreign", description
+
+    current_boot_id = _boot_id()
+    owner_boot_id = owner.get("boot_id")
+    if owner_boot_id and current_boot_id and owner_boot_id != current_boot_id:
+        return "stale", f"{description}, previous boot"
+    if not _pid_is_alive(pid):
+        return "stale", f"{description}, process absent"
+
+    owner_start = owner.get("process_start")
+    current_start = _process_start_token(pid)
+    if owner_start and current_start and owner_start != current_start:
+        return "stale", f"{description}, PID reused"
+    return "active", description
+
+
+def _unlink_same_file(path: Path, expected_stat: os.stat_result) -> bool:
+    """Unlink only if *path* still names the inode that was inspected/opened."""
+    try:
+        current_stat = path.stat()
+        if not os.path.samestat(expected_stat, current_stat):
+            return False
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _unlink_owned_lock(
+    path: Path,
+    expected_stat: os.stat_result,
+    expected_token: str,
+) -> bool:
+    """Release only the lock file created by this context manager."""
+    owner, _ = _read_lock_owner(path)
+    if owner is None or owner.get("token") != expected_token:
+        return False
+    return _unlink_same_file(path, expected_stat)
+
+
 @contextmanager
-def _exclusive_lock(path: Path, timeout_seconds: float = 3600.0):
+def _exclusive_lock(
+    path: Path,
+    timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
+    *,
+    poll_seconds: float = DEFAULT_LOCK_POLL_SECONDS,
+    malformed_grace_seconds: float = MALFORMED_LOCK_GRACE_SECONDS,
+):
+    """Acquire a portable exclusive lock and recover owners that no longer exist."""
+    if timeout_seconds < 0 or poll_seconds <= 0 or malformed_grace_seconds < 0:
+        raise ValueError("invalid RIPE lock timing configuration")
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout_seconds
-    descriptor: int | None = None
-    while descriptor is None:
+    acquired_stat: os.stat_result | None = None
+    owner = _new_lock_owner()
+    owner_token = str(owner["token"])
+    payload = (json.dumps(owner, sort_keys=True) + "\n").encode()
+    last_description = "unknown owner"
+    next_progress_log = time.monotonic() + 60.0
+    while True:
         try:
-            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(descriptor, f"pid={os.getpid()}\n".encode())
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"timed out waiting for RIPE preparation lock: {path}")
-            time.sleep(1.0)
+            try:
+                existing_stat = path.stat()
+            except FileNotFoundError:
+                continue
+            existing_owner, parse_status = _read_lock_owner(path)
+            state, description = _lock_owner_state(existing_owner)
+            age_seconds = max(0.0, time.time() - existing_stat.st_mtime)
+            last_description = f"{description}, state={state}, age={age_seconds:.0f}s"
+            recover = state == "stale" or (
+                state == "malformed" and age_seconds >= malformed_grace_seconds
+            )
+            if recover and _unlink_same_file(path, existing_stat):
+                logger.warning(
+                    f"recovered stale RIPE preparation lock {path} ({last_description})"
+                )
+                continue
+
+            now = time.monotonic()
+            if now >= deadline:
+                raise TimeoutError(
+                    f"timed out waiting for RIPE preparation lock: {path} "
+                    f"({last_description}; parse={parse_status})"
+                )
+            if now >= next_progress_log:
+                logger.info(f"waiting for RIPE preparation lock {path} ({last_description})")
+                next_progress_log = now + 60.0
+            time.sleep(min(poll_seconds, max(0.0, deadline - now)))
+        else:
+            acquired_stat = os.fstat(descriptor)
+            try:
+                os.write(descriptor, payload)
+                os.fsync(descriptor)
+            except Exception:
+                os.close(descriptor)
+                _unlink_same_file(path, acquired_stat)
+                raise
+            os.close(descriptor)
+            # The lock is represented by the path, not by an open handle.
+            # Closing here also permits safe replacement tests and recovery on
+            # Windows, where an open file cannot be unlinked.
+            break
     try:
         yield
     finally:
-        os.close(descriptor)
-        path.unlink(missing_ok=True)
+        if acquired_stat is not None:
+            _unlink_owned_lock(path, acquired_stat, owner_token)
 
 
 def _remote_file_size(url: str) -> int:
