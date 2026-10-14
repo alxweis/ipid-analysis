@@ -47,11 +47,15 @@ class InterprotocolStabilityTests(unittest.TestCase):
             ])
             self.assertTrue(all(p.read_bytes().startswith(b"%PDF-") for p in paths))
             reflection = figures[0].axes[0]
-            heights = np.asarray([bar.get_height() for bar in reflection.patches]).reshape(5, 4)
-            np.testing.assert_allclose(heights[:, 0], [100 / 3, 100 / 3, 0, 100 / 3, 0])
+            heights = np.asarray([bar.get_height() for bar in reflection.patches]).reshape(4, 4)
+            np.testing.assert_allclose(heights[:, 0], [100 / 3, 100 / 3, 100 / 3, 0])
             np.testing.assert_allclose(heights[:, 1:3], 0)
-            np.testing.assert_allclose(heights[:, 3], [0, 0, 0, 0, 100])
-            self.assertEqual(reflection.get_xticklabels()[0].get_text(), "ICMP-TCP\n(N=3)")
+            np.testing.assert_allclose(heights[:, 3], [0, 0, 0, 100])
+            self.assertEqual(reflection.get_xticklabels()[0].get_text(), "ICMP$\\cap$TCP\n(N=3)")
+            np.testing.assert_allclose(figures[0].get_size_inches(), [6.5, 2.55])
+            self.assertEqual(reflection.get_ylabel(), "Percentage [%]")
+            self.assertEqual(reflection.get_title(), "")
+            np.testing.assert_allclose([bar.get_width() for bar in reflection.patches], 0.48)
             # No MULTI or RANDOM cohort must still produce an explicit empty plot.
             for figure in figures[2:]:
                 self.assertTrue(all(bar.get_height() == 0 for bar in figure.axes[0].patches))

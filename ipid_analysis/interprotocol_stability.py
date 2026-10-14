@@ -13,13 +13,18 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ipid_analysis.paper_figures import configure_compact_validation_style
+from ipid_analysis.paper_figures import (
+    COMPACT_PAPER_PDF_PADDING_INCHES,
+    COMPACT_PAPER_STROKE_WIDTH,
+    configure_compact_validation_style,
+)
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
     IPIDStrategy,
     MeasurementConfig,
     RANDOM_STRUCTURE_SCORE_VERSION,
     STRATEGY_NAMES,
+    STRATEGY_COLORS,
     STRATEGY_PRETTY,
     classify_batch_mass,
 )
@@ -28,7 +33,29 @@ STABILITY_STRATEGIES = (
     "REFLECTION", "CONSTANT", "PER_DESTINATION", "SINGLE", "PER_BUCKET", "MULTI", "RANDOM"
 )
 STATUS_ORDER = ("UNCHANGED", "CHANGED", "UNCLASSIFIED", "NOT_ENOUGH_SAMPLES", "NOT_EVALUATED")
+PLOT_STATUS_ORDER = ("UNCHANGED", "CHANGED", "NOT_ENOUGH_SAMPLES", "STRATEGY_NOT_CONFIRMED")
+PLOT_LABELS = ("Unchanged", "Changed", "Not Enough Samples", "Strategy Not Confirmed")
+PLOT_COLORS = tuple(STRATEGY_COLORS[s] for s in
+                    ("PER_BUCKET", "RANDOM", "NOT_ENOUGH_SAMPLES", "PER_DESTINATION"))
 NON_COUNTER_STRATEGIES = ("REFLECTION", "CONSTANT", "MULTI", "RANDOM")
+
+
+def plot_status(status: str) -> str:
+    return "STRATEGY_NOT_CONFIRMED" if status in ("UNCLASSIFIED", "NOT_EVALUATED") else status
+
+
+def style_percentage_axes(ax, fig):
+    """Match the existing compact interprotocol counter figures."""
+    ax.set_ylabel("Percentage [%]")
+    ax.set_ylim(0, 100)
+    ax.set_yticks(np.arange(0, 101, 20))
+    ax.set_axisbelow(True)
+    ax.grid(axis="y", color="#D9D9D9", linewidth=COMPACT_PAPER_STROKE_WIDTH)
+    ax.tick_params(axis="x", pad=1.5)
+    ax.legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01),
+              ncol=4, columnspacing=1.0, handlelength=1.25, handletextpad=0.45,
+              borderaxespad=0)
+    fig.subplots_adjust(left=0.095, right=0.995, bottom=0.28, top=0.79)
 STABILITY_SCHEMA = pa.schema(
     [
         ("IP_ADDR", pa.string()),
@@ -172,41 +199,35 @@ def plot_campaign_strategy_stability(
     figure_dir.mkdir(parents=True, exist_ok=True)
     configure_compact_validation_style()
     counts = Counter(
-        (row["BASELINE_STRATEGY"], row["PROTOCOL_GROUP"], row["STRATEGY_STATUS"])
+        (row["BASELINE_STRATEGY"], row["PROTOCOL_GROUP"], plot_status(row["STRATEGY_STATUS"]))
         for row in table.select(
             ["BASELINE_STRATEGY", "PROTOCOL_GROUP", "STRATEGY_STATUS"]
         ).to_pylist()
     )
-    labels = ("Unchanged", "Changed", "Unclassified", "Not enough samples", "Not evaluated")
-    colors = ("#82D486", "#ED9393", "#E2E2E2", "#B0B0B0", "#799ABE")
     outputs = []
     for strategy in NON_COUNTER_STRATEGIES:
-        totals = [sum(counts[strategy, group, status] for status in STATUS_ORDER)
+        totals = [sum(counts[strategy, group, status] for status in PLOT_STATUS_ORDER)
                   for group in groups]
-        fig, ax = plt.subplots(figsize=(7.16, 3.2))
-        x = np.arange(len(groups))
+        fig, ax = plt.subplots(figsize=(6.5, 2.55))
+        x = np.arange(len(groups)) * 0.84
         bottom = np.zeros(len(groups))
-        for status, label, color in zip(STATUS_ORDER, labels, colors, strict=True):
+        for status, label, color in zip(PLOT_STATUS_ORDER, PLOT_LABELS, PLOT_COLORS, strict=True):
             values = np.asarray([
                 100.0 * counts[strategy, group, status] / total if total else 0.0
                 for group, total in zip(groups, totals, strict=True)
             ])
-            ax.bar(x, values, bottom=bottom, width=0.55, label=label, color=color,
-                   edgecolor="white", linewidth=0.45)
+            ax.bar(x, values, bottom=bottom, width=0.48, label=label, color=color,
+                   edgecolor="white", linewidth=COMPACT_PAPER_STROKE_WIDTH)
             bottom += values
         ax.set_xticks(x, [
-            f"{group.upper()}\n(N={total})"
+            r"$\cap$".join(group.upper().split("-")) + f"\n(N={total})"
             for group, total in zip(groups, totals, strict=True)
         ])
-        ax.set_ylim(0, 100)
-        ax.set_ylabel("IP / protocol observations [%]")
-        ax.set_xlabel("Protocol intersection (N = IP / protocol observations)")
-        ax.set_title(f"{STRATEGY_PRETTY[strategy]}: strategy stability")
-        ax.legend(frameon=False, fontsize=7, loc="lower center",
-                  bbox_to_anchor=(0.5, 1.14), ncol=3)
-        fig.tight_layout()
+        ax.set_xlim(x[0] - 0.34, x[-1] + 0.34)
+        ax.set_xlabel("Protocol Intersection (#IP / Protocol Observations)")
+        style_percentage_axes(ax, fig)
         output = figure_dir / f"interprotocol-campaign-{strategy.lower()}.pdf"
-        fig.savefig(output, bbox_inches="tight", metadata={
+        fig.savefig(output, bbox_inches="tight", pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES, metadata={
             "Title": f"Inter-protocol strategy stability for {STRATEGY_PRETTY[strategy]}",
             "Subject": "Baseline strategy comparison; IP/protocol observation percentages",
             "Creator": "ipid-analysis",
@@ -218,37 +239,40 @@ def plot_campaign_strategy_stability(
 
 def plot_stability(table: pa.Table, figure_dir: Path, prefix: str) -> None:
     """Status bars and a transition matrix; all denominators are protocol observations."""
+    configure_compact_validation_style()
     rows = table.to_pylist()
-    counts = Counter((r["BASELINE_STRATEGY"], r["STRATEGY_STATUS"]) for r in rows)
-    fig, ax = plt.subplots(figsize=(9, 3.6))
+    counts = Counter((r["BASELINE_STRATEGY"], plot_status(r["STRATEGY_STATUS"])) for r in rows)
+    fig, ax = plt.subplots(figsize=(6.5, 2.55))
     bottom = np.zeros(len(STABILITY_STRATEGIES))
-    for status in STATUS_ORDER:
-        totals = [sum(counts[s, state] for state in STATUS_ORDER) for s in STABILITY_STRATEGIES]
+    for status, label, color in zip(PLOT_STATUS_ORDER, PLOT_LABELS, PLOT_COLORS, strict=True):
+        totals = [sum(counts[s, state] for state in PLOT_STATUS_ORDER) for s in STABILITY_STRATEGIES]
         values = np.asarray([
             100 * counts[s, status] / total if total else 0
             for s, total in zip(STABILITY_STRATEGIES, totals, strict=True)
         ])
-        ax.bar(STABILITY_STRATEGIES, values, bottom=bottom, label=status)
+        ax.bar([STRATEGY_PRETTY[s] for s in STABILITY_STRATEGIES], values, bottom=bottom,
+               label=label, color=color, width=0.48, edgecolor="white",
+               linewidth=COMPACT_PAPER_STROKE_WIDTH)
         bottom += values
-    ax.set_ylabel("IP / protocol observations [%]")
-    ax.set_ylim(0, 100)
+    style_percentage_axes(ax, fig)
     ax.tick_params(axis="x", rotation=25)
-    ax.legend(fontsize=7, loc="upper left", bbox_to_anchor=(1.01, 1))
-    fig.tight_layout()
-    fig.savefig(figure_dir / f"{prefix}-strategy-stability.pdf")
+    fig.savefig(figure_dir / f"{prefix}-strategy-stability.pdf", bbox_inches="tight",
+                pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
     plt.close(fig)
 
     labels = STRATEGY_NAMES + ["NOT_EVALUATED"]
     transitions = Counter((r["BASELINE_STRATEGY"], r["OBSERVED_STRATEGY"] or "NOT_EVALUATED")
                           for r in rows)
     matrix = np.asarray([[transitions[s, label] for label in labels] for s in STABILITY_STRATEGIES])
-    fig, ax = plt.subplots(figsize=(10, 4.5))
+    fig, ax = plt.subplots(figsize=(6.5, 3.2))
     image = ax.imshow(matrix, cmap="Blues", aspect="auto")
-    ax.set_yticks(range(len(STABILITY_STRATEGIES)), STABILITY_STRATEGIES)
-    ax.set_xticks(range(len(labels)), labels, rotation=40, ha="right")
+    ax.set_yticks(range(len(STABILITY_STRATEGIES)), [STRATEGY_PRETTY[s] for s in STABILITY_STRATEGIES])
+    ax.set_xticks(range(len(labels)), [STRATEGY_PRETTY.get(s, "Not Evaluated") for s in labels], rotation=40, ha="right")
+    ax.tick_params(axis="both", labelsize=7)
     ax.set_xlabel("Observed strategy under interleaving")
     ax.set_ylabel("Baseline strategy")
     fig.colorbar(image, ax=ax, label="IP / protocol observations")
     fig.tight_layout()
-    fig.savefig(figure_dir / f"{prefix}-strategy-transitions.pdf")
+    fig.savefig(figure_dir / f"{prefix}-strategy-transitions.pdf", bbox_inches="tight",
+                pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
     plt.close(fig)

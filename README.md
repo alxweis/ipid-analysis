@@ -53,6 +53,34 @@ bar includes its IP/protocol observation count; empty cohorts are shown as N=0.
 They are saved in the campaign figure directory and automatically uploaded to
 `results/reports/figures/` alongside the existing counter-class PDFs.
 
+Paper stability plots use the same Linux Libertine compact styling as
+`interprotocol-campaign-single.pdf`: 6.5 x 2.55 inch class figures, 0.48-wide
+bars, intersection labels, percentage grid, four-column legend, and identical
+PDF padding. Observation counts remain explicitly distinguished from unique IP
+counts. The overview and transition matrix also use the compact paper font,
+palette and PDF padding (the matrix retains its appropriate heatmap layout).
+
+For presentation, `UNCLASSIFIED` and `NOT_EVALUATED` are grouped as **Strategy
+Not Confirmed**. They remain separate in Parquet/JSON with `REASON`: the first
+means classification ran but confirmed no class, the second means it could not
+run (legacy layout, missing/ambiguous request IPIDs, or unsupported baseline).
+Neither means a detected strategy change. `NOT_ENOUGH_SAMPLES` remains separate.
+
+Each of the seven baseline strategies additionally gets
+`interprotocol-campaign-<strategy>-alternatives.json` and `.pq` in the campaign
+processed directory (use `per-destination` and `per-bucket` for those slugs).
+These select targets with at least one `CHANGED` observation or unconfirmed
+counter deployment, including `AMBIGUOUS` as in the counter plot. All protocol
+observations of those targets are retained, including unchanged or unevaluable
+ones. JSON groups counts by protocol intersection, individual protocol,
+alternative label, status, diagnostic reason and raw deployment; it includes
+unique affected-IP counts, overlapping trigger counts and measurement IDs.
+Parquet retains individual IPs, labels, reasons, deployment and triggers.
+Empty strategy reports are emitted too, and the worker uploads all files.
+Counter-deployment rejection does not imply a changed per-protocol strategy:
+the alternative may still be the original class. Reports do not invent a single
+replacement class for a mixed-protocol sequence.
+
 `UNCHANGED` means compatible with the previous label under this sample and
 classifier, not proof that the internal algorithm is identical. Conversely,
 `CHANGED` is an observed label transition, not proof that interleaving caused

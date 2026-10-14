@@ -23,6 +23,7 @@ import typer
 import yaml
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.interprotocol_alternatives import write_alternative_reports
 from ipid_analysis.interprotocol_stability import (
     STABILITY_STRATEGIES,
     classify_stability_file,
@@ -690,6 +691,7 @@ def classify_campaign(
     stability_temporary = stability_path.with_suffix(".pq.part")
     pq.write_table(stability, stability_temporary, compression="zstd")
     stability_temporary.replace(stability_path)
+    write_alternative_reports(stability, combined, output_dir, measurement_ids)
     write_stability_summary(
         stability, output_dir / "interprotocol-campaign-strategy-stability-summary.json"
     )
