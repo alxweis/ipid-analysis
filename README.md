@@ -2,13 +2,65 @@
 
 ## Inter-protocol deployment analysis
 
-The inter-protocol workflow compares only the existing deterministic counter
-classes `SINGLE`, `PER_DESTINATION`, and `PER_BUCKET`.  It first builds
+The inter-protocol workflow includes `REFLECTION`, `CONSTANT`, `SINGLE`,
+`PER_DESTINATION`, `PER_BUCKET`, `MULTI`, and `RANDOM`. It first builds
 same-strategy ICMP/TCP/UDP intersections from the canonical merged stateless
 strategy artifacts.  Pair cohorts exclude the corresponding same-strategy
 triple cohort; an address whose third protocol has another strategy remains in
 the applicable pair cohort. `PER_CONNECTION` is intentionally excluded because
 a transport connection cannot be shared with ICMP or across TCP and UDP.
+
+Two separate questions are evaluated:
+
+* Shared-counter deployment remains limited to `SINGLE`, `PER_DESTINATION`,
+  and `PER_BUCKET`. Other baseline classes have deployment `NOT_APPLICABLE`.
+* Strategy stability reclassifies each protocol's own reply subsequence using
+  the production strategy classifier, including MULTI and RANDOM, and compares
+  that label with the baseline. Request IPIDs are indexed by their actual global
+  interleaved positions, including constant-offset reflection and wraparound.
+
+New measurements use **4 connections x 25 requests per protocol** (200 requests
+per pair target, 300 per triple target), irrespective of the normal base config.
+The RT-based interleaving and fixed protocol order are retained. The larger
+sample also applies to the existing counter cohorts. Update both repositories
+before starting a new run; the three-manifest start command is unchanged.
+
+The new `interprotocol-strategy-stability.pq` contains one row per IP/protocol:
+`IP_ADDR`, `PROTOCOL_GROUP`, `PROTOCOL`, `BASELINE_STRATEGY`, `OBSERVED_STRATEGY`,
+`STRATEGY_STATUS`, `REASON`, `RECEIVED_SAMPLES`, and `EXPECTED_SAMPLES`.
+Statuses are `UNCHANGED`, `CHANGED`, `UNCLASSIFIED`, `NOT_ENOUGH_SAMPLES`, or
+`NOT_EVALUATED`. A change requires a concrete observed class. Missing replies
+affect only the corresponding protocol and are never compressed away. Complete
+100-position sequences are required for stability classification. Historical
+short runs or snapshots without a usable request pattern remain readable, but
+their stability is explicitly `NOT_EVALUATED`.
+
+Each group writes `interprotocol-strategy-stability-summary.json` alongside the
+new Parquet and `interprotocol-strategy-stability.pdf` plus
+`interprotocol-strategy-transitions.pdf` in its figure directory. The campaign
+writes the same four artifacts with prefix `interprotocol-campaign-` instead
+of `interprotocol-`. The existing worker uploads all of them under its normal
+`results/` and `results/reports/figures/` paths. Counts in these files and plots
+are **IP/protocol observations**, not unique IP counts. Existing deployment
+plots continue to describe the three counter classes only.
+
+Four additional campaign PDFs provide one stability plot per non-counter class:
+`interprotocol-campaign-reflection.pdf`, `interprotocol-campaign-constant.pdf`,
+`interprotocol-campaign-multi.pdf`, and `interprotocol-campaign-random.pdf`.
+Each compares all four protocol intersections with stacked percentages for
+unchanged, changed, unclassified, missing, and unevaluated observations. Every
+bar includes its IP/protocol observation count; empty cohorts are shown as N=0.
+They are saved in the campaign figure directory and automatically uploaded to
+`results/reports/figures/` alongside the existing counter-class PDFs.
+
+`UNCHANGED` means compatible with the previous label under this sample and
+classifier, not proof that the internal algorithm is identical. Conversely,
+`CHANGED` is an observed label transition, not proof that interleaving caused
+it: elapsed time, vantage point and RT-based versus fixed-interval timing can
+also matter. RANDOM reuses the calibrated 4x25 production score; its original
+fixed-interval error-rate validation is not a new validation of interleaved
+traffic. Same-strategy cohort selection is unchanged; addresses with differing
+baseline classes across every protocol are still outside these cohorts.
 
 The normal analysis worker performs the complete workflow over S3. Each
 completed base sweep prints its canonical analysis manifest URI. The
@@ -1242,4 +1294,5 @@ the base, increment-table, and gap-table seeds explicitly. The command never
 changes the production classifier.
 
 --------
+
 

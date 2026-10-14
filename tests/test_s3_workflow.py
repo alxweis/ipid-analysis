@@ -206,6 +206,19 @@ class S3WorkflowTest(unittest.TestCase):
             combined_uri = f"{request['result_prefix']}/interprotocol-campaign-deployments.pq"
             self.assertEqual(json.loads(client.objects[summary_uri])["rows"], 1)
             self.assertIn(combined_uri, client.objects)
+            for strategy in ("reflection", "constant", "multi", "random"):
+                self.assertIn(
+                    f"{request['result_prefix']}/reports/figures/interprotocol-campaign-{strategy}.pdf",
+                    client.objects,
+                )
+            self.assertIn(
+                f"{request['result_prefix']}/interprotocol-campaign-strategy-stability.pq",
+                client.objects,
+            )
+            self.assertIn(
+                f"{request['result_prefix']}/reports/figures/interprotocol-campaign-strategy-transitions.pdf",
+                client.objects,
+            )
             self.assertIn(
                 f"{request['result_prefix']}/reports/figures/interprotocol-campaign-single.pdf",
                 client.objects,
@@ -778,3 +791,4 @@ class S3WorkflowTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
