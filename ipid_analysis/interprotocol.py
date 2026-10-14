@@ -1,9 +1,8 @@
 """Build and analyse inter-protocol IP-ID measurements.
 
-The module deliberately reuses the three existing deterministic counter rules.
-It does not try to infer hash inputs or bucket identities: it only asks whether
-the observed sequence remains compatible with the already assigned strategy
-when protocols are combined.
+Shared-counter inference reuses the three deterministic counter rules without
+inferring hash inputs or bucket identities. A separate per-protocol stability
+analysis reclassifies all seven supported baseline strategies under interleaving.
 """
 
 from __future__ import annotations
@@ -24,6 +23,12 @@ import typer
 import yaml
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.interprotocol_stability import (
+    STABILITY_STRATEGIES,
+    classify_stability_file,
+    plot_stability,
+    write_stability_summary,
+)
 from ipid_analysis.manifest import load_manifest
 from ipid_analysis.paper_figures import (
     COMPACT_PAPER_PDF_PADDING_INCHES,
@@ -35,7 +40,7 @@ from ipid_analysis.strategy_merge import iter_strategy_merges
 
 app = typer.Typer(no_args_is_help=True)
 
-CLASSIFIER_VERSION = "1"
+CLASSIFIER_VERSION = "2"
 COUNTER_STRATEGIES = ("PER_DESTINATION", "SINGLE", "PER_BUCKET")
 GROUPS = {
     "icmp-tcp": ("icmp", "tcp"),
@@ -173,7 +178,7 @@ def build_target_files(
             "CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS strategy "
             f"FROM read_parquet('{escaped_input}') WHERE "
             "CAST(IPID_SELECTION_STRATEGY AS VARCHAR) "
-            f"IN ({','.join(repr(s) for s in COUNTER_STRATEGIES)})"
+            f"IN ({','.join(repr(s) for s in STABILITY_STRATEGIES)})"
         )
     triple_sql = """
         SELECT i.IP_ADDR, i.strategy AS IPID_SELECTION_STRATEGY
@@ -219,7 +224,7 @@ def build_target_files(
         "campaign_id": campaign_id,
         "inputs": {key: str(value) for key, value in inputs.items()},
         "input_rows": input_rows,
-        "strategies": list(COUNTER_STRATEGIES),
+        "strategies": list(STABILITY_STRATEGIES),
         "pair_semantics": "pair intersection minus same-strategy triple",
         "targets": counts,
     }
@@ -262,6 +267,10 @@ def partition_compatible(
 
 
 def classify_sequence(sequence: np.ndarray, cfg: InterprotocolConfig, strategy: str) -> str:
+    if strategy in STABILITY_STRATEGIES and strategy not in COUNTER_STRATEGIES:
+        # Stability is classified independently for each protocol; non-counter
+        # strategies cannot be interpreted as shared/isolated counter state.
+        return "NOT_APPLICABLE"
     if strategy not in COUNTER_STRATEGIES:
         return "STRATEGY_NOT_SUPPORTED"
     if sequence.size != cfg.sequence_length or (sequence < 0).any():
@@ -357,6 +366,11 @@ def classify_file(
     figure_dir = figure_dir or INTERPROTOCOL_FIGURES_DIR / output_dir.name
     figure_dir.mkdir(parents=True, exist_ok=True)
     plot_deployments(counts, figure_dir / "interprotocol-deployments.pdf")
+    snapshot = yaml.safe_load(snapshot_path.read_text())
+    stability = classify_stability_file(
+        raw_path, cfg, snapshot.get("request_ip_ids", []), output_dir
+    )
+    plot_stability(pq.read_table(stability), figure_dir, "interprotocol")
     (output_dir / "interprotocol-deployments.pdf").unlink(missing_ok=True)
     return output
 
@@ -365,7 +379,7 @@ def plot_target_population(counts: dict[str, dict[str, int]], output: Path) -> N
     labels = list(GROUPS)
     bottom = np.zeros(len(labels))
     fig, ax = plt.subplots(figsize=(7.16, 3.2))
-    for strategy in COUNTER_STRATEGIES:
+    for strategy in STABILITY_STRATEGIES:
         values = np.asarray([counts[group].get(strategy, 0) for group in labels])
         ax.bar(
             labels,
@@ -376,7 +390,7 @@ def plot_target_population(counts: dict[str, dict[str, int]], output: Path) -> N
         )
         bottom += values
     ax.set_ylabel("Target IP addresses")
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, fontsize=7, ncol=2)
     ax.tick_params(axis="x", rotation=20)
     fig.tight_layout()
     fig.savefig(output)
@@ -384,7 +398,8 @@ def plot_target_population(counts: dict[str, dict[str, int]], output: Path) -> N
 
 
 def plot_deployments(counts: Counter[tuple[str, str]], output: Path) -> None:
-    deployments = sorted({deployment for _, deployment in counts})
+    deployments = sorted({deployment for strategy, deployment in counts
+                          if strategy in COUNTER_STRATEGIES})
     fig, axes = plt.subplots(1, len(COUNTER_STRATEGIES), figsize=(7.16, 2.8), squeeze=False)
     colors = plt.get_cmap("tab10").colors
     for ax, strategy in zip(axes[0], COUNTER_STRATEGIES, strict=True):
@@ -455,7 +470,8 @@ def _campaign_counts(rows: list[dict]) -> dict[str, Counter[tuple[str, str]]]:
 def plot_campaign_deployments(counts: dict[str, Counter[tuple[str, str]]], output: Path) -> None:
     groups = [group for group in GROUPS if group in counts]
     deployments = sorted(
-        {deployment for group_counts in counts.values() for _, deployment in group_counts}
+        {deployment for group_counts in counts.values()
+         for strategy, deployment in group_counts if strategy in COUNTER_STRATEGIES}
     )
     colors = {
         deployment: plt.get_cmap("tab10").colors[index % 10]
@@ -646,6 +662,7 @@ def classify_campaign(
     figure_dir = figures_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
     figure_dir.mkdir(parents=True, exist_ok=True)
     tables = []
+    stability_tables = []
     measurement_ids = {}
     for group in GROUPS:
         specification = manifest["groups"].get(group)
@@ -661,11 +678,21 @@ def classify_campaign(
             figure_dir=figure_dir / group,
         )
         tables.append(pq.read_table(result).cast(RESULT_SCHEMA))
+        stability_tables.append(pq.read_table(result.parent / "interprotocol-strategy-stability.pq"))
     combined = pa.concat_tables(tables) if len(tables) > 1 else tables[0]
     combined_path = output_dir / "interprotocol-campaign-deployments.pq"
     temporary = combined_path.with_suffix(".pq.part")
     pq.write_table(combined, temporary, compression="zstd")
     temporary.replace(combined_path)
+    stability = pa.concat_tables(stability_tables)
+    stability_path = output_dir / "interprotocol-campaign-strategy-stability.pq"
+    stability_temporary = stability_path.with_suffix(".pq.part")
+    pq.write_table(stability, stability_temporary, compression="zstd")
+    stability_temporary.replace(stability_path)
+    write_stability_summary(
+        stability, output_dir / "interprotocol-campaign-strategy-stability-summary.json"
+    )
+    plot_stability(stability, figure_dir, "interprotocol-campaign")
     output_rows = combined.to_pylist()
     counts = _campaign_counts(output_rows)
     for group in measurement_ids:
@@ -907,3 +934,4 @@ def validate_command(
 
 if __name__ == "__main__":
     app()
+

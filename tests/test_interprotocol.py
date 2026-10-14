@@ -75,6 +75,12 @@ class InterprotocolClassifierTests(unittest.TestCase):
             "tcp": [("1.1.1.1", "SINGLE"), ("2.2.2.2", "SINGLE"), ("3.3.3.3", "PER_BUCKET")],
             "udp": [("1.1.1.1", "SINGLE"), ("2.2.2.2", "SINGLE")],
         }
+        for protocol in rows:
+            rows[protocol].extend([
+                ("4.4.4.4", "REFLECTION"), ("5.5.5.5", "CONSTANT"),
+                ("6.6.6.6", "MULTI"), ("7.7.7.7", "RANDOM"),
+                ("8.8.8.8", "PER_CONNECTION"), ("9.9.9.9", "UNCLASSIFIED"),
+            ])
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             processed = root / "processed"
@@ -114,7 +120,8 @@ class InterprotocolClassifierTests(unittest.TestCase):
             triple = pq.read_table(output / "icmp-tcp-udp-targets.pq").to_pylist()
             tcp_udp = pq.read_table(output / "tcp-udp-targets.pq").to_pylist()
             icmp_tcp = pq.read_table(output / "icmp-tcp-targets.pq").to_pylist()
-            self.assertEqual([row["IP_ADDR"] for row in triple], ["1.1.1.1"])
+            self.assertEqual([row["IP_ADDR"] for row in triple],
+                             ["1.1.1.1", "4.4.4.4", "5.5.5.5", "6.6.6.6", "7.7.7.7"])
             self.assertEqual([row["IP_ADDR"] for row in tcp_udp], ["2.2.2.2"])
             self.assertEqual([row["IP_ADDR"] for row in icmp_tcp], ["3.3.3.3"])
             self.assertTrue((figures / "test" / "target-population.pdf").is_file())
@@ -202,6 +209,9 @@ class InterprotocolClassifierTests(unittest.TestCase):
             combined = pq.read_table(output / "interprotocol-campaign-deployments.pq")
             summary = json.loads((output / "interprotocol-campaign-summary.json").read_text())
             self.assertEqual(combined.num_rows, 2)
+            stability = pq.read_table(output / "interprotocol-campaign-strategy-stability.pq")
+            self.assertEqual(stability.num_rows, 5)
+            self.assertEqual(set(stability["STRATEGY_STATUS"].to_pylist()), {"NOT_EVALUATED"})
             self.assertEqual(summary["rows"], 2)
             self.assertEqual(set(summary["groups"]), set(groups))
             figure_dir = root / "figures" / "campaign" / "runs" / "campaign-2026-01-01"
@@ -240,3 +250,4 @@ class InterprotocolClassifierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
