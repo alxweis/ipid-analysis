@@ -13,12 +13,14 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ipid_analysis.paper_figures import configure_compact_validation_style
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
     IPIDStrategy,
     MeasurementConfig,
     RANDOM_STRUCTURE_SCORE_VERSION,
     STRATEGY_NAMES,
+    STRATEGY_PRETTY,
     classify_batch_mass,
 )
 
@@ -26,6 +28,7 @@ STABILITY_STRATEGIES = (
     "REFLECTION", "CONSTANT", "PER_DESTINATION", "SINGLE", "PER_BUCKET", "MULTI", "RANDOM"
 )
 STATUS_ORDER = ("UNCHANGED", "CHANGED", "UNCLASSIFIED", "NOT_ENOUGH_SAMPLES", "NOT_EVALUATED")
+NON_COUNTER_STRATEGIES = ("REFLECTION", "CONSTANT", "MULTI", "RANDOM")
 STABILITY_SCHEMA = pa.schema(
     [
         ("IP_ADDR", pa.string()),
@@ -155,6 +158,62 @@ def classify_stability_file(raw_path, cfg, request_ip_ids, output_dir):
         pq.read_table(output), output_dir / "interprotocol-strategy-stability-summary.json"
     )
     return output
+
+
+def plot_campaign_strategy_stability(
+    table: pa.Table, figure_dir: Path, groups: tuple[str, ...]
+) -> list[Path]:
+    """One PDF per non-counter class, comparing all four protocol intersections.
+
+    Denominators include every IP/protocol observation of the selected baseline
+    class, including losses and unevaluated rows. Empty cohorts remain visible
+    as N=0, without suggesting that their strategies were unchanged.
+    """
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    configure_compact_validation_style()
+    counts = Counter(
+        (row["BASELINE_STRATEGY"], row["PROTOCOL_GROUP"], row["STRATEGY_STATUS"])
+        for row in table.select(
+            ["BASELINE_STRATEGY", "PROTOCOL_GROUP", "STRATEGY_STATUS"]
+        ).to_pylist()
+    )
+    labels = ("Unchanged", "Changed", "Unclassified", "Not enough samples", "Not evaluated")
+    colors = ("#82D486", "#ED9393", "#E2E2E2", "#B0B0B0", "#799ABE")
+    outputs = []
+    for strategy in NON_COUNTER_STRATEGIES:
+        totals = [sum(counts[strategy, group, status] for status in STATUS_ORDER)
+                  for group in groups]
+        fig, ax = plt.subplots(figsize=(7.16, 3.2))
+        x = np.arange(len(groups))
+        bottom = np.zeros(len(groups))
+        for status, label, color in zip(STATUS_ORDER, labels, colors, strict=True):
+            values = np.asarray([
+                100.0 * counts[strategy, group, status] / total if total else 0.0
+                for group, total in zip(groups, totals, strict=True)
+            ])
+            ax.bar(x, values, bottom=bottom, width=0.55, label=label, color=color,
+                   edgecolor="white", linewidth=0.45)
+            bottom += values
+        ax.set_xticks(x, [
+            f"{group.upper()}\n(N={total})"
+            for group, total in zip(groups, totals, strict=True)
+        ])
+        ax.set_ylim(0, 100)
+        ax.set_ylabel("IP / protocol observations [%]")
+        ax.set_xlabel("Protocol intersection (N = IP / protocol observations)")
+        ax.set_title(f"{STRATEGY_PRETTY[strategy]}: strategy stability")
+        ax.legend(frameon=False, fontsize=7, loc="lower center",
+                  bbox_to_anchor=(0.5, 1.14), ncol=3)
+        fig.tight_layout()
+        output = figure_dir / f"interprotocol-campaign-{strategy.lower()}.pdf"
+        fig.savefig(output, bbox_inches="tight", metadata={
+            "Title": f"Inter-protocol strategy stability for {STRATEGY_PRETTY[strategy]}",
+            "Subject": "Baseline strategy comparison; IP/protocol observation percentages",
+            "Creator": "ipid-analysis",
+        })
+        plt.close(fig)
+        outputs.append(output)
+    return outputs
 
 
 def plot_stability(table: pa.Table, figure_dir: Path, prefix: str) -> None:

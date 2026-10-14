@@ -44,6 +44,15 @@ of `interprotocol-`. The existing worker uploads all of them under its normal
 are **IP/protocol observations**, not unique IP counts. Existing deployment
 plots continue to describe the three counter classes only.
 
+Four additional campaign PDFs provide one stability plot per non-counter class:
+`interprotocol-campaign-reflection.pdf`, `interprotocol-campaign-constant.pdf`,
+`interprotocol-campaign-multi.pdf`, and `interprotocol-campaign-random.pdf`.
+Each compares all four protocol intersections with stacked percentages for
+unchanged, changed, unclassified, missing, and unevaluated observations. Every
+bar includes its IP/protocol observation count; empty cohorts are shown as N=0.
+They are saved in the campaign figure directory and automatically uploaded to
+`results/reports/figures/` alongside the existing counter-class PDFs.
+
 `UNCHANGED` means compatible with the previous label under this sample and
 classifier, not proof that the internal algorithm is identical. Conversely,
 `CHANGED` is an observed label transition, not proof that interleaving caused

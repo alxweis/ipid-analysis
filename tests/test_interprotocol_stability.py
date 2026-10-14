@@ -5,11 +5,15 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+import matplotlib.pyplot as plt
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ipid_analysis.interprotocol import GROUPS, InterprotocolConfig, classify_file, classify_sequence
-from ipid_analysis.interprotocol_stability import classify_protocol_rows
+from ipid_analysis.interprotocol_stability import (
+    classify_protocol_rows,
+    plot_campaign_strategy_stability,
+)
 from ipid_analysis.random_classifier_candidate import create_candidate_null_tables
 
 
@@ -22,6 +26,37 @@ def raw_row(sequence, baseline):
 
 
 class InterprotocolStabilityTests(unittest.TestCase):
+    def test_class_plots_compare_groups_with_correct_observation_denominators(self):
+        table = pa.table({
+            "BASELINE_STRATEGY": ["REFLECTION"] * 4 + ["CONSTANT"],
+            "PROTOCOL_GROUP": ["icmp-tcp"] * 3 + ["icmp-tcp-udp", "icmp-tcp"],
+            "STRATEGY_STATUS": ["UNCHANGED", "CHANGED", "NOT_ENOUGH_SAMPLES",
+                                "NOT_EVALUATED", "UNCHANGED"],
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            figures = []
+            real_close = plt.close
+            def capture(figure):
+                if hasattr(figure, "axes"):
+                    figures.append(figure)
+                real_close(figure)
+            with patch("ipid_analysis.interprotocol_stability.plt.close", side_effect=capture):
+                paths = plot_campaign_strategy_stability(table, Path(directory), tuple(GROUPS))
+            self.assertEqual([p.name for p in paths], [
+                f"interprotocol-campaign-{s}.pdf" for s in ("reflection", "constant", "multi", "random")
+            ])
+            self.assertTrue(all(p.read_bytes().startswith(b"%PDF-") for p in paths))
+            reflection = figures[0].axes[0]
+            heights = np.asarray([bar.get_height() for bar in reflection.patches]).reshape(5, 4)
+            np.testing.assert_allclose(heights[:, 0], [100 / 3, 100 / 3, 0, 100 / 3, 0])
+            np.testing.assert_allclose(heights[:, 1:3], 0)
+            np.testing.assert_allclose(heights[:, 3], [0, 0, 0, 0, 100])
+            self.assertEqual(reflection.get_xticklabels()[0].get_text(), "ICMP-TCP\n(N=3)")
+            # No MULTI or RANDOM cohort must still produce an explicit empty plot.
+            for figure in figures[2:]:
+                self.assertTrue(all(bar.get_height() == 0 for bar in figure.axes[0].patches))
+                self.assertTrue(all("N=0" in tick.get_text() for tick in figure.axes[0].get_xticklabels()))
+
     def test_reflection_uses_actual_global_request_positions_and_wraparound(self):
         for protocols in GROUPS.values():
             cfg = InterprotocolConfig(protocols, 4, 25)

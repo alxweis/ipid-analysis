@@ -26,6 +26,7 @@ from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.interprotocol_stability import (
     STABILITY_STRATEGIES,
     classify_stability_file,
+    plot_campaign_strategy_stability,
     plot_stability,
     write_stability_summary,
 )
@@ -693,6 +694,7 @@ def classify_campaign(
         stability, output_dir / "interprotocol-campaign-strategy-stability-summary.json"
     )
     plot_stability(stability, figure_dir, "interprotocol-campaign")
+    plot_campaign_strategy_stability(stability, figure_dir, tuple(GROUPS))
     output_rows = combined.to_pylist()
     counts = _campaign_counts(output_rows)
     for group in measurement_ids:

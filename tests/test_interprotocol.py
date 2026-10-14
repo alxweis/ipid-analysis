@@ -217,7 +217,8 @@ class InterprotocolClassifierTests(unittest.TestCase):
             figure_dir = root / "figures" / "campaign" / "runs" / "campaign-2026-01-01"
             self.assertTrue((figure_dir / "interprotocol-campaign-deployments.pdf").is_file())
             self.assertTrue((figure_dir / "interprotocol-campaign-missing.pdf").is_file())
-            for strategy in ("per-destination", "single", "per-bucket"):
+            for strategy in ("per-destination", "single", "per-bucket",
+                             "reflection", "constant", "multi", "random"):
                 self.assertTrue((figure_dir / f"interprotocol-campaign-{strategy}.pdf").is_file())
             self.assertFalse((output / "interprotocol-campaign-deployments.pdf").exists())
 
