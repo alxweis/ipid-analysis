@@ -144,7 +144,7 @@ class S3WorkflowTest(unittest.TestCase):
                     {
                         "IP_ADDR": ["192.0.2.1"],
                         "IPID_SELECTION_STRATEGY": ["SINGLE"],
-                        "IPID_SEQUENCE": [",".join(str(value) for value in range(1, 33))],
+                        "IPID_SEQUENCE": [",".join(str(value) for value in range(1, 201))],
                     }
                 ),
                 source,
@@ -184,7 +184,8 @@ class S3WorkflowTest(unittest.TestCase):
                     request["manifest_uri"]: json.dumps(manifest).encode(),
                     f"{ipid_prefix}/{measurement_id}/interprotocol.pq": source.read_bytes(),
                     f"{ipid_prefix}/{measurement_id}/interprotocol.snapshot.yaml": (
-                        b"connection_count: 4\nrequests_per_connection: 4\n"
+                        b"connection_count: 4\nrequests_per_connection: 25\n"
+                        b"request_ip_ids: [18933, 18932, 3717, 3718, 3719]\n"
                         b"interprotocol:\n  protocols: [icmp, udp]\n"
                     ),
                 }
@@ -206,6 +207,12 @@ class S3WorkflowTest(unittest.TestCase):
             combined_uri = f"{request['result_prefix']}/interprotocol-campaign-deployments.pq"
             self.assertEqual(json.loads(client.objects[summary_uri])["rows"], 1)
             self.assertIn(combined_uri, client.objects)
+            for strategy in ("reflection", "constant", "single", "per-destination", "per-bucket", "multi", "random"):
+                for suffix in ("json", "pq"):
+                    self.assertIn(
+                        f"{request['result_prefix']}/interprotocol-campaign-{strategy}-alternatives.{suffix}",
+                        client.objects,
+                    )
             for strategy in ("reflection", "constant", "multi", "random"):
                 self.assertIn(
                     f"{request['result_prefix']}/reports/figures/interprotocol-campaign-{strategy}.pdf",

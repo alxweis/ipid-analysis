@@ -13,13 +13,18 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ipid_analysis.paper_figures import configure_compact_validation_style
+from ipid_analysis.paper_figures import (
+    COMPACT_PAPER_PDF_PADDING_INCHES,
+    COMPACT_PAPER_STROKE_WIDTH,
+    configure_compact_validation_style,
+)
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
     IPIDStrategy,
     MeasurementConfig,
     RANDOM_STRUCTURE_SCORE_VERSION,
     STRATEGY_NAMES,
+    STRATEGY_COLORS,
     STRATEGY_PRETTY,
     classify_batch_mass,
 )
@@ -27,8 +32,26 @@ from ipid_analysis.strategies import (
 STABILITY_STRATEGIES = (
     "REFLECTION", "CONSTANT", "PER_DESTINATION", "SINGLE", "PER_BUCKET", "MULTI", "RANDOM"
 )
-STATUS_ORDER = ("UNCHANGED", "CHANGED", "UNCLASSIFIED", "NOT_ENOUGH_SAMPLES", "NOT_EVALUATED")
+STATUS_ORDER = ("UNCHANGED", "CHANGED", "UNCLASSIFIED", "NOT_ENOUGH_SAMPLES")
+PLOT_STATUS_ORDER = ("UNCHANGED", "CHANGED", "NOT_ENOUGH_SAMPLES", "UNCLASSIFIED")
+PLOT_LABELS = ("Unchanged", "Changed", "Not Enough Samples", "Unclassified")
+PLOT_COLORS = tuple(STRATEGY_COLORS[s] for s in
+                    ("PER_BUCKET", "RANDOM", "NOT_ENOUGH_SAMPLES", "UNCLASSIFIED"))
 NON_COUNTER_STRATEGIES = ("REFLECTION", "CONSTANT", "MULTI", "RANDOM")
+
+
+def style_percentage_axes(ax, fig):
+    """Match the existing compact interprotocol counter figures."""
+    ax.set_ylabel("Percentage [%]")
+    ax.set_ylim(0, 100)
+    ax.set_yticks(np.arange(0, 101, 20))
+    ax.set_axisbelow(True)
+    ax.grid(axis="y", color="#D9D9D9", linewidth=COMPACT_PAPER_STROKE_WIDTH)
+    ax.tick_params(axis="x", pad=1.5)
+    ax.legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01),
+              ncol=4, columnspacing=1.0, handlelength=1.25, handletextpad=0.45,
+              borderaxespad=0)
+    fig.subplots_adjust(left=0.095, right=0.995, bottom=0.28, top=0.79)
 STABILITY_SCHEMA = pa.schema(
     [
         ("IP_ADDR", pa.string()),
@@ -42,11 +65,30 @@ STABILITY_SCHEMA = pa.schema(
         ("EXPECTED_SAMPLES", pa.int32()),
     ],
     metadata={
-        b"interprotocol_stability_version": b"1",
+        b"interprotocol_stability_version": b"2",
         b"strategy_classifier_version": CLASSIFIER_VERSION.encode(),
         b"random_structure_score_version": RANDOM_STRUCTURE_SCORE_VERSION.encode(),
     },
 )
+
+
+def protocol_request_patterns(cfg, request_ip_ids):
+    """Invalid classifier prerequisites are job errors, never strategy labels."""
+    if (cfg.connection_count, cfg.requests_per_connection) != (4, 25):
+        raise ValueError("interprotocol stability requires a 4x25 layout per protocol")
+    if not request_ip_ids:
+        raise ValueError("interprotocol stability requires request_ip_ids in the snapshot")
+    pattern = np.asarray(request_ip_ids, dtype=np.int64)
+    if pattern.ndim != 1 or (pattern < 0).any() or (pattern >= 65536).any():
+        raise ValueError("request_ip_ids must be a list of valid 16-bit IPIDs")
+    patterns = []
+    for index, protocol in enumerate(cfg.protocols):
+        positions = np.arange(index, cfg.sequence_length, len(cfg.protocols))
+        selected = pattern[positions % len(pattern)]
+        if np.unique(selected).size < 2:
+            raise ValueError(f"request_ip_ids is constant for {protocol}; reflection is ambiguous")
+        patterns.append(selected)
+    return patterns
 
 
 def classify_protocol_rows(rows, cfg, request_ip_ids, *, random_null_tables=None):
@@ -54,8 +96,12 @@ def classify_protocol_rows(rows, cfg, request_ip_ids, *, random_null_tables=None
 
     Missing replies affect only their protocol. A classification change requires
     a complete sequence and a concrete observed class, never just rejection of
-    the baseline rule. Short historical runs remain readable but unevaluated.
+    the baseline rule. Unsupported layouts or missing metadata raise errors.
     """
+    patterns = protocol_request_patterns(cfg, request_ip_ids)
+    for row in rows:
+        if row["IPID_SELECTION_STRATEGY"] not in STABILITY_STRATEGIES:
+            raise ValueError(f"unsupported interprotocol baseline: {row['IPID_SELECTION_STRATEGY']}")
     if not rows:
         return []
     sequences = [
@@ -75,35 +121,19 @@ def classify_protocol_rows(rows, cfg, request_ip_ids, *, random_null_tables=None
         valid = (observed >= 0) & (observed < 65536)
         complete = correct_length & valid.all(axis=1)
         codes = np.full(len(rows), int(IPIDStrategy.NOT_ENOUGH_SAMPLES), dtype=np.int8)
-        reason = None
-        if (cfg.connection_count, cfg.requests_per_connection) != (4, 25):
-            reason = "REQUIRES_4X25_LAYOUT"
-        elif not request_ip_ids:
-            reason = "MISSING_REQUEST_IP_IDS"
-        else:
-            # Packet generation indexes the pattern by the GLOBAL sequence
-            # number, not the position within a single protocol's subsequence.
-            positions = np.arange(protocol_index, cfg.sequence_length, protocol_count)
-            pattern = np.asarray(request_ip_ids, dtype=np.int64)
-            pattern = pattern[positions % len(pattern)]
-            if (pattern < 0).any() or (pattern >= 65536).any() or np.unique(pattern).size < 2:
-                reason = "INVALID_OR_CONSTANT_REQUEST_PATTERN"
-            elif complete.any():
-                config = MeasurementConfig(4, 25, pattern)
-                codes[complete] = classify_batch_mass(
-                    pa.array(observed[complete].tolist(), type=pa.list_(pa.int64())),
-                    config,
-                    random_null_tables=random_null_tables,
-                )
+        if complete.any():
+            # Patterns retain GLOBAL packet positions after deinterleaving.
+            config = MeasurementConfig(4, 25, patterns[protocol_index])
+            codes[complete] = classify_batch_mass(
+                pa.array(observed[complete].tolist(), type=pa.list_(pa.int64())),
+                config,
+                random_null_tables=random_null_tables,
+            )
         for index, row in enumerate(rows):
             baseline = row["IPID_SELECTION_STRATEGY"]
             label = STRATEGY_NAMES[int(codes[index])]
             if not complete[index]:
                 status, detail = "NOT_ENOUGH_SAMPLES", "INCOMPLETE_OR_INVALID_SEQUENCE"
-            elif baseline not in STABILITY_STRATEGIES:
-                status, detail, label = "NOT_EVALUATED", "UNSUPPORTED_BASELINE", None
-            elif reason:
-                status, detail, label = "NOT_EVALUATED", reason, None
             elif label == "UNCLASSIFIED":
                 status, detail = "UNCLASSIFIED", "NO_STRATEGY_CONFIRMED"
             else:
@@ -130,7 +160,7 @@ def write_stability_summary(table: pa.Table, path: Path) -> None:
         for row in table.to_pylist()
     )
     summary = {
-        "stability_version": "1",
+        "stability_version": "2",
         "strategy_classifier_version": CLASSIFIER_VERSION,
         "random_structure_score_version": RANDOM_STRUCTURE_SCORE_VERSION,
         "unit": "IP address / protocol observations",
@@ -145,6 +175,7 @@ def write_stability_summary(table: pa.Table, path: Path) -> None:
 
 
 def classify_stability_file(raw_path, cfg, request_ip_ids, output_dir):
+    protocol_request_patterns(cfg, request_ip_ids)
     output = output_dir / "interprotocol-strategy-stability.pq"
     temporary = output.with_suffix(".pq.part")
     with pq.ParquetWriter(temporary, STABILITY_SCHEMA, compression="zstd") as writer:
@@ -166,7 +197,7 @@ def plot_campaign_strategy_stability(
     """One PDF per non-counter class, comparing all four protocol intersections.
 
     Denominators include every IP/protocol observation of the selected baseline
-    class, including losses and unevaluated rows. Empty cohorts remain visible
+    class, including losses and unclassified rows. Empty cohorts remain visible
     as N=0, without suggesting that their strategies were unchanged.
     """
     figure_dir.mkdir(parents=True, exist_ok=True)
@@ -177,36 +208,30 @@ def plot_campaign_strategy_stability(
             ["BASELINE_STRATEGY", "PROTOCOL_GROUP", "STRATEGY_STATUS"]
         ).to_pylist()
     )
-    labels = ("Unchanged", "Changed", "Unclassified", "Not enough samples", "Not evaluated")
-    colors = ("#82D486", "#ED9393", "#E2E2E2", "#B0B0B0", "#799ABE")
     outputs = []
     for strategy in NON_COUNTER_STRATEGIES:
-        totals = [sum(counts[strategy, group, status] for status in STATUS_ORDER)
+        totals = [sum(counts[strategy, group, status] for status in PLOT_STATUS_ORDER)
                   for group in groups]
-        fig, ax = plt.subplots(figsize=(7.16, 3.2))
-        x = np.arange(len(groups))
+        fig, ax = plt.subplots(figsize=(6.5, 2.55))
+        x = np.arange(len(groups)) * 0.84
         bottom = np.zeros(len(groups))
-        for status, label, color in zip(STATUS_ORDER, labels, colors, strict=True):
+        for status, label, color in zip(PLOT_STATUS_ORDER, PLOT_LABELS, PLOT_COLORS, strict=True):
             values = np.asarray([
                 100.0 * counts[strategy, group, status] / total if total else 0.0
                 for group, total in zip(groups, totals, strict=True)
             ])
-            ax.bar(x, values, bottom=bottom, width=0.55, label=label, color=color,
-                   edgecolor="white", linewidth=0.45)
+            ax.bar(x, values, bottom=bottom, width=0.48, label=label, color=color,
+                   edgecolor="white", linewidth=COMPACT_PAPER_STROKE_WIDTH)
             bottom += values
         ax.set_xticks(x, [
-            f"{group.upper()}\n(N={total})"
+            r"$\cap$".join(group.upper().split("-")) + f"\n(N={total})"
             for group, total in zip(groups, totals, strict=True)
         ])
-        ax.set_ylim(0, 100)
-        ax.set_ylabel("IP / protocol observations [%]")
-        ax.set_xlabel("Protocol intersection (N = IP / protocol observations)")
-        ax.set_title(f"{STRATEGY_PRETTY[strategy]}: strategy stability")
-        ax.legend(frameon=False, fontsize=7, loc="lower center",
-                  bbox_to_anchor=(0.5, 1.14), ncol=3)
-        fig.tight_layout()
+        ax.set_xlim(x[0] - 0.34, x[-1] + 0.34)
+        ax.set_xlabel("Protocol Intersection (#IP / Protocol Observations)")
+        style_percentage_axes(ax, fig)
         output = figure_dir / f"interprotocol-campaign-{strategy.lower()}.pdf"
-        fig.savefig(output, bbox_inches="tight", metadata={
+        fig.savefig(output, bbox_inches="tight", pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES, metadata={
             "Title": f"Inter-protocol strategy stability for {STRATEGY_PRETTY[strategy]}",
             "Subject": "Baseline strategy comparison; IP/protocol observation percentages",
             "Creator": "ipid-analysis",
@@ -218,37 +243,40 @@ def plot_campaign_strategy_stability(
 
 def plot_stability(table: pa.Table, figure_dir: Path, prefix: str) -> None:
     """Status bars and a transition matrix; all denominators are protocol observations."""
+    configure_compact_validation_style()
     rows = table.to_pylist()
     counts = Counter((r["BASELINE_STRATEGY"], r["STRATEGY_STATUS"]) for r in rows)
-    fig, ax = plt.subplots(figsize=(9, 3.6))
+    fig, ax = plt.subplots(figsize=(6.5, 2.55))
     bottom = np.zeros(len(STABILITY_STRATEGIES))
-    for status in STATUS_ORDER:
-        totals = [sum(counts[s, state] for state in STATUS_ORDER) for s in STABILITY_STRATEGIES]
+    for status, label, color in zip(PLOT_STATUS_ORDER, PLOT_LABELS, PLOT_COLORS, strict=True):
+        totals = [sum(counts[s, state] for state in PLOT_STATUS_ORDER) for s in STABILITY_STRATEGIES]
         values = np.asarray([
             100 * counts[s, status] / total if total else 0
             for s, total in zip(STABILITY_STRATEGIES, totals, strict=True)
         ])
-        ax.bar(STABILITY_STRATEGIES, values, bottom=bottom, label=status)
+        ax.bar([STRATEGY_PRETTY[s] for s in STABILITY_STRATEGIES], values, bottom=bottom,
+               label=label, color=color, width=0.48, edgecolor="white",
+               linewidth=COMPACT_PAPER_STROKE_WIDTH)
         bottom += values
-    ax.set_ylabel("IP / protocol observations [%]")
-    ax.set_ylim(0, 100)
+    style_percentage_axes(ax, fig)
     ax.tick_params(axis="x", rotation=25)
-    ax.legend(fontsize=7, loc="upper left", bbox_to_anchor=(1.01, 1))
-    fig.tight_layout()
-    fig.savefig(figure_dir / f"{prefix}-strategy-stability.pdf")
+    fig.savefig(figure_dir / f"{prefix}-strategy-stability.pdf", bbox_inches="tight",
+                pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
     plt.close(fig)
 
-    labels = STRATEGY_NAMES + ["NOT_EVALUATED"]
-    transitions = Counter((r["BASELINE_STRATEGY"], r["OBSERVED_STRATEGY"] or "NOT_EVALUATED")
+    labels = STRATEGY_NAMES
+    transitions = Counter((r["BASELINE_STRATEGY"], r["OBSERVED_STRATEGY"])
                           for r in rows)
     matrix = np.asarray([[transitions[s, label] for label in labels] for s in STABILITY_STRATEGIES])
-    fig, ax = plt.subplots(figsize=(10, 4.5))
+    fig, ax = plt.subplots(figsize=(6.5, 3.2))
     image = ax.imshow(matrix, cmap="Blues", aspect="auto")
-    ax.set_yticks(range(len(STABILITY_STRATEGIES)), STABILITY_STRATEGIES)
-    ax.set_xticks(range(len(labels)), labels, rotation=40, ha="right")
+    ax.set_yticks(range(len(STABILITY_STRATEGIES)), [STRATEGY_PRETTY[s] for s in STABILITY_STRATEGIES])
+    ax.set_xticks(range(len(labels)), [STRATEGY_PRETTY[s] for s in labels], rotation=40, ha="right")
+    ax.tick_params(axis="both", labelsize=7)
     ax.set_xlabel("Observed strategy under interleaving")
     ax.set_ylabel("Baseline strategy")
     fig.colorbar(image, ax=ax, label="IP / protocol observations")
     fig.tight_layout()
-    fig.savefig(figure_dir / f"{prefix}-strategy-transitions.pdf")
+    fig.savefig(figure_dir / f"{prefix}-strategy-transitions.pdf", bbox_inches="tight",
+                pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
     plt.close(fig)
