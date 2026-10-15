@@ -32,16 +32,12 @@ from ipid_analysis.strategies import (
 STABILITY_STRATEGIES = (
     "REFLECTION", "CONSTANT", "PER_DESTINATION", "SINGLE", "PER_BUCKET", "MULTI", "RANDOM"
 )
-STATUS_ORDER = ("UNCHANGED", "CHANGED", "UNCLASSIFIED", "NOT_ENOUGH_SAMPLES", "NOT_EVALUATED")
-PLOT_STATUS_ORDER = ("UNCHANGED", "CHANGED", "NOT_ENOUGH_SAMPLES", "STRATEGY_NOT_CONFIRMED")
-PLOT_LABELS = ("Unchanged", "Changed", "Not Enough Samples", "Strategy Not Confirmed")
+STATUS_ORDER = ("UNCHANGED", "CHANGED", "UNCLASSIFIED", "NOT_ENOUGH_SAMPLES")
+PLOT_STATUS_ORDER = ("UNCHANGED", "CHANGED", "NOT_ENOUGH_SAMPLES", "UNCLASSIFIED")
+PLOT_LABELS = ("Unchanged", "Changed", "Not Enough Samples", "Unclassified")
 PLOT_COLORS = tuple(STRATEGY_COLORS[s] for s in
-                    ("PER_BUCKET", "RANDOM", "NOT_ENOUGH_SAMPLES", "PER_DESTINATION"))
+                    ("PER_BUCKET", "RANDOM", "NOT_ENOUGH_SAMPLES", "UNCLASSIFIED"))
 NON_COUNTER_STRATEGIES = ("REFLECTION", "CONSTANT", "MULTI", "RANDOM")
-
-
-def plot_status(status: str) -> str:
-    return "STRATEGY_NOT_CONFIRMED" if status in ("UNCLASSIFIED", "NOT_EVALUATED") else status
 
 
 def style_percentage_axes(ax, fig):
@@ -69,11 +65,30 @@ STABILITY_SCHEMA = pa.schema(
         ("EXPECTED_SAMPLES", pa.int32()),
     ],
     metadata={
-        b"interprotocol_stability_version": b"1",
+        b"interprotocol_stability_version": b"2",
         b"strategy_classifier_version": CLASSIFIER_VERSION.encode(),
         b"random_structure_score_version": RANDOM_STRUCTURE_SCORE_VERSION.encode(),
     },
 )
+
+
+def protocol_request_patterns(cfg, request_ip_ids):
+    """Invalid classifier prerequisites are job errors, never strategy labels."""
+    if (cfg.connection_count, cfg.requests_per_connection) != (4, 25):
+        raise ValueError("interprotocol stability requires a 4x25 layout per protocol")
+    if not request_ip_ids:
+        raise ValueError("interprotocol stability requires request_ip_ids in the snapshot")
+    pattern = np.asarray(request_ip_ids, dtype=np.int64)
+    if pattern.ndim != 1 or (pattern < 0).any() or (pattern >= 65536).any():
+        raise ValueError("request_ip_ids must be a list of valid 16-bit IPIDs")
+    patterns = []
+    for index, protocol in enumerate(cfg.protocols):
+        positions = np.arange(index, cfg.sequence_length, len(cfg.protocols))
+        selected = pattern[positions % len(pattern)]
+        if np.unique(selected).size < 2:
+            raise ValueError(f"request_ip_ids is constant for {protocol}; reflection is ambiguous")
+        patterns.append(selected)
+    return patterns
 
 
 def classify_protocol_rows(rows, cfg, request_ip_ids, *, random_null_tables=None):
@@ -81,8 +96,12 @@ def classify_protocol_rows(rows, cfg, request_ip_ids, *, random_null_tables=None
 
     Missing replies affect only their protocol. A classification change requires
     a complete sequence and a concrete observed class, never just rejection of
-    the baseline rule. Short historical runs remain readable but unevaluated.
+    the baseline rule. Unsupported layouts or missing metadata raise errors.
     """
+    patterns = protocol_request_patterns(cfg, request_ip_ids)
+    for row in rows:
+        if row["IPID_SELECTION_STRATEGY"] not in STABILITY_STRATEGIES:
+            raise ValueError(f"unsupported interprotocol baseline: {row['IPID_SELECTION_STRATEGY']}")
     if not rows:
         return []
     sequences = [
@@ -102,35 +121,19 @@ def classify_protocol_rows(rows, cfg, request_ip_ids, *, random_null_tables=None
         valid = (observed >= 0) & (observed < 65536)
         complete = correct_length & valid.all(axis=1)
         codes = np.full(len(rows), int(IPIDStrategy.NOT_ENOUGH_SAMPLES), dtype=np.int8)
-        reason = None
-        if (cfg.connection_count, cfg.requests_per_connection) != (4, 25):
-            reason = "REQUIRES_4X25_LAYOUT"
-        elif not request_ip_ids:
-            reason = "MISSING_REQUEST_IP_IDS"
-        else:
-            # Packet generation indexes the pattern by the GLOBAL sequence
-            # number, not the position within a single protocol's subsequence.
-            positions = np.arange(protocol_index, cfg.sequence_length, protocol_count)
-            pattern = np.asarray(request_ip_ids, dtype=np.int64)
-            pattern = pattern[positions % len(pattern)]
-            if (pattern < 0).any() or (pattern >= 65536).any() or np.unique(pattern).size < 2:
-                reason = "INVALID_OR_CONSTANT_REQUEST_PATTERN"
-            elif complete.any():
-                config = MeasurementConfig(4, 25, pattern)
-                codes[complete] = classify_batch_mass(
-                    pa.array(observed[complete].tolist(), type=pa.list_(pa.int64())),
-                    config,
-                    random_null_tables=random_null_tables,
-                )
+        if complete.any():
+            # Patterns retain GLOBAL packet positions after deinterleaving.
+            config = MeasurementConfig(4, 25, patterns[protocol_index])
+            codes[complete] = classify_batch_mass(
+                pa.array(observed[complete].tolist(), type=pa.list_(pa.int64())),
+                config,
+                random_null_tables=random_null_tables,
+            )
         for index, row in enumerate(rows):
             baseline = row["IPID_SELECTION_STRATEGY"]
             label = STRATEGY_NAMES[int(codes[index])]
             if not complete[index]:
                 status, detail = "NOT_ENOUGH_SAMPLES", "INCOMPLETE_OR_INVALID_SEQUENCE"
-            elif baseline not in STABILITY_STRATEGIES:
-                status, detail, label = "NOT_EVALUATED", "UNSUPPORTED_BASELINE", None
-            elif reason:
-                status, detail, label = "NOT_EVALUATED", reason, None
             elif label == "UNCLASSIFIED":
                 status, detail = "UNCLASSIFIED", "NO_STRATEGY_CONFIRMED"
             else:
@@ -157,7 +160,7 @@ def write_stability_summary(table: pa.Table, path: Path) -> None:
         for row in table.to_pylist()
     )
     summary = {
-        "stability_version": "1",
+        "stability_version": "2",
         "strategy_classifier_version": CLASSIFIER_VERSION,
         "random_structure_score_version": RANDOM_STRUCTURE_SCORE_VERSION,
         "unit": "IP address / protocol observations",
@@ -172,6 +175,7 @@ def write_stability_summary(table: pa.Table, path: Path) -> None:
 
 
 def classify_stability_file(raw_path, cfg, request_ip_ids, output_dir):
+    protocol_request_patterns(cfg, request_ip_ids)
     output = output_dir / "interprotocol-strategy-stability.pq"
     temporary = output.with_suffix(".pq.part")
     with pq.ParquetWriter(temporary, STABILITY_SCHEMA, compression="zstd") as writer:
@@ -193,13 +197,13 @@ def plot_campaign_strategy_stability(
     """One PDF per non-counter class, comparing all four protocol intersections.
 
     Denominators include every IP/protocol observation of the selected baseline
-    class, including losses and unevaluated rows. Empty cohorts remain visible
+    class, including losses and unclassified rows. Empty cohorts remain visible
     as N=0, without suggesting that their strategies were unchanged.
     """
     figure_dir.mkdir(parents=True, exist_ok=True)
     configure_compact_validation_style()
     counts = Counter(
-        (row["BASELINE_STRATEGY"], row["PROTOCOL_GROUP"], plot_status(row["STRATEGY_STATUS"]))
+        (row["BASELINE_STRATEGY"], row["PROTOCOL_GROUP"], row["STRATEGY_STATUS"])
         for row in table.select(
             ["BASELINE_STRATEGY", "PROTOCOL_GROUP", "STRATEGY_STATUS"]
         ).to_pylist()
@@ -241,7 +245,7 @@ def plot_stability(table: pa.Table, figure_dir: Path, prefix: str) -> None:
     """Status bars and a transition matrix; all denominators are protocol observations."""
     configure_compact_validation_style()
     rows = table.to_pylist()
-    counts = Counter((r["BASELINE_STRATEGY"], plot_status(r["STRATEGY_STATUS"])) for r in rows)
+    counts = Counter((r["BASELINE_STRATEGY"], r["STRATEGY_STATUS"]) for r in rows)
     fig, ax = plt.subplots(figsize=(6.5, 2.55))
     bottom = np.zeros(len(STABILITY_STRATEGIES))
     for status, label, color in zip(PLOT_STATUS_ORDER, PLOT_LABELS, PLOT_COLORS, strict=True):
@@ -260,14 +264,14 @@ def plot_stability(table: pa.Table, figure_dir: Path, prefix: str) -> None:
                 pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
     plt.close(fig)
 
-    labels = STRATEGY_NAMES + ["NOT_EVALUATED"]
-    transitions = Counter((r["BASELINE_STRATEGY"], r["OBSERVED_STRATEGY"] or "NOT_EVALUATED")
+    labels = STRATEGY_NAMES
+    transitions = Counter((r["BASELINE_STRATEGY"], r["OBSERVED_STRATEGY"])
                           for r in rows)
     matrix = np.asarray([[transitions[s, label] for label in labels] for s in STABILITY_STRATEGIES])
     fig, ax = plt.subplots(figsize=(6.5, 3.2))
     image = ax.imshow(matrix, cmap="Blues", aspect="auto")
     ax.set_yticks(range(len(STABILITY_STRATEGIES)), [STRATEGY_PRETTY[s] for s in STABILITY_STRATEGIES])
-    ax.set_xticks(range(len(labels)), [STRATEGY_PRETTY.get(s, "Not Evaluated") for s in labels], rotation=40, ha="right")
+    ax.set_xticks(range(len(labels)), [STRATEGY_PRETTY[s] for s in labels], rotation=40, ha="right")
     ax.tick_params(axis="both", labelsize=7)
     ax.set_xlabel("Observed strategy under interleaving")
     ax.set_ylabel("Baseline strategy")

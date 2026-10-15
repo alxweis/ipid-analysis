@@ -29,6 +29,7 @@ from ipid_analysis.interprotocol_stability import (
     classify_stability_file,
     plot_campaign_strategy_stability,
     plot_stability,
+    protocol_request_patterns,
     write_stability_summary,
 )
 from ipid_analysis.manifest import load_manifest
@@ -321,6 +322,8 @@ def classify_file(
     figure_dir: Path | None = None,
 ) -> Path:
     cfg = load_interprotocol_config(snapshot_path)
+    snapshot = yaml.safe_load(snapshot_path.read_text())
+    protocol_request_patterns(cfg, snapshot.get("request_ip_ids", []))
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / "interprotocol-deployments.pq"
     temporary = output.with_suffix(".pq.part")
@@ -368,7 +371,6 @@ def classify_file(
     figure_dir = figure_dir or INTERPROTOCOL_FIGURES_DIR / output_dir.name
     figure_dir.mkdir(parents=True, exist_ok=True)
     plot_deployments(counts, figure_dir / "interprotocol-deployments.pdf")
-    snapshot = yaml.safe_load(snapshot_path.read_text())
     stability = classify_stability_file(
         raw_path, cfg, snapshot.get("request_ip_ids", []), output_dir
     )

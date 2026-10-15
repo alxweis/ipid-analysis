@@ -128,7 +128,7 @@ class InterprotocolClassifierTests(unittest.TestCase):
             self.assertFalse((output / "target-population.pdf").exists())
 
     def test_classify_file_writes_parquet_summary_and_plot(self):
-        cfg = InterprotocolConfig(("icmp", "tcp"), 4, 4)
+        cfg = InterprotocolConfig(("icmp", "tcp"), 4, 25)
         sequence = synthetic_sequence(cfg, "SINGLE", (cfg.protocols,), 12)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -147,7 +147,8 @@ class InterprotocolClassifierTests(unittest.TestCase):
                 raw,
             )
             snapshot.write_text(
-                "connection_count: 4\nrequests_per_connection: 4\n"
+                "connection_count: 4\nrequests_per_connection: 25\n"
+                "request_ip_ids: [18933, 18932, 3717, 3718, 3719]\n"
                 "interprotocol:\n  protocols: [icmp, tcp]\n"
             )
             result = classify_file(raw, snapshot, output, figure_dir=figures)
@@ -168,7 +169,7 @@ class InterprotocolClassifierTests(unittest.TestCase):
                 measurement_id = f"interprotocol-{group}_2026-01-01_00-00-00"
                 measurement = raw_root / measurement_id
                 measurement.mkdir(parents=True)
-                cfg = InterprotocolConfig(protocols, 4, 4)
+                cfg = InterprotocolConfig(protocols, 4, 25)
                 sequence = synthetic_sequence(cfg, "SINGLE", (protocols,), 12)
                 pq.write_table(
                     pa.table(
@@ -181,7 +182,8 @@ class InterprotocolClassifierTests(unittest.TestCase):
                     measurement / "interprotocol.pq",
                 )
                 (measurement / "interprotocol.snapshot.yaml").write_text(
-                    "connection_count: 4\nrequests_per_connection: 4\n"
+                    "connection_count: 4\nrequests_per_connection: 25\n"
+                    "request_ip_ids: [18933, 18932, 3717, 3718, 3719]\n"
                     f"interprotocol:\n  protocols: [{', '.join(protocols)}]\n"
                 )
                 groups[group] = {
@@ -211,7 +213,7 @@ class InterprotocolClassifierTests(unittest.TestCase):
             self.assertEqual(combined.num_rows, 2)
             stability = pq.read_table(output / "interprotocol-campaign-strategy-stability.pq")
             self.assertEqual(stability.num_rows, 5)
-            self.assertEqual(set(stability["STRATEGY_STATUS"].to_pylist()), {"NOT_EVALUATED"})
+            self.assertEqual(set(stability["STRATEGY_STATUS"].to_pylist()), {"UNCHANGED"})
             self.assertEqual(summary["rows"], 2)
             self.assertEqual(set(summary["groups"]), set(groups))
             figure_dir = root / "figures" / "campaign" / "runs" / "campaign-2026-01-01"

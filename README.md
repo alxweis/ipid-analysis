@@ -28,12 +28,12 @@ before starting a new run; the three-manifest start command is unchanged.
 The new `interprotocol-strategy-stability.pq` contains one row per IP/protocol:
 `IP_ADDR`, `PROTOCOL_GROUP`, `PROTOCOL`, `BASELINE_STRATEGY`, `OBSERVED_STRATEGY`,
 `STRATEGY_STATUS`, `REASON`, `RECEIVED_SAMPLES`, and `EXPECTED_SAMPLES`.
-Statuses are `UNCHANGED`, `CHANGED`, `UNCLASSIFIED`, `NOT_ENOUGH_SAMPLES`, or
-`NOT_EVALUATED`. A change requires a concrete observed class. Missing replies
+Statuses are `UNCHANGED`, `CHANGED`, `UNCLASSIFIED`, or `NOT_ENOUGH_SAMPLES`.
+A change requires a concrete observed class. Missing replies
 affect only the corresponding protocol and are never compressed away. Complete
 100-position sequences are required for stability classification. Historical
-short runs or snapshots without a usable request pattern remain readable, but
-their stability is explicitly `NOT_EVALUATED`.
+short layouts or snapshots without a usable request pattern raise `ValueError`.
+The worker reports a failed job rather than emitting a technical status class.
 
 Each group writes `interprotocol-strategy-stability-summary.json` alongside the
 new Parquet and `interprotocol-strategy-stability.pdf` plus
@@ -48,7 +48,7 @@ Four additional campaign PDFs provide one stability plot per non-counter class:
 `interprotocol-campaign-reflection.pdf`, `interprotocol-campaign-constant.pdf`,
 `interprotocol-campaign-multi.pdf`, and `interprotocol-campaign-random.pdf`.
 Each compares all four protocol intersections with stacked percentages for
-unchanged, changed, unclassified, missing, and unevaluated observations. Every
+unchanged, changed, unclassified, and missing observations. Every
 bar includes its IP/protocol observation count; empty cohorts are shown as N=0.
 They are saved in the campaign figure directory and automatically uploaded to
 `results/reports/figures/` alongside the existing counter-class PDFs.
@@ -60,18 +60,22 @@ PDF padding. Observation counts remain explicitly distinguished from unique IP
 counts. The overview and transition matrix also use the compact paper font,
 palette and PDF padding (the matrix retains its appropriate heatmap layout).
 
-For presentation, `UNCLASSIFIED` and `NOT_EVALUATED` are grouped as **Strategy
-Not Confirmed**. They remain separate in Parquet/JSON with `REASON`: the first
-means classification ran but confirmed no class, the second means it could not
-run (legacy layout, missing/ambiguous request IPIDs, or unsupported baseline).
-Neither means a detected strategy change. `NOT_ENOUGH_SAMPLES` remains separate.
+Status plots show the same four outcomes as the data. `UNCLASSIFIED` means the
+classifier ran but found no known strategy. `CHANGED` means it found a different
+known strategy. `STRATEGY_NOT_CONFIRMED` remains a separate counter-deployment
+outcome: the expected counter model did not fit, but per-protocol classification
+may still find a known strategy. These meanings are never merged. Invalid
+classifier prerequisites (layout, request pattern, unsupported baseline) raise
+an error even for empty targets or completely lost sequences; packet loss with
+valid prerequisites remains `NOT_ENOUGH_SAMPLES`. There is no `NOT_EVALUATED`
+status in new results or plots.
 
 Each of the seven baseline strategies additionally gets
 `interprotocol-campaign-<strategy>-alternatives.json` and `.pq` in the campaign
 processed directory (use `per-destination` and `per-bucket` for those slugs).
 These select targets with at least one `CHANGED` observation or unconfirmed
 counter deployment, including `AMBIGUOUS` as in the counter plot. All protocol
-observations of those targets are retained, including unchanged or unevaluable
+observations of those targets are retained, including unchanged or missing
 ones. JSON groups counts by protocol intersection, individual protocol,
 alternative label, status, diagnostic reason and raw deployment; it includes
 unique affected-IP counts, overlapping trigger counts and measurement IDs.
