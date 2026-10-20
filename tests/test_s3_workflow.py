@@ -235,6 +235,104 @@ class S3WorkflowTest(unittest.TestCase):
                 "campaign",
             )
 
+    def test_interprotocol_v2_worker_downloads_both_stages_and_uploads_outcomes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "interprotocol.pq"
+            pq.write_table(
+                pa.table(
+                    {
+                        "IP_ADDR": ["192.0.2.1"],
+                        "IPID_SELECTION_STRATEGY": ["SINGLE"],
+                        "IPID_SEQUENCE": [",".join(str(value) for value in range(1, 33))],
+                    }
+                ),
+                source,
+            )
+            prefix = "s3://bucket/workflow"
+            ipid_prefix = "s3://bucket/raw/ipid"
+            run_id = "campaign-2026-01-01"
+            measurement_id = "interprotocol-icmp-udp_2026-01-01_00-00-00_base"
+            mass_id = "interprotocol-icmp-udp_2026-01-01_00-00-00_mass"
+            job_prefix = f"{prefix}/interprotocol-jobs/{run_id}"
+            request_uri = f"{job_prefix}/request.json"
+            manifest = {
+                "version": 2,
+                "campaign_id": "campaign",
+                "run_id": run_id,
+                "groups": {
+                    "icmp-udp": {
+                        "protocols": ["icmp", "udp"],
+                        "status": "complete",
+                        "measurements": {"base":measurement_id,"mass":mass_id},
+                    }
+                },
+            }
+            request = {
+                "version": INTERPROTOCOL_JOB_VERSION,
+                "job_id": run_id,
+                "campaign_id": "campaign",
+                "manifest_uri": f"{job_prefix}/manifest.json",
+                "ipid_prefix": ipid_prefix,
+                "result_prefix": f"{job_prefix}/results",
+                "done_uri": f"{job_prefix}/done.json",
+                "failed_uri": f"{job_prefix}/failed.json",
+                "created_at": "2026-01-01T00:00:00Z",
+            }
+            client = FakeS3Client(
+                {
+                    request_uri: json.dumps(request).encode(),
+                    request["manifest_uri"]: json.dumps(manifest).encode(),
+                    f"{ipid_prefix}/{measurement_id}/interprotocol.pq": source.read_bytes(),
+                    f"{ipid_prefix}/{measurement_id}/interprotocol.snapshot.yaml": (
+                        b"connection_count: 4\nrequests_per_connection: 4\n"
+                        b"request_ip_ids: [18933, 18932, 3717, 3718, 3719]\n"
+                        b"measurement_mode: rt-based\ninterprotocol:\n  protocols: [icmp, udp]\n  sample: base\n  request_ipid_index: logical\n"
+                    ),
+                }
+            )
+
+            empty = root / "empty.pq"
+            pq.write_table(pa.table({"IP_ADDR":pa.array([],pa.string()),"IPID_SELECTION_STRATEGY":pa.array([],pa.string()),"IPID_SEQUENCE":pa.array([],pa.string())}),empty)
+            client.objects[f"{ipid_prefix}/{mass_id}/interprotocol.pq"] = empty.read_bytes()
+            client.objects[f"{ipid_prefix}/{mass_id}/interprotocol.snapshot.yaml"] = (b"connection_count: 4\nrequests_per_connection: 25\nrequest_ip_ids: [1, 2]\nmeasurement_mode: fixed-interval\ninterprotocol:\n  protocols: [icmp, udp]\n  sample: mass\n  request_ipid_index: logical\n")
+
+            processed = process_interprotocol_request(
+                client,
+                request_uri,
+                prefix,
+                root / "jobs",
+                raw_root=root / "raw",
+                output_root=root / "processed",
+                figures_root=root / "figures",
+            )
+
+            self.assertTrue(processed)
+            self.assertIn(request["done_uri"], client.uploads)
+            summary_uri = f"{request['result_prefix']}/interprotocol-campaign-summary.json"
+            combined_uri = f"{request['result_prefix']}/interprotocol-campaign-outcomes.pq"
+            self.assertEqual(json.loads(client.objects[summary_uri])["rows"], 1)
+            self.assertIn(combined_uri, client.objects)
+            for strategy in ("reflection", "constant", "single", "per-destination", "per-bucket", "multi", "random"):
+                for suffix in ("json", "pq"):
+                    self.assertIn(
+                        f"{request['result_prefix']}/interprotocol-campaign-{strategy}-alternatives.{suffix}",
+                        client.objects,
+                    )
+            for strategy in ("reflection", "constant", "multi", "random"):
+                self.assertIn(
+                    f"{request['result_prefix']}/reports/figures/interprotocol-campaign-{strategy}.pdf",
+                    client.objects,
+                )
+            self.assertIn(
+                f"{request['result_prefix']}/reports/figures/interprotocol-campaign-single.pdf",
+                client.objects,
+            )
+            self.assertEqual(
+                InterprotocolRequest.parse(request, prefix).campaign_id,
+                "campaign",
+            )
+
     def test_build_unclassified_targets_uses_zmap_schema(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
