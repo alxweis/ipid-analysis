@@ -415,6 +415,8 @@ def plot_outcomes(summary, figure_dir):
         if strategy == "RANDOM":
             color_names = ["PER_BUCKET", "SINGLE", "NOT_ENOUGH_SAMPLES"]
         colors = [STRATEGY_COLORS[name] for name in color_names]
+        if strategy in COUNTERS:
+            colors[1] = "#6BAED6"
         fig, ax = plt.subplots(figsize=(6.5, 2.55))
         x = np.arange(len(GROUPS)) * 0.84
         totals = [sum(summary.counts[strategy, g, o] for o, _ in categories) for g in GROUPS]
@@ -437,7 +439,7 @@ def plot_outcomes(summary, figure_dir):
             bottom += heights
         ax.set_xticks(
             x,
-            [r"$\cap$".join(g.upper().split("-")) + f"\n(N={n})" for g, n in zip(GROUPS, totals)],
+            [r"$\cap$".join(g.upper().split("-")) + f"\n({n})" for g, n in zip(GROUPS, totals)],
         )
         ax.set_xlim(x[0] - 0.34, x[-1] + 0.34)
         ax.set_ylim(0, 100)
@@ -450,8 +452,10 @@ def plot_outcomes(summary, figure_dir):
             frameon=False,
             loc="lower center",
             bbox_to_anchor=(0.5, 1.01),
-            ncol=3 if len(categories) == 5 else 2,
-            fontsize=7,
+            ncol=min(4, len(categories)),
+            columnspacing=1.0,
+            handlelength=1.25,
+            handletextpad=0.45,
         )
         fig.subplots_adjust(left=0.095, right=0.995, bottom=0.28, top=0.73)
         fig.savefig(
