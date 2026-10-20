@@ -1,143 +1,104 @@
 # ipid-analysis
 
-## Inter-protocol deployment analysis
+## Inter-protocol measurement outcomes
 
-The inter-protocol workflow includes `REFLECTION`, `CONSTANT`, `SINGLE`,
-`PER_DESTINATION`, `PER_BUCKET`, `MULTI`, and `RANDOM`. It first builds
-same-strategy ICMP/TCP/UDP intersections from the canonical merged stateless
-strategy artifacts.  Pair cohorts exclude the corresponding same-strategy
-triple cohort; an address whose third protocol has another strategy remains in
-the applicable pair cohort. `PER_CONNECTION` is intentionally excluded because
-a transport connection cannot be shared with ICMP or across TCP and UDP.
+New campaigns use the v2 manifest produced by `ipid-measure`. Update the analysis
+worker before starting a v2 measurement campaign. The three-manifest
+`make run-interprotocol` entry point is unchanged. All BASE groups run first,
+then all MASS groups; analysis starts after both stages of every group finish.
 
-Two separate questions are evaluated:
+| Baseline population | Measurement | Required replies per protocol |
+| --- | --- | --- |
+| Reflection, Constant, Single, Per-Destination, Per-Bucket | RT-based, 4 connections × 4 requests | 16/16 |
+| Multi, Random | Fixed-interval, 4 connections × 25 requests | at least 80/100 |
 
-* Shared-counter deployment remains limited to `SINGLE`, `PER_DESTINATION`,
-  and `PER_BUCKET`. Other baseline classes have deployment `NOT_APPLICABLE`.
-* Strategy stability reclassifies each protocol's own reply subsequence using
-  the production strategy classifier, including MULTI and RANDOM, and compares
-  that label with the baseline. Request IPIDs are indexed by their actual global
-  interleaved positions, including constant-offset reflection and wraparound.
+Pairs send 32/200 requests and triples send 48/300 requests in BASE/MASS.
+The fixed interval is between consecutive requests to the same target,
+regardless of protocol; it is **not divided** by the protocol count. Every
+protocol receives the same varying request-IPID pattern indexed by logical
+position. Missing replies retain their original positions. Every completed
+measurement retains every selected target, including zero-reply targets;
+interrupted or failed measurements must not publish a completed campaign.
 
-New measurements use **4 connections x 25 requests per protocol** (200 requests
-per pair target, 300 per triple target), irrespective of the normal base config.
-The RT-based interleaving and fixed protocol order are retained. The larger
-sample also applies to the existing counter cohorts. Update both repositories
-before starting a new run; the three-manifest start command is unchanged.
+Target selection remains the same-strategy intersection of the canonical
+stateless RT-base + FI-mass strategy merges. Pair cohorts exclude the corresponding
+same-strategy triple cohort. Pair relationships inside a triple measurement stay
+in the triple cohort; they are not counted as separate pair measurements.
+`PER_CONNECTION` is not a baseline cohort, but can be an observed alternative.
 
-The new `interprotocol-strategy-stability.pq` contains one row per IP/protocol:
-`IP_ADDR`, `PROTOCOL_GROUP`, `PROTOCOL`, `BASELINE_STRATEGY`, `OBSERVED_STRATEGY`,
-`STRATEGY_STATUS`, `REASON`, `RECEIVED_SAMPLES`, and `EXPECTED_SAMPLES`.
-Statuses are `UNCHANGED`, `CHANGED`, `UNCLASSIFIED`, or `NOT_ENOUGH_SAMPLES`.
-A change requires a concrete observed class. Missing replies
-affect only the corresponding protocol and are never compressed away. Complete
-100-position sequences are required for stability classification. Historical
-short layouts or snapshots without a usable request pattern raise `ValueError`.
-The worker reports a failed job rather than emitting a technical status class.
+Each IP receives one main outcome within its measured protocol group. Missing
+samples are checked first, per protocol. A known alternative **or UNCLASSIFIED**
+counts as a changed individual label. BASE reuses the ordinary BASE classifier,
+so it cannot identify MULTI/RANDOM alternatives; MASS reuses the ordinary loss-aware
+MASS classifier. Unsupported snapshots/layouts and malformed rows fail the job.
 
-Each group writes `interprotocol-strategy-stability-summary.json` alongside the
-new Parquet and `interprotocol-strategy-stability.pdf` plus
-`interprotocol-strategy-transitions.pdf` in its figure directory. The campaign
-writes the same four artifacts with prefix `interprotocol-campaign-` instead
-of `interprotocol-`. The existing worker uploads all of them under its normal
-`results/` and `results/reports/figures/` paths. Counts in these files and plots
-are **IP/protocol observations**, not unique IP counts. Existing deployment
-plots continue to describe the three counter classes only.
+* **Counters:** full shared-model compatibility wins over individual label
+  changes. Next, any matching shared-pair model with the third protocol retaining
+  its baseline label yields `PARTIAL_PROTOCOL_SHARED`. Multiple matching
+  partitions use that same category, with all matches retained as diagnostics.
+  Otherwise all individual labels unchanged yields `PROTOCOL_ISOLATED`; remaining
+  targets yield `STRATEGY_CHANGED`. In a shared-pair/changed-third case the main
+  outcome is changed, but the shared pair is retained in the metadata.
+* **Reflection/Constant:** after confirming every individual label, compare
+  request/reply offsets modulo 65536 or constant reply values across protocols:
+  `SAME_PARAMETER` / `DIFFERENT_PARAMETERS`.
+* **Multi:** after confirming individual MULTI labels, test the combined sequence
+  with the established cluster rule, excluding earlier matching rules while
+  preserving the actual source/connection/request layout:
+  `SAME_INTER_STRATEGY` / `DIFFERENT_INTER_STRATEGY`.
+* **Random:** individual labels are reclassified; the main outcomes are
+  `UNCHANGED`, `STRATEGY_CHANGED`, or `NOT_ENOUGH_SAMPLES`.
+  **Joint 200/300-position RANDOM calibration is deferred.** `COMBINED_MATCH` is
+  null and no Same/Different Inter-Strategy claim is made for RANDOM.
 
-Four additional campaign PDFs provide one stability plot per non-counter class:
-`interprotocol-campaign-reflection.pdf`, `interprotocol-campaign-constant.pdf`,
-`interprotocol-campaign-multi.pdf`, and `interprotocol-campaign-random.pdf`.
-Each compares all four protocol intersections with stacked percentages for
-unchanged, changed, unclassified, and missing observations. Every
-bar includes its IP/protocol observation count; empty cohorts are shown as N=0.
-They are saved in the campaign figure directory and automatically uploaded to
-`results/reports/figures/` alongside the existing counter-class PDFs.
+Sharing means compatibility with a counter model, not proof of internal shared
+state. Changed means an observed label change, not proof of a causal effect of
+interleaving. Timing, vantage point, sample length and ordinary variability also
+matter. The original label may come from either part of the canonical merge.
 
-Paper stability plots use the same Linux Libertine compact styling as
-`interprotocol-campaign-single.pdf`: 6.5 x 2.55 inch class figures, 0.48-wide
-bars, intersection labels, percentage grid, four-column legend, and identical
-PDF padding. Observation counts remain explicitly distinguished from unique IP
-counts. The overview and transition matrix also use the compact paper font,
-palette and PDF padding (the matrix retains its appropriate heatmap layout).
+For each group/stage, the worker writes `interprotocol-outcomes.pq` and
+`interprotocol-summary.json` below
+`data/processed/interprotocol/<campaign>/runs/<run>/<group>/<base|mass>/`.
+Campaign outputs in `data/processed/interprotocol/<campaign>/runs/<run>/` are:
 
-Status plots show the same four outcomes as the data. `UNCLASSIFIED` means the
-classifier ran but found no known strategy. `CHANGED` means it found a different
-known strategy. `STRATEGY_NOT_CONFIRMED` remains a separate counter-deployment
-outcome: the expected counter model did not fit, but per-protocol classification
-may still find a known strategy. These meanings are never merged. Invalid
-classifier prerequisites (layout, request pattern, unsupported baseline) raise
-an error even for empty targets or completely lost sequences; packet loss with
-valid prerequisites remains `NOT_ENOUGH_SAMPLES`. There is no `NOT_EVALUATED`
-status in new results or plots.
+* `interprotocol-campaign-outcomes.pq`: one row per IP/group, with ordered protocol
+  labels and sample counts, outcome, shared pairs, compatible partitions,
+  reflection offsets/constant values, and combined MULTI match.
+* `interprotocol-campaign-summary.json`: counts per baseline/group/outcome,
+  partial-model counts, measurement IDs, classifier versions and the explicit
+  deferred joint-RANDOM scope.
+* `interprotocol-campaign-<strategy>-alternatives.json` and `.pq` for each of the
+  seven baselines: targets whose **main** outcome is changed. JSON counts joint
+  ordered label combinations (including UNCLASSIFIED), changed-label counts and
+  resolved state counts. Percentages use all targets of that baseline/group,
+  including missing targets. Parquet retains individual IPs and diagnostics.
+* `interprotocol-campaign-run.json`: source manifest and stage IDs.
 
-Each of the seven baseline strategies additionally gets
-`interprotocol-campaign-<strategy>-alternatives.json` and `.pq` in the campaign
-processed directory (use `per-destination` and `per-bucket` for those slugs).
-These select targets with at least one `CHANGED` observation or unconfirmed
-counter deployment, including `AMBIGUOUS` as in the counter plot. All protocol
-observations of those targets are retained, including unchanged or missing
-ones. JSON groups counts by protocol intersection, individual protocol,
-alternative label, status, diagnostic reason and raw deployment; it includes
-unique affected-IP counts, overlapping trigger counts and measurement IDs.
-Parquet retains individual IPs, labels, reasons, deployment and triggers.
-Empty strategy reports are emitted too, and the worker uploads all files.
-Counter-deployment rejection does not imply a changed per-protocol strategy:
-the alternative may still be the original class. Reports do not invent a single
-replacement class for a mixed-protocol sequence.
+`RAW_CHANGED_PROTOCOLS` counts different individual labels before sharing takes
+precedence. Counter `STATE_COUNTS` is `[shared, isolated, changed]` **after** that
+precedence; for example a fully shared Per-Destination target can have three raw
+label changes but state `[3,0,0]`. Insufficient rows have no changed count/state.
 
-`UNCHANGED` means compatible with the previous label under this sample and
-classifier, not proof that the internal algorithm is identical. Conversely,
-`CHANGED` is an observed label transition, not proof that interleaving caused
-it: elapsed time, vantage point and RT-based versus fixed-interval timing can
-also matter. RANDOM reuses the calibrated 4x25 production score; its original
-fixed-interval error-rate validation is not a new validation of interleaved
-traffic. Same-strategy cohort selection is unchanged; addresses with differing
-baseline classes across every protocol are still outside these cohorts.
+Seven compact paper PDFs, `interprotocol-campaign-<strategy>.pdf`, are written to
+`reports/figures/interprotocol/<campaign>/runs/<run>/`. Slugs are `reflection`,
+`constant`, `single`, `per-destination`, `per-bucket`, `multi`, `random`.
+Bars count IPs, include Not Enough Samples, and display empty cohorts as N=0.
+Partial sharing occupies only triple observations. The worker uploads tables and
+JSON below `results/` and PDFs below `results/reports/figures/` as before.
+Classification, campaign merging and detail export use bounded batches.
 
-The normal analysis worker performs the complete workflow over S3. Each
-completed base sweep prints its canonical analysis manifest URI. The
-inter-protocol VM receives the ICMP, TCP, and UDP URI through one
-`make run-interprotocol` command; no campaign JSON or target copy is required.
-The worker consumes `interprotocol-target-jobs/<run-id>/request.json`, builds
-and uploads all four target intersections, and later consumes the final
-`interprotocol-jobs/<run-id>/request.json` to classify the measurements.
+V1 manifests and snapshots without the new `interprotocol.sample` field retain
+the historical 4x25 RT analysis/output path for reproducibility. V2 does not
+reuse those independent stability plots or their full-table Python conversions.
 
-The following commands remain available for focused validation and debugging,
-but are not part of the operator workflow:
+Manual commands remain available:
 
 ```bash
 make build-interprotocol-targets ARGS="interprotocol-campaign.json"
-make validate-interprotocol
 make analyse-interprotocol ARGS="RAW.pq SNAPSHOT.yaml OUTPUT_DIR"
 make analyse-interprotocol-campaign ARGS="RUN-MANIFEST.json --raw-root data/raw/ipid"
+make validate-interprotocol
 ```
-
-`make validate-interprotocol` writes its JSON report below
-`data/processed/interprotocol-validation/` and its confusion-matrix PDFs below
-`reports/figures/interprotocol-validation/`.
-
-Raw inter-protocol measurements are stored below `data/raw/ipid/`. Target files,
-`target-summary.json`, per-IP deployment Parquets, and JSON counts are written
-below `data/processed/interprotocol/<campaign-id>/`. All plots are kept separate
-below `reports/figures/interprotocol/<campaign-id>/`. Triple measurements
-distinguish one shared counter, one shared protocol pair, and fully isolated
-protocol state.
-
-The final job downloads all group measurements, produces the per-group results
-above, and additionally writes a combined campaign Parquet, JSON summary, run
-metadata under `data/processed/interprotocol/<campaign-id>/runs/<run-id>/`.
-Campaign and per-group PDFs are written to the matching path below
-`reports/figures/interprotocol/`. In addition to the overview and missing-sample
-plots, one 100% stacked campaign plot is generated for each counter strategy;
-its x-axis compares ICMP/TCP, ICMP/UDP, TCP/UDP, and ICMP/TCP/UDP while the
-stack distinguishes protocol-shared, protocol-isolated, missing, and
-unconfirmed results.
-
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
-
-A short description of the project.
 
 ## Paper plot font
 

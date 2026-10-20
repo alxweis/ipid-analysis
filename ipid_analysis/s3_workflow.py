@@ -964,15 +964,13 @@ def process_interprotocol_request(
             raise ValueError("inter-protocol manifest run_id does not match job_id")
         if manifest["campaign_id"] != request.campaign_id:
             raise ValueError("inter-protocol manifest campaign_id does not match request")
+        from ipid_analysis.interprotocol import measurement_items
         for specification in manifest["groups"].values():
-            measurement_id = specification["measurement_id"]
-            remote = join_s3(request.ipid_prefix, measurement_id)
-            local = raw_root / measurement_id
-            client.download(join_s3(remote, "interprotocol.pq"), local / "interprotocol.pq")
-            client.download(
-                join_s3(remote, "interprotocol.snapshot.yaml"),
-                local / "interprotocol.snapshot.yaml",
-            )
+            for sample, measurement_id in measurement_items(specification):
+                remote = join_s3(request.ipid_prefix, measurement_id)
+                local = raw_root / measurement_id
+                client.download(join_s3(remote, "interprotocol.pq"), local / "interprotocol.pq")
+                client.download(join_s3(remote, "interprotocol.snapshot.yaml"), local / "interprotocol.snapshot.yaml")
         output_dir = classify_campaign(
             manifest_path,
             raw_root=raw_root,

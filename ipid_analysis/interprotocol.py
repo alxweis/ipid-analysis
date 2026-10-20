@@ -11,6 +11,7 @@ from collections import Counter
 from dataclasses import dataclass
 import json
 import math
+import re
 from pathlib import Path
 import time
 
@@ -321,8 +322,11 @@ def classify_file(
     *,
     figure_dir: Path | None = None,
 ) -> Path:
-    cfg = load_interprotocol_config(snapshot_path)
     snapshot = yaml.safe_load(snapshot_path.read_text())
+    if "sample" in snapshot.get("interprotocol", {}):
+        from ipid_analysis.interprotocol_outcomes import classify_file as classify_outcomes
+        return classify_outcomes(raw_path, snapshot_path, output_dir, figure_dir=figure_dir)
+    cfg = load_interprotocol_config(snapshot_path)
     protocol_request_patterns(cfg, snapshot.get("request_ip_ids", []))
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / "interprotocol-deployments.pq"
@@ -432,9 +436,16 @@ def plot_deployments(counts: Counter[tuple[str, str]], output: Path) -> None:
     plt.close(fig)
 
 
+def measurement_items(specification):
+    """Return stage IDs; legacy campaigns have one measurement per group."""
+    if "measurements" in specification:
+        return [(sample, str(specification["measurements"][sample])) for sample in ("base", "mass")]
+    return [("legacy", str(specification.get("measurement_id", "")))]
+
+
 def load_run_manifest(path: Path) -> dict:
     data = json.loads(path.read_text())
-    if data.get("version") != RUN_MANIFEST_VERSION:
+    if data.get("version") not in (RUN_MANIFEST_VERSION, 2):
         raise ValueError(
             f"unsupported inter-protocol run manifest version {data.get('version')!r}"
         )
@@ -455,9 +466,13 @@ def load_run_manifest(path: Path) -> dict:
             raise ValueError(
                 f"protocol order for {group!r} is {protocols!r}, expected {GROUPS[group]!r}"
             )
-        measurement_id = str(specification.get("measurement_id", ""))
-        if not measurement_id.startswith(f"interprotocol-{group}_"):
-            raise ValueError(f"invalid measurement id for {group!r}: {measurement_id!r}")
+        if data["version"] == 2 and set(specification.get("measurements", {})) != {"base", "mass"}:
+            raise ValueError("v2 groups require base and mass measurement IDs")
+        for sample, measurement_id in measurement_items(specification):
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", measurement_id) or not measurement_id.startswith(f"interprotocol-{group}_"):
+                raise ValueError(f"invalid measurement id for {group!r}: {measurement_id!r}")
+            if data["version"] == 2 and not measurement_id.endswith("_"+sample):
+                raise ValueError("measurement id must identify its BASE/MASS sample")
     return data
 
 
@@ -661,6 +676,9 @@ def classify_campaign(
     figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
 ) -> Path:
     manifest = load_run_manifest(run_manifest_path)
+    if manifest["version"] == 2:
+        from ipid_analysis.interprotocol_outcomes import classify_campaign as classify_outcomes
+        return classify_outcomes(run_manifest_path, raw_root=raw_root, output_root=output_root, figures_root=figures_root)
     output_dir = output_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
     output_dir.mkdir(parents=True, exist_ok=True)
     figure_dir = figures_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
