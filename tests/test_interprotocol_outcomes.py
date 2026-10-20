@@ -334,8 +334,15 @@ class OutcomeTests(unittest.TestCase):
             self.assertEqual(
                 pq.read_table(output / "interprotocol-campaign-outcomes.pq").num_rows, 2
             )
+            figures = root / "figures" / "campaign" / "runs" / "run"
+            slugs = ("reflection", "constant", "single", "per-destination",
+                     "per-bucket", "multi", "random")
+            expected_pdfs = {f"interprotocol-campaign-{s}.pdf" for s in slugs}
+            expected_pdfs |= {f"interprotocol-upset-{s}.pdf" for s in slugs}
+            self.assertEqual({p.name for p in figures.glob("*.pdf")}, expected_pdfs)
             self.assertEqual(
-                len(list((root / "figures" / "campaign" / "runs" / "run").glob("*.pdf"))), 7
+                {p.name for p in figures.glob("interprotocol-upset-*.png")},
+                {f"interprotocol-upset-{s}.png" for s in slugs},
             )
             del manifest["groups"]["icmp-tcp"]["measurements"]["mass"]
             path.write_text(json.dumps(manifest))

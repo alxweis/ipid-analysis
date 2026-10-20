@@ -377,46 +377,52 @@ def classify_file(raw_path, snapshot_path, output_dir, *, figure_dir=None):
     return path
 
 
+def outcome_plot_style(strategy):
+    """Shared outcome labels and colors for campaign figures."""
+    if strategy in COUNTERS:
+        categories = [
+            ("PROTOCOL_SHARED", "Protocol-Shared"),
+            ("PARTIAL_PROTOCOL_SHARED", "Partial Protocol-Shared"),
+            ("PROTOCOL_ISOLATED", "Protocol-Isolated"),
+        ]
+    elif strategy in ("REFLECTION", "CONSTANT"):
+        noun = "Offset" if strategy == "REFLECTION" else "Value"
+        categories = [
+            ("SAME_PARAMETER", "Same " + noun),
+            ("PARTIALLY_MATCHING_PARAMETERS", "Partially Matching " + noun + "s"),
+            ("DIFFERENT_PARAMETERS", "Different " + noun + "s"),
+        ]
+    elif strategy == "MULTI":
+        categories = [
+            ("SAME_INTER_STRATEGY", "Same Inter-Strategy"),
+            ("DIFFERENT_INTER_STRATEGY", "Different Inter-Strategy"),
+        ]
+    else:
+        categories = [("UNCHANGED", "0 Strategies Changed")]
+    categories += [
+        ("STRATEGY_CHANGED", "≥1 Strategy Changed"),
+        ("NOT_ENOUGH_SAMPLES", "Not Enough Samples"),
+    ]
+    color_names = (
+        ["PER_BUCKET", "PER_DESTINATION", "RANDOM", "SINGLE", "NOT_ENOUGH_SAMPLES"]
+        if strategy in (*COUNTERS, "REFLECTION", "CONSTANT")
+        else ["PER_BUCKET", "RANDOM", "SINGLE", "NOT_ENOUGH_SAMPLES"]
+    )
+    if strategy == "RANDOM":
+        color_names = ["PER_BUCKET", "SINGLE", "NOT_ENOUGH_SAMPLES"]
+    colors = [STRATEGY_COLORS[name] for name in color_names]
+    if strategy in COUNTERS:
+        colors[1] = "#6BAED6"
+    return categories, colors
+
+
 def plot_outcomes(summary, figure_dir):
     from ipid_analysis.interprotocol import GROUPS
 
     configure_compact_validation_style()
     figure_dir.mkdir(parents=True, exist_ok=True)
     for strategy in STRATEGIES:
-        if strategy in COUNTERS:
-            categories = [
-                ("PROTOCOL_SHARED", "Protocol-Shared"),
-                ("PARTIAL_PROTOCOL_SHARED", "Partial Protocol-Shared"),
-                ("PROTOCOL_ISOLATED", "Protocol-Isolated"),
-            ]
-        elif strategy in ("REFLECTION", "CONSTANT"):
-            noun = "Offset" if strategy == "REFLECTION" else "Value"
-            categories = [
-                ("SAME_PARAMETER", "Same " + noun),
-                ("PARTIALLY_MATCHING_PARAMETERS", "Partially Matching " + noun + "s"),
-                ("DIFFERENT_PARAMETERS", "Different " + noun + "s"),
-            ]
-        elif strategy == "MULTI":
-            categories = [
-                ("SAME_INTER_STRATEGY", "Same Inter-Strategy"),
-                ("DIFFERENT_INTER_STRATEGY", "Different Inter-Strategy"),
-            ]
-        else:
-            categories = [("UNCHANGED", "0 Strategies Changed")]
-        categories += [
-            ("STRATEGY_CHANGED", "≥1 Strategy Changed"),
-            ("NOT_ENOUGH_SAMPLES", "Not Enough Samples"),
-        ]
-        color_names = (
-            ["PER_BUCKET", "PER_DESTINATION", "RANDOM", "SINGLE", "NOT_ENOUGH_SAMPLES"]
-            if strategy in (*COUNTERS, "REFLECTION", "CONSTANT")
-            else ["PER_BUCKET", "RANDOM", "SINGLE", "NOT_ENOUGH_SAMPLES"]
-        )
-        if strategy == "RANDOM":
-            color_names = ["PER_BUCKET", "SINGLE", "NOT_ENOUGH_SAMPLES"]
-        colors = [STRATEGY_COLORS[name] for name in color_names]
-        if strategy in COUNTERS:
-            colors[1] = "#6BAED6"
+        categories, colors = outcome_plot_style(strategy)
         fig, ax = plt.subplots(figsize=(6.5, 2.55))
         x = np.arange(len(GROUPS)) * 0.84
         totals = [sum(summary.counts[strategy, g, o] for o, _ in categories) for g in GROUPS]
@@ -529,6 +535,9 @@ def classify_campaign(run_manifest_path, *, raw_root, output_root, figures_root)
                         changed.filter(pc.equal(changed["BASELINE_STRATEGY"], strategy))
                     )
     plot_outcomes(summary, figures)
+    from ipid_analysis.plot_interprotocol_upset import plot_campaign_upset
+
+    plot_campaign_upset(output / "interprotocol-campaign-summary.json", figures)
     (output / "interprotocol-campaign-run.json").write_text(
         json.dumps(
             {

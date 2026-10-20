@@ -79,6 +79,25 @@ Campaign outputs in `data/processed/interprotocol/<campaign>/runs/<run>/` are:
   including missing targets. Parquet retains individual IPs and diagnostics.
 * `interprotocol-campaign-run.json`: source manifest and stage IDs.
 
+The campaign also creates `interprotocol-upset-<strategy>.pdf` and `.png` for
+all seven strategies in the same figure directory. These compact UpSet-style
+figures show outcome percentages within each measured protocol intersection,
+including Not Enough Samples. Parenthesized intersection sizes sit between the
+bars and membership matrix; protocol labels include set sizes within the selected
+campaign population. Empty intersections show `(0)` without a filled bar.
+The matrix encodes cohort membership, not inferred sharing. Pair cohorts exclude
+same-strategy triple targets; single-protocol-only targets are not represented.
+Use that scope in the paper caption. Counts above 10000 use rounded `k`/`M` labels;
+exact counts remain in the campaign summary.
+
+Regenerate the UpSet figures without reclassifying raw measurements:
+
+```bash
+python -m ipid_analysis.plot_interprotocol_upset \
+  data/processed/interprotocol/<campaign>/runs/<run>/interprotocol-campaign-summary.json \
+  reports/figures/interprotocol/<campaign>/runs/<run>/
+```
+
 `MATCHING_PARAMETER_PAIRS` records matching pairs for Reflection/Constant after
 all individual labels are confirmed (all three pairs when all parameters agree).
 The summary's `parameter_relationships` aggregates these by baseline, protocol
