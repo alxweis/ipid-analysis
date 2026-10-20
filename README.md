@@ -41,7 +41,12 @@ MASS classifier. Unsupported snapshots/layouts and malformed rows fail the job.
   outcome is changed, but the shared pair is retained in the metadata.
 * **Reflection/Constant:** after confirming every individual label, compare
   request/reply offsets modulo 65536 or constant reply values across protocols:
-  `SAME_PARAMETER` / `DIFFERENT_PARAMETERS`.
+  `SAME_PARAMETER` when all agree, `PARTIALLY_MATCHING_PARAMETERS` when exactly
+  two of three agree, and `DIFFERENT_PARAMETERS` when all differ. Pair measurements
+  retain only Same/Different. Plots use Same Offset/Value, Partially Matching
+  Offsets/Values, and Different Offsets/Values. Missing replies and changed
+  individual strategies take precedence; matching parameters do not imply shared
+  internal state.
 * **Multi:** after confirming individual MULTI labels, test the combined sequence
   with the established cluster rule, excluding earlier matching rules while
   preserving the actual source/connection/request layout:
@@ -63,9 +68,9 @@ Campaign outputs in `data/processed/interprotocol/<campaign>/runs/<run>/` are:
 
 * `interprotocol-campaign-outcomes.pq`: one row per IP/group, with ordered protocol
   labels and sample counts, outcome, shared pairs, compatible partitions,
-  reflection offsets/constant values, and combined MULTI match.
+  reflection offsets/constant values, matching parameter pairs, and combined MULTI match.
 * `interprotocol-campaign-summary.json`: counts per baseline/group/outcome,
-  partial-model counts, measurement IDs, classifier versions and the explicit
+  partial-model counts, matching-parameter pair counts, measurement IDs, classifier versions and the explicit
   deferred joint-RANDOM scope.
 * `interprotocol-campaign-<strategy>-alternatives.json` and `.pq` for each of the
   seven baselines: targets whose **main** outcome is changed. JSON counts joint
@@ -73,6 +78,12 @@ Campaign outputs in `data/processed/interprotocol/<campaign>/runs/<run>/` are:
   resolved state counts. Percentages use all targets of that baseline/group,
   including missing targets. Parquet retains individual IPs and diagnostics.
 * `interprotocol-campaign-run.json`: source manifest and stage IDs.
+
+`MATCHING_PARAMETER_PAIRS` records matching pairs for Reflection/Constant after
+all individual labels are confirmed (all three pairs when all parameters agree).
+The summary's `parameter_relationships` aggregates these by baseline, protocol
+group, outcome and pair set. Outcome schema/summary version 2 adds this field and
+the partial-parameter category; the measurement manifest remains version 2.
 
 `RAW_CHANGED_PROTOCOLS` counts different individual labels before sharing takes
 precedence. Counter `STATE_COUNTS` is `[shared, isolated, changed]` **after** that

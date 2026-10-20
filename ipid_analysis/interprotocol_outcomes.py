@@ -55,10 +55,11 @@ SCHEMA = pa.schema(
         ("SHARED_PAIRS", pa.list_(pa.string())),
         ("COMPATIBLE_PARTITIONS", pa.list_(pa.string())),
         ("PARAMETERS", pa.list_(pa.int32())),
+        ("MATCHING_PARAMETER_PAIRS", pa.list_(pa.string())),
         ("COMBINED_MATCH", pa.bool_()),
     ],
     metadata={
-        b"interprotocol_outcome_version": b"1",
+        b"interprotocol_outcome_version": b"2",
         b"strategy_classifier_version": CLASSIFIER_VERSION.encode(),
         b"random_structure_score_version": RANDOM_STRUCTURE_SCORE_VERSION.encode(),
     },
@@ -152,6 +153,7 @@ def classify_rows(rows, cfg, snapshot, *, random_null_tables=None):
         outcome = "NOT_ENOUGH_SAMPLES"
         pairs, partitions, parameters, states = [], [], [], None
         combined = None
+        matching_parameters = []
         sequence = values[i]
         if enough and baseline in COUNTERS:
             # Counter populations use complete BASE sequences in new campaigns.
@@ -188,7 +190,18 @@ def classify_rows(rows, cfg, snapshot, *, random_null_tables=None):
                         else seq[valid][0]
                     )
                     parameters.append(int(parameter))
-                outcome = "SAME_PARAMETER" if len(set(parameters)) == 1 else "DIFFERENT_PARAMETERS"
+                matching_parameters = [
+                    "-".join((cfg.protocols[a], cfg.protocols[b]))
+                    for a in range(p)
+                    for b in range(a + 1, p)
+                    if parameters[a] == parameters[b]
+                ]
+                if len(set(parameters)) == 1:
+                    outcome = "SAME_PARAMETER"
+                elif matching_parameters:
+                    outcome = "PARTIALLY_MATCHING_PARAMETERS"
+                else:
+                    outcome = "DIFFERENT_PARAMETERS"
             elif baseline == "MULTI":
                 # A combined MULTI match uses the established cluster rule after
                 # ruling out earlier position-dependent classes with the real layout.
@@ -223,6 +236,7 @@ def classify_rows(rows, cfg, snapshot, *, random_null_tables=None):
                 "SHARED_PAIRS": pairs,
                 "COMPATIBLE_PARTITIONS": partitions,
                 "PARAMETERS": parameters,
+                "MATCHING_PARAMETER_PAIRS": matching_parameters,
                 "COMBINED_MATCH": combined,
             }
         )
@@ -234,6 +248,7 @@ class Summary:
         self.counts = Counter()
         self.transitions = Counter()
         self.relationships = Counter()
+        self.parameter_relationships = Counter()
         self.rows = 0
 
     def add(self, rows):
@@ -241,6 +256,8 @@ class Summary:
             self.rows += 1
             key = (row["BASELINE_STRATEGY"], row["PROTOCOL_GROUP"], row["OUTCOME"])
             self.counts[key] += 1
+            if row["MATCHING_PARAMETER_PAIRS"]:
+                self.parameter_relationships[(*key, tuple(row["MATCHING_PARAMETER_PAIRS"]))] += 1
             if row["SHARED_PAIRS"]:
                 self.relationships[
                     (*key, tuple(row["SHARED_PAIRS"]), tuple(row["COMPATIBLE_PARTITIONS"]))
@@ -253,13 +270,23 @@ class Summary:
     def write(self, path, measurements=None):
         groups = sorted({g for _, g, _ in self.counts} | set(measurements or {}))
         report = {
-            "version": 1,
+            "version": 2,
             "rows": self.rows,
             "unit": "IP addresses within each protocol group",
             "classifier_version": CLASSIFIER_VERSION,
             "random_score_version": RANDOM_STRUCTURE_SCORE_VERSION,
             "combined_random_analysis": "deferred",
             "state_count_order": ["shared", "isolated", "changed"],
+            "parameter_relationships": [
+                {
+                    "baseline": s,
+                    "protocol_group": g,
+                    "outcome": o,
+                    "matching_pairs": list(pairs),
+                    "count": count,
+                }
+                for (s, g, o, pairs), count in sorted(self.parameter_relationships.items())
+            ],
             "partial_relationships": [
                 {
                     "baseline": s,
@@ -366,6 +393,7 @@ def plot_outcomes(summary, figure_dir):
             noun = "Offset" if strategy == "REFLECTION" else "Value"
             categories = [
                 ("SAME_PARAMETER", "Same " + noun),
+                ("PARTIALLY_MATCHING_PARAMETERS", "Partially Matching " + noun + "s"),
                 ("DIFFERENT_PARAMETERS", "Different " + noun + "s"),
             ]
         elif strategy == "MULTI":
@@ -381,7 +409,7 @@ def plot_outcomes(summary, figure_dir):
         ]
         color_names = (
             ["PER_BUCKET", "PER_DESTINATION", "RANDOM", "SINGLE", "NOT_ENOUGH_SAMPLES"]
-            if strategy in COUNTERS
+            if strategy in (*COUNTERS, "REFLECTION", "CONSTANT")
             else ["PER_BUCKET", "RANDOM", "SINGLE", "NOT_ENOUGH_SAMPLES"]
         )
         if strategy == "RANDOM":
@@ -422,7 +450,7 @@ def plot_outcomes(summary, figure_dir):
             frameon=False,
             loc="lower center",
             bbox_to_anchor=(0.5, 1.01),
-            ncol=3 if strategy in COUNTERS else 2,
+            ncol=3 if len(categories) == 5 else 2,
             fontsize=7,
         )
         fig.subplots_adjust(left=0.095, right=0.995, bottom=0.28, top=0.73)

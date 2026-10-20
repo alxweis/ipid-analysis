@@ -131,6 +131,106 @@ class OutcomeTests(unittest.TestCase):
             r = result(np.tile(np.arange(p) + 42, 16), "CONSTANT", protocols)
             self.assertEqual(r["OUTCOME"], "DIFFERENT_PARAMETERS")
 
+    def test_parameter_matches_cover_all_pairs_and_triple_patterns(self):
+        for baseline in ("REFLECTION", "CONSTANT"):
+            for protocols in (("icmp", "tcp"), ("icmp", "tcp", "udp")):
+                p = len(protocols)
+                cases = [([65530] * p, "SAME_PARAMETER"), (list(range(p)), "DIFFERENT_PARAMETERS")]
+                if p == 3:
+                    cases += [
+                        (x, "PARTIALLY_MATCHING_PARAMETERS")
+                        for x in ([65530, 65530, 7], [65530, 7, 65530], [7, 65530, 65530])
+                    ]
+                for parameters, expected in cases:
+                    with self.subTest(
+                        baseline=baseline, protocols=protocols, parameters=parameters
+                    ):
+                        seq = np.tile(parameters, 16)
+                        if baseline == "REFLECTION":
+                            seq = (seq + np.repeat(np.resize(PATTERN, 16), p)) % 65536
+                        r = result(seq, baseline, protocols)
+                        self.assertEqual(r["OUTCOME"], expected)
+                        self.assertEqual(r["PARAMETERS"], parameters)
+                        self.assertEqual(
+                            r["MATCHING_PARAMETER_PAIRS"],
+                            [
+                                "-".join((protocols[a], protocols[b]))
+                                for a in range(p)
+                                for b in range(a + 1, p)
+                                if parameters[a] == parameters[b]
+                            ],
+                        )
+                        self.assertEqual(r["RAW_CHANGED_PROTOCOLS"], 0)
+                        self.assertEqual(r["SHARED_PAIRS"], [])
+
+    def test_partial_parameters_do_not_override_changed_or_missing(self):
+        for baseline in ("REFLECTION", "CONSTANT"):
+            seq = np.tile([5, 5, 7], 16)
+            if baseline == "REFLECTION":
+                seq = (seq + np.repeat(np.resize(PATTERN, 16), 3)) % 65536
+                seq[2::3] = 42
+            else:
+                seq[2::3] = np.resize(PATTERN, 16)
+            changed = result(seq, baseline)
+            self.assertEqual(changed["OUTCOME"], "STRATEGY_CHANGED")
+            self.assertEqual(changed["RAW_CHANGED_PROTOCOLS"], 1)
+            self.assertEqual(changed["MATCHING_PARAMETER_PAIRS"], [])
+            seq[0] = -1
+            missing = result(seq, baseline)
+            self.assertEqual(missing["OUTCOME"], "NOT_ENOUGH_SAMPLES")
+            self.assertEqual(missing["MATCHING_PARAMETER_PAIRS"], [])
+
+    def test_partial_parameter_export_and_plot_denominators(self):
+        from matplotlib.figure import Figure
+
+        from ipid_analysis.interprotocol_outcomes import classify_file
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rows = []
+            for baseline in ("REFLECTION", "CONSTANT"):
+                for parameters in ([5, 5, 5], [5, 5, 7], [5, 6, 7]):
+                    seq = np.tile(parameters, 16)
+                    if baseline == "REFLECTION":
+                        seq = (seq + np.repeat(np.resize(PATTERN, 16), 3)) % 65536
+                    rows.append(raw(seq, baseline, f"192.0.2.{len(rows) + 1}"))
+            pq.write_table(pa.Table.from_pylist(rows), root / "raw.pq")
+            (root / "snapshot.yaml").write_text(yaml.safe_dump(snapshot()))
+            figures = {}
+
+            def capture(fig, path, **kwargs):
+                figures[Path(path).stem] = fig
+
+            with patch.object(Figure, "savefig", capture):
+                path = classify_file(
+                    root / "raw.pq",
+                    root / "snapshot.yaml",
+                    root / "out",
+                    figure_dir=root / "figures",
+                )
+            table = pq.read_table(path)
+            self.assertEqual(table.schema.metadata[b"interprotocol_outcome_version"], b"2")
+            self.assertEqual(table.to_pylist()[1]["MATCHING_PARAMETER_PAIRS"], ["icmp-tcp"])
+            report = json.loads((root / "out" / "interprotocol-summary.json").read_text())
+            self.assertEqual(report["rows"], 6)
+            partial = [
+                r
+                for r in report["parameter_relationships"]
+                if r["outcome"] == "PARTIALLY_MATCHING_PARAMETERS"
+            ]
+            self.assertEqual(len(partial), 2)
+            self.assertTrue(
+                all(r["matching_pairs"] == ["icmp-tcp"] and r["count"] == 1 for r in partial)
+            )
+            for strategy, noun in (("reflection", "Offsets"), ("constant", "Values")):
+                ax = figures[f"interprotocol-campaign-{strategy}"].axes[0]
+                labels = ax.get_legend_handles_labels()[1]
+                self.assertIn("Partially Matching " + noun, labels)
+                # Every category has four bars; only the triple cohort is populated.
+                self.assertAlmostEqual(sum(c.patches[3].get_height() for c in ax.containers), 100)
+                self.assertAlmostEqual(ax.containers[1].patches[3].get_height(), 100 / 3)
+                self.assertTrue(all(c.patches[0].get_height() == 0 for c in ax.containers))
+
     def test_mass_eighty_percent_is_checked_per_protocol(self):
         seq = np.repeat(np.tile([100, 40000], 50), 2)
         seq[np.arange(0, 40, 2)] = -1
