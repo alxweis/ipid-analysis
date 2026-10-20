@@ -31,7 +31,7 @@ class InterprotocolStabilityTests(unittest.TestCase):
             "BASELINE_STRATEGY": ["REFLECTION"] * 4 + ["CONSTANT"],
             "PROTOCOL_GROUP": ["icmp-tcp"] * 3 + ["icmp-tcp-udp", "icmp-tcp"],
             "STRATEGY_STATUS": ["UNCHANGED", "CHANGED", "NOT_ENOUGH_SAMPLES",
-                                "NOT_EVALUATED", "UNCHANGED"],
+                                "UNCLASSIFIED", "UNCHANGED"],
         })
         with tempfile.TemporaryDirectory() as directory:
             figures = []
@@ -47,11 +47,17 @@ class InterprotocolStabilityTests(unittest.TestCase):
             ])
             self.assertTrue(all(p.read_bytes().startswith(b"%PDF-") for p in paths))
             reflection = figures[0].axes[0]
-            heights = np.asarray([bar.get_height() for bar in reflection.patches]).reshape(5, 4)
-            np.testing.assert_allclose(heights[:, 0], [100 / 3, 100 / 3, 0, 100 / 3, 0])
+            heights = np.asarray([bar.get_height() for bar in reflection.patches]).reshape(4, 4)
+            np.testing.assert_allclose(heights[:, 0], [100 / 3, 100 / 3, 100 / 3, 0])
             np.testing.assert_allclose(heights[:, 1:3], 0)
-            np.testing.assert_allclose(heights[:, 3], [0, 0, 0, 0, 100])
-            self.assertEqual(reflection.get_xticklabels()[0].get_text(), "ICMP-TCP\n(N=3)")
+            np.testing.assert_allclose(heights[:, 3], [0, 0, 0, 100])
+            self.assertEqual(reflection.get_xticklabels()[0].get_text(), "ICMP$\\cap$TCP\n(N=3)")
+            np.testing.assert_allclose(figures[0].get_size_inches(), [6.5, 2.55])
+            self.assertEqual(reflection.get_ylabel(), "Percentage [%]")
+            self.assertEqual(reflection.get_title(), "")
+            self.assertEqual([t.get_text() for t in reflection.get_legend().get_texts()],
+                             ["Unchanged", "Changed", "Not Enough Samples", "Unclassified"])
+            np.testing.assert_allclose([bar.get_width() for bar in reflection.patches], 0.48)
             # No MULTI or RANDOM cohort must still produce an explicit empty plot.
             for figure in figures[2:]:
                 self.assertTrue(all(bar.get_height() == 0 for bar in figure.axes[0].patches))
@@ -107,15 +113,32 @@ class InterprotocolStabilityTests(unittest.TestCase):
             rows = classify_protocol_rows([raw_row(sequence, "RANDOM")], cfg, PATTERN)
         self.assertTrue(all(r["STRATEGY_STATUS"] == "UNCLASSIFIED" for r in rows))
 
-    def test_old_or_ambiguous_metadata_is_unevaluated(self):
+    def test_invalid_metadata_raises_even_for_empty_or_missing_rows(self):
         for cfg, pattern, reason in (
-            (InterprotocolConfig(("icmp", "tcp"), 4, 4), PATTERN, "REQUIRES_4X25_LAYOUT"),
-            (InterprotocolConfig(("icmp", "tcp"), 4, 25), (), "MISSING_REQUEST_IP_IDS"),
-            (InterprotocolConfig(("icmp", "tcp"), 4, 25), (1, 2), "INVALID_OR_CONSTANT_REQUEST_PATTERN"),
+            (InterprotocolConfig(("icmp", "tcp"), 4, 4), PATTERN, "4x25"),
+            (InterprotocolConfig(("icmp", "tcp"), 4, 25), (), "requires request_ip_ids"),
+            (InterprotocolConfig(("icmp", "tcp"), 4, 25), (1, 2), "constant"),
+            (InterprotocolConfig(("icmp", "tcp"), 4, 25), (-1, 65536), "16-bit"),
         ):
-            rows = classify_protocol_rows([raw_row(np.full(cfg.sequence_length, 42), "CONSTANT")], cfg, pattern)
-            self.assertTrue(all(r["STRATEGY_STATUS"] == "NOT_EVALUATED" for r in rows))
-            self.assertTrue(all(r["REASON"] == reason for r in rows))
+            for rows in ([], [raw_row(np.full(cfg.sequence_length, 42), "CONSTANT")],
+                         [raw_row(np.full(cfg.sequence_length, -1), "CONSTANT")]):
+                with self.assertRaisesRegex(ValueError, reason):
+                    classify_protocol_rows(rows, cfg, pattern)
+
+    def test_unsupported_baseline_is_an_error(self):
+        cfg = InterprotocolConfig(("icmp", "tcp"), 4, 25)
+        with self.assertRaisesRegex(ValueError, "unsupported interprotocol baseline"):
+            classify_protocol_rows([raw_row(np.full(200, 42), "UNKNOWN")], cfg, PATTERN)
+
+    def test_invalid_file_snapshot_fails_before_writing_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "snapshot.yaml"
+            snapshot.write_text("connection_count: 4\nrequests_per_connection: 25\n"
+                                "interprotocol:\n  protocols: [icmp, tcp]\n")
+            with self.assertRaisesRegex(ValueError, "requires request_ip_ids"):
+                classify_file(root / "raw.pq", snapshot, root / "result")
+            self.assertFalse((root / "result").exists())
 
     def test_malformed_length_and_out_of_range_values_are_not_changes(self):
         cfg = InterprotocolConfig(("icmp", "tcp"), 4, 25)

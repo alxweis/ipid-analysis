@@ -23,11 +23,13 @@ import typer
 import yaml
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.interprotocol_alternatives import write_alternative_reports
 from ipid_analysis.interprotocol_stability import (
     STABILITY_STRATEGIES,
     classify_stability_file,
     plot_campaign_strategy_stability,
     plot_stability,
+    protocol_request_patterns,
     write_stability_summary,
 )
 from ipid_analysis.manifest import load_manifest
@@ -320,6 +322,8 @@ def classify_file(
     figure_dir: Path | None = None,
 ) -> Path:
     cfg = load_interprotocol_config(snapshot_path)
+    snapshot = yaml.safe_load(snapshot_path.read_text())
+    protocol_request_patterns(cfg, snapshot.get("request_ip_ids", []))
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / "interprotocol-deployments.pq"
     temporary = output.with_suffix(".pq.part")
@@ -367,7 +371,6 @@ def classify_file(
     figure_dir = figure_dir or INTERPROTOCOL_FIGURES_DIR / output_dir.name
     figure_dir.mkdir(parents=True, exist_ok=True)
     plot_deployments(counts, figure_dir / "interprotocol-deployments.pdf")
-    snapshot = yaml.safe_load(snapshot_path.read_text())
     stability = classify_stability_file(
         raw_path, cfg, snapshot.get("request_ip_ids", []), output_dir
     )
@@ -690,6 +693,7 @@ def classify_campaign(
     stability_temporary = stability_path.with_suffix(".pq.part")
     pq.write_table(stability, stability_temporary, compression="zstd")
     stability_temporary.replace(stability_path)
+    write_alternative_reports(stability, combined, output_dir, measurement_ids)
     write_stability_summary(
         stability, output_dir / "interprotocol-campaign-strategy-stability-summary.json"
     )
