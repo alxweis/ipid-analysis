@@ -433,10 +433,6 @@ def render_ripe_atlas_analysis(
                 CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR) AS IPID_SELECTION_STRATEGY,
                 r.T,
                 r.D,
-                r.TRACE_COUNT,
-                r.PROBE_COUNT,
-                r.MEASUREMENT_COUNT,
-                r.PROTOCOLS,
                 TRUE AS RIPE_MATCH,
                 CASE
                     WHEN r.T THEN '{TRANSIT_ROLE}'
@@ -474,7 +470,8 @@ def render_ripe_atlas_analysis(
                 count(*)::BIGINT,
                 count(*) FILTER (WHERE T AND D)::BIGINT,
                 count(*) FILTER (WHERE T AND NOT D)::BIGINT,
-                count(*) FILTER (WHERE NOT T AND D)::BIGINT
+                count(*) FILTER (WHERE NOT T AND D)::BIGINT,
+                count(*) FILTER (WHERE NOT T AND NOT D)::BIGINT
             FROM read_parquet('{joined_path}')
             """
         ).fetchone()
@@ -483,8 +480,8 @@ def render_ripe_atlas_analysis(
                 f"SELECT count(*)::BIGINT FROM read_parquet('{_sql_path(strategies)}')"
             ).fetchone()[0]
         )
-        matched, t1_d1, t1_d0, t0_d1 = map(int, match_counts)
-        coverage = (total, matched, total - matched, t1_d1, t1_d0, t0_d1)
+        matched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, match_counts)
+        coverage = (total, matched, total - matched, t1_d1, t1_d0, t0_d1, t0_d0)
         if not matched:
             raise ValueError(f"{source.target}: no measured IP address matched RIPE Atlas")
 
@@ -616,7 +613,7 @@ def render_ripe_atlas_analysis(
             + "\n",
             encoding="utf-8",
         )
-    total, matched, unmatched, t1_d1, t1_d0, t0_d1 = map(int, coverage)
+    total, matched, unmatched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, coverage)
     report = {
         **_source_metadata(source),
         "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
@@ -631,8 +628,7 @@ def render_ripe_atlas_analysis(
         "role_definition": {
             TRANSIT_ROLE: "RIPE observation with T=true; D arbitrary",
             NO_TRANSIT_ROLE: (
-                "RIPE observation with T=false; every included RIPE address has T or D, "
-                "therefore this group has D=true"
+                "RIPE observation with T=false; D arbitrary"
             ),
         },
         "coverage": {
@@ -643,6 +639,7 @@ def render_ripe_atlas_analysis(
             "t1_d1": t1_d1,
             "t1_d0": t1_d0,
             "t0_d1": t0_d1,
+            "t0_d0": t0_d0,
         },
         "plot_percentages": percentages,
         "plot_role_totals": role_totals,

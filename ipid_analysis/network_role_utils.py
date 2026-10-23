@@ -8,7 +8,7 @@ from pathlib import Path
 
 from loguru import logger
 
-NETWORK_ROLE_ANALYSIS_VERSION = "2"
+NETWORK_ROLE_ANALYSIS_VERSION = "3"
 
 
 def sql_path(path: Path) -> str:

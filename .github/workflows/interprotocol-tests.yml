@@ -20,3 +20,7 @@ jobs:
       - run: python -m unittest discover -s tests -p 'test_interprotocol*.py'
       - run: python -m unittest discover -s tests -p 'test_s3_workflow.py'
       - run: python -m unittest discover -s tests -p 'test_strategies.py'
+      - run: python -m unittest discover -s tests -p 'test_ripe*.py'
+      - run: python -m unittest discover -s tests -p 'test_plot_ripe_atlas_os.py'
+      - run: python -m unittest discover -s tests -p 'test_caida_itdk.py'
+      - run: python -m unittest discover -s tests -p 'test_plot_itdk_os.py'
