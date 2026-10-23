@@ -57,6 +57,7 @@ def _record(
 ) -> dict:
     return {
         "af": 4,
+        "src_addr": "10.0.0.2",
         "type": "traceroute",
         "timestamp": timestamp,
         "dst_addr": destination,
@@ -446,8 +447,7 @@ class RipeAtlasTest(unittest.TestCase):
             self.assertEqual(stats["traces"], 2)
             self.assertTrue(rows["8.8.8.8"]["T"])
             self.assertTrue(rows["8.8.8.8"]["D"])
-            self.assertEqual(rows["8.8.8.8"]["MEASUREMENT_COUNT"], 2)
-            self.assertEqual(rows["8.8.8.8"]["PROBE_COUNT"], 2)
+            self.assertEqual(set(rows["8.8.8.8"]), {"IP_V4", "IP_ADDR", "T", "D"})
 
             parts = sorted((root / "processed" / "ripe-atlas" / "file-parts").glob("*.pq"))
             part_mtimes = {path: path.stat().st_mtime_ns for path in parts}

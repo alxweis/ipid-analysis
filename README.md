@@ -295,14 +295,27 @@ IP-ID campaign:
 The default `daily-dumps` source downloads twelve reproducibly and evenly
 distributed hourly traceroute archives from that fixed window. Current hourly
 archives are commonly 2--3 GB each; downloading all 672 hours would otherwise
-exceed 1.5 TB for one campaign. Four worker processes parse independent dumps
-in parallel. Each file produces a reusable compact part below
-`data/processed/ripe-atlas/file-parts`; overlapping campaign windows therefore
-do not parse that dump again. Per-file locks and atomic replacement protect
-these shared parts when several protocol analyses start concurrently. Adjust `--dump-samples` and
-`--preprocess-workers` when deliberately changing coverage or CPU pressure.
-Raw downloads are shared and retained below the S3-mounted analysis data
-directory:
+exceed 1.5 TB for one campaign. Up to four worker processes parse independent
+dumps, with at most two downloads ahead of the bounded parser queue. BZip2 is
+decompressed as a stream; no uncompressed JSON copy is written. Each parser
+uses three full IPv4 bitmaps (SEEN/T/D, 1.5 GiB of address space per worker).
+Only touched pages/blocks are used, and Parquet export is bounded to 262144
+rows per batch. Per-address trace counts, probe/measurement-ID sets, protocol
+sets and timestamps are no longer collected.
+
+Each hour produces sorted ZSTD Parquet with `IP_V4` (uint32), `T`, `D` under
+`data/processed/ripe-atlas/file-parts`. Row presence represents SEEN, including
+observed addresses with both flags false. The merged window lookup also retains
+the textual `IP_ADDR` column for existing plot joins. DuckDB merges flags with
+`bool_or`, using four threads and an 8GB memory limit by default. Parquet is
+internally compressed, not wrapped in another compressed stream.
+
+New raw hourly downloads use a local scratch directory, defaulting to
+`data/processed/ripe-atlas/work`. Set `IPID_ANALYSIS_RIPE_WORK_DIR` to a sufficiently
+large local SSD directory (not the small root filesystem or an S3 FUSE mount).
+Completed scratch files are removed after their processed part is persisted;
+failed/incomplete files remain resumable. Existing raw files below the following
+directory are reused and never removed:
 
 RIPE exposes these dumps as a rolling archive. Preparation reads the public
 directory index before selecting files. When retention has removed the start
@@ -322,6 +335,54 @@ The compact reusable lookup and complete source metadata are stored below:
 ```text
 data/processed/ripe-atlas/<window>/daily-dumps-s12/
 ```
+
+The worker automatically publishes both hourly parts and window lookups to
+`<IPID_ANALYSIS_S3_PREFIX>/ripe-atlas-cache/v4/`, using the existing `s3cmd`
+credentials. This also works when the workflow prefix is passed on the command
+line. Override with `IPID_ANALYSIS_RIPE_CACHE_S3=s3://bucket/prefix`; an explicitly
+empty value disables remote caching. Standalone preparation without either
+prefix uses local caching only.
+
+S3 Parquet objects are addressed by SHA-256 under `objects/`. Hour/window
+manifests are uploaded last and contain the checksum and provenance. Restores
+verify the checksum before publishing local files. A window cache is checked
+before accessing the RIPE archive index; each hourly cache is checked before
+requesting the raw dump. Thus the same window works after raw dumps expire,
+and selected overlapping hours need not be downloaded or parsed again. New
+windows still require the available-day index to select their hours. Cache v4
+invalidates previous role semantics; old files are left untouched.
+
+Resource controls (also available in manifest postprocessing):
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `IPID_ANALYSIS_RIPE_WORKERS` | 4 | Requested parser processes, further capped by CPU and memory budget |
+| `IPID_ANALYSIS_RIPE_DOWNLOADS` | 2 | Concurrent downloads, constrained to 1–2 |
+| `IPID_ANALYSIS_RIPE_MEMORY_GIB` | 16 | Parser budget estimate: 2 GiB reserve plus 2 GiB per worker; minimum 4 |
+| `IPID_ANALYSIS_RIPE_DUCKDB_THREADS` | 4 | Merge threads, also capped to leave one CPU available where possible |
+| `IPID_ANALYSIS_RIPE_DUCKDB_MEMORY` | 8GB | DuckDB buffer-manager limit |
+
+One resource lock under the shared processed root serializes RIPE preparation
+across concurrent protocol jobs on the same VM. Parser pools use spawned
+processes, avoiding fork-after-download-thread hazards. The memory budget is a
+worker-sizing estimate, not an OS-level RSS limit; DuckDB allocations can also
+exceed its buffer-manager limit. For a hard service-wide cap, use the VM's
+service manager/cgroup. Logs report download, parsing and part/merge progress;
+source manifests include elapsed parsing/preparation times. Start with these
+defaults on a 120GB VM, then tune from measured CPU, I/O and RSS rather than
+allocating all available memory.
+
+For a reproducible accumulator benchmark (requires optional `psutil`):
+
+```bash
+python -m benchmarks.ripe_roles --addresses 200000 --repeats 5
+```
+
+It compares the old per-IP metadata layout with bitmap accumulation using the
+same role observations; it excludes network, JSON parsing and decompression.
+It reports elapsed time, sampled peak RSS and output checksums, not an end-to-end
+production speedup. Cache data supports future T/D-based plots; RTT, per-probe
+or other new traceroute attributes require separately retained raw sources.
 
 Prepare a window explicitly with:
 
@@ -345,13 +406,16 @@ imported with `--input-dir`. Automatic postprocessing reads the corresponding
 settings. Set `IPID_ANALYSIS_SKIP_RIPE=1`
 only when deliberately omitting the analysis.
 
-Only globally routable IPv4 replies enter the lookup. An address is
-`Transit-Observed` when it replied as an intermediate hop at least once;
-addresses that replied as a traceroute destination but were never intermediate
-hops are `No Transit Evidence`. Within the RIPE lookup this is exactly the
-destination-only population because only observed transit or destination
-replies enter the lookup. An address observed in both roles remains
-`Transit-Observed`. Unmatched IP-ID targets are reported as coverage and are
+Only public unicast IPv4 replies enter the lookup. T follows CAIDA's transit
+definition: a public/private predecessor (including a known source) and a
+public successor at a strictly later TTL are required; source and destination
+addresses are excluded as transit within that trace. The last public response
+and additional responses at the same TTL do not prove transit. If no source
+address is present, a preceding observed public/private reply is required.
+D means an observed responding destination, not merely the configured target.
+Flags are OR-ed across traces. `Transit-Observed` is T=true, regardless of D;
+`No Transit Evidence` includes both destination-only and SEEN-with-neither-flag
+addresses. All four T/D counts are reported. Unmatched IP-ID targets are coverage and are
 not treated as endpoints. Every matched IP address contributes once to its
 role's strategy distribution, independently of its RIPE observation count.
 

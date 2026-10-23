@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -1054,6 +1055,8 @@ def main(
 ) -> None:
     if not s3_prefix.startswith("s3://") or not s3_prefix.removeprefix("s3://").strip("/"):
         raise typer.BadParameter("s3_prefix must be a non-empty s3:// URI")
+    # Propagate the resolved CLI/env prefix to the postprocessing subprocess.
+    os.environ["IPID_ANALYSIS_S3_PREFIX"] = s3_prefix
     client = S3Client()
     while True:
         run_pending(client, s3_prefix, work_root, batch_size, threads)

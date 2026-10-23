@@ -220,7 +220,7 @@ def render_ripe_atlas_os_analysis(
         },
         "role_definition": {
             TRANSIT_ROLE: "RIPE observation with T=true; D arbitrary",
-            NO_TRANSIT_ROLE: "RIPE observation with T=false; for included addresses D=true",
+            NO_TRANSIT_ROLE: "RIPE observation with T=false; D arbitrary",
         },
         "methodology": {
             "population": "measured IPs with a RIPE match and a resolved OS group",
