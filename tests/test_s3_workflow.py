@@ -207,7 +207,15 @@ class S3WorkflowTest(unittest.TestCase):
             combined_uri = f"{request['result_prefix']}/interprotocol-campaign-deployments.pq"
             self.assertEqual(json.loads(client.objects[summary_uri])["rows"], 1)
             self.assertIn(combined_uri, client.objects)
-            for strategy in ("reflection", "constant", "single", "per-destination", "per-bucket", "multi", "random"):
+            for strategy in (
+                "reflection",
+                "constant",
+                "single",
+                "per-destination",
+                "per-bucket",
+                "multi",
+                "random",
+            ):
                 for suffix in ("json", "pq"):
                     self.assertIn(
                         f"{request['result_prefix']}/interprotocol-campaign-{strategy}-alternatives.{suffix}",
@@ -264,7 +272,7 @@ class S3WorkflowTest(unittest.TestCase):
                     "icmp-udp": {
                         "protocols": ["icmp", "udp"],
                         "status": "complete",
-                        "measurements": {"base":measurement_id,"mass":mass_id},
+                        "measurements": {"base": measurement_id, "mass": mass_id},
                     }
                 },
             }
@@ -293,9 +301,20 @@ class S3WorkflowTest(unittest.TestCase):
             )
 
             empty = root / "empty.pq"
-            pq.write_table(pa.table({"IP_ADDR":pa.array([],pa.string()),"IPID_SELECTION_STRATEGY":pa.array([],pa.string()),"IPID_SEQUENCE":pa.array([],pa.string())}),empty)
+            pq.write_table(
+                pa.table(
+                    {
+                        "IP_ADDR": pa.array([], pa.string()),
+                        "IPID_SELECTION_STRATEGY": pa.array([], pa.string()),
+                        "IPID_SEQUENCE": pa.array([], pa.string()),
+                    }
+                ),
+                empty,
+            )
             client.objects[f"{ipid_prefix}/{mass_id}/interprotocol.pq"] = empty.read_bytes()
-            client.objects[f"{ipid_prefix}/{mass_id}/interprotocol.snapshot.yaml"] = (b"connection_count: 4\nrequests_per_connection: 25\nrequest_ip_ids: [1, 2]\nmeasurement_mode: fixed-interval\ninterprotocol:\n  protocols: [icmp, udp]\n  sample: mass\n  request_ipid_index: logical\n")
+            client.objects[f"{ipid_prefix}/{mass_id}/interprotocol.snapshot.yaml"] = (
+                b"connection_count: 4\nrequests_per_connection: 25\nrequest_ip_ids: [1, 2]\nmeasurement_mode: fixed-interval\ninterprotocol:\n  protocols: [icmp, udp]\n  sample: mass\n  request_ipid_index: logical\n"
+            )
 
             processed = process_interprotocol_request(
                 client,
@@ -313,7 +332,15 @@ class S3WorkflowTest(unittest.TestCase):
             combined_uri = f"{request['result_prefix']}/interprotocol-campaign-outcomes.pq"
             self.assertEqual(json.loads(client.objects[summary_uri])["rows"], 1)
             self.assertIn(combined_uri, client.objects)
-            for strategy in ("reflection", "constant", "single", "per-destination", "per-bucket", "multi", "random"):
+            for strategy in (
+                "reflection",
+                "constant",
+                "single",
+                "per-destination",
+                "per-bucket",
+                "multi",
+                "random",
+            ):
                 for suffix in ("json", "pq"):
                     self.assertIn(
                         f"{request['result_prefix']}/interprotocol-campaign-{strategy}-alternatives.{suffix}",
@@ -437,7 +464,11 @@ class S3WorkflowTest(unittest.TestCase):
             )
 
             self.assertTrue(process_request(client, request_uri, prefix, root / "work", 100, 1))
-            self.assertEqual(client.uploads[-3:], [strategies_uri, result_uri, done_uri])
+            provenance_uri = strategies_uri.rsplit("/", 1)[0] + "/classification-provenance.json"
+            self.assertEqual(
+                client.uploads[-4:], [strategies_uri, provenance_uri, result_uri, done_uri]
+            )
+            self.assertEqual(json.loads(client.objects[provenance_uri])["generation"]["rows"], 2)
             self.assertEqual(json.loads(client.objects[done_uri])["rows"], 1)
 
             persisted = root / "persisted-strategies.pq"
@@ -496,7 +527,9 @@ class S3WorkflowTest(unittest.TestCase):
 
             def fake_classify(input_path, snapshot_path, output_path, **kwargs):
                 classify_calls.append(kwargs)
-                pq.write_table(
+                from ipid_analysis.artifacts import write_table
+
+                write_table(
                     pa.table(
                         {
                             "IP_ADDR": ["192.0.2.1"],
@@ -659,6 +692,27 @@ class S3WorkflowTest(unittest.TestCase):
                 for measurement_id in repeat_ids:
                     self.assertTrue((root / "raw" / "ipid" / measurement_id / "ipid.pq").is_file())
                 log_path.write_text("postprocessing complete\n")
+                from ipid_analysis.postprocess import required_core_artifacts
+                from ipid_analysis.artifacts import write_table, write_text, fingerprints
+
+                paths = required_core_artifacts(
+                    manifest, processed_root=root / "processed", figures_root=root / "figures"
+                )
+                for path in paths:
+                    if path.suffix == ".pq":
+                        write_table(pa.table({"IP_ADDR": ["192.0.2.1"]}), path)
+                    else:
+                        write_text(path, "test artifact")
+                log_path.with_name("postprocess-status.json").write_text(
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "required_complete": True,
+                            "manifest": fingerprints([manifest_path]),
+                            "artifacts": [str(path) for path in paths],
+                        }
+                    )
+                )
 
             self.assertTrue(
                 process_analysis_request(
@@ -670,6 +724,8 @@ class S3WorkflowTest(unittest.TestCase):
                     2,
                     postprocess=fake_postprocess,
                     raw_root=root / "raw",
+                    processed_root=root / "processed",
+                    figures_root=root / "figures",
                 )
             )
             self.assertEqual(len(calls), 1)
@@ -680,7 +736,7 @@ class S3WorkflowTest(unittest.TestCase):
             )
             done = json.loads(client.objects[f"{job_prefix}/done.json"])
             self.assertEqual(done["job_id"], job_id)
-            self.assertTrue((root / "jobs" / job_id / "manifest.json").is_file())
+            self.assertFalse((root / "jobs" / job_id).exists())
 
     def test_analysis_request_rejects_noncanonical_manifest_location(self):
         prefix = "s3://bucket/workflow"
@@ -896,4 +952,3 @@ class S3WorkflowTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

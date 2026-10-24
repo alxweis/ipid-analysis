@@ -16,25 +16,29 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import time
 
-import duckdb
 from loguru import logger
 import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import (
+    assert_complete,
+    atomic_output,
+    completion_path,
+    file_digest,
+    fingerprints,
+    publication_inventory,
+    publish_file,
+)
 from ipid_analysis.config import (
-    DATA_DIR,
-    INTERIM_DATA_DIR,
     PROCESSED_DATA_DIR,
     PROJ_ROOT,
     RAW_DATA_DIR,
@@ -57,13 +61,25 @@ from ipid_analysis.random_reproducibility_analysis import (
     TARGET_FILE_NAME,
     prepare_random_reproducibility_paths,
 )
+from ipid_analysis.runtime import (
+    cleanup_current_artifacts,
+    cleanup_work,
+    connect,
+    exclusive_lock,
+    mounted_storage,
+    scratch_root,
+    start_run,
+    temporary_path,
+    validate_storage,
+    work_path,
+)
 from ipid_analysis.strategies import classify_paths
 
 PROTOCOL_VERSION = 2
 ANALYSIS_JOB_VERSION = 1
 INTERPROTOCOL_JOB_VERSION = 1
 INTERPROTOCOL_TARGET_JOB_VERSION = 1
-JOB_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+JOB_ID_RE = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9._-]+$")
 TARGET_NAME = "zmap_unclassified.pq"
 PURPOSE_RT_UNCLASSIFIED = "rt-unclassified"
 PURPOSE_RANDOM_REPRODUCIBILITY = "random-reproducibility"
@@ -352,98 +368,218 @@ class S3Client:
         self._run = run
 
     def _command(self, *args: str) -> str:
-        result = self._run(["s3cmd", *args], check=True, text=True, capture_output=True)
-        return result.stdout
+        for attempt in range(3):
+            try:
+                result = self._run(
+                    ["s3cmd", *args],
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=int(os.environ.get("IPID_ANALYSIS_S3_TIMEOUT", "3600")),
+                )
+                return result.stdout
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+                transient = isinstance(exc, subprocess.TimeoutExpired) or any(
+                    text in str(getattr(exc, "stderr", "")).lower()
+                    for text in (
+                        "timeout",
+                        "timed out",
+                        "connection",
+                        "slowdown",
+                        "503",
+                        "500",
+                        "502",
+                        "504",
+                    )
+                )
+                if not transient or attempt == 2:
+                    raise
+                time.sleep(2**attempt)
+        raise AssertionError("unreachable")
+
+    def mapped_path(self, uri: str) -> Path | None:
+        """Explicit URI-to-mount identity; never infer a provider's bucket syntax."""
+        roots = json.loads(os.environ.get("IPID_ANALYSIS_S3_ROOTS", "{}"))
+        for name, root in (
+            ("raw", RAW_DATA_DIR),
+            ("processed", PROCESSED_DATA_DIR),
+            ("reports", PROJ_ROOT / "reports"),
+        ):
+            prefix = roots.get(name, "").rstrip("/")
+            if prefix and uri.startswith(prefix + "/"):
+                relative = uri[len(prefix) + 1 :]
+                if ".." in relative.split("/") or "\\" in relative:
+                    raise ValueError("invalid object key")
+                candidate = root / relative
+                if root.resolve() not in candidate.resolve().parents:
+                    raise ValueError("object resolves outside configured mount")
+                return candidate
+        return None
+
+    def input_path(self, uri: str, fallback: Path) -> Path:
+        mapped = self.mapped_path(uri) if mounted_storage() else None
+        if mapped is not None:
+            self._check_mounted_input(uri, mapped)
+            return mapped
+        self.download(uri, fallback)
+        return fallback
+
+    def _check_mounted_input(self, uri: str, path: Path) -> None:
+        validate_storage()
+        info = self._command("info", uri)
+        size = re.search(r"(?:File size|Content-Length):\s*(\d+)", info, re.I)
+        if size is None:
+            raise ValueError(f"S3 did not report a size for {uri}")
+        deadline = time.monotonic() + int(
+            os.environ.get("IPID_ANALYSIS_VISIBILITY_TIMEOUT", "330")
+        )
+        while not path.is_file() or path.stat().st_size != int(size[1]):
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"S3 object is not yet visible through FUSE: {path}")
+            time.sleep(1)
+        assert_complete(path)
 
     def exists(self, uri: str) -> bool:
+        terminal = uri.endswith(("/done.json", "/failed.json"))
+        cached = work_path(uri, category="terminal") / "seen" if terminal else None
+        if cached is not None and cached.is_file():
+            # Done is immutable; externally removed failures are rechecked shortly.
+            if uri.endswith("/done.json") or time.time() - cached.stat().st_mtime < 30:
+                return True
         output = self._command("ls", uri)
-        return any(line.split() and line.split()[-1] == uri for line in output.splitlines())
+        found = any(line.split() and line.split()[-1] == uri for line in output.splitlines())
+        if found and cached is not None:
+            cached.write_text(uri, encoding="utf-8")
+        return found
 
-    def list_requests(self, s3_prefix: str) -> list[str]:
-        output = self._command("ls", "--recursive", join_s3(s3_prefix, "jobs"))
-        uris = [line.split()[-1] for line in output.splitlines() if line.split()]
-        return sorted(uri for uri in uris if uri.endswith("/request.json"))
+    def _requests(self, prefix: str):
+        # Spool listings locally rather than retaining all historical object names.
+        import tempfile
 
-    def list_analysis_requests(self, s3_prefix: str) -> list[str]:
-        output = self._command("ls", "--recursive", join_s3(s3_prefix, "analysis-jobs"))
-        uris = [line.split()[-1] for line in output.splitlines() if line.split()]
-        return sorted(uri for uri in uris if uri.endswith("/request.json"))
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8", dir=scratch_root()) as listing:
+            self._run(
+                ["s3cmd", "ls", "--recursive", prefix],
+                check=True,
+                text=True,
+                stdout=listing,
+                stderr=subprocess.PIPE,
+                timeout=int(os.environ.get("IPID_ANALYSIS_S3_TIMEOUT", "3600")),
+            )
+            listing.seek(0)
+            for line in listing:
+                fields = line.split()
+                if fields and fields[-1].endswith("/request.json"):
+                    yield fields[-1]
 
-    def list_interprotocol_requests(self, s3_prefix: str) -> list[str]:
-        output = self._command("ls", "--recursive", join_s3(s3_prefix, "interprotocol-jobs"))
-        uris = [line.split()[-1] for line in output.splitlines() if line.split()]
-        return sorted(uri for uri in uris if uri.endswith("/request.json"))
+    def list_requests(self, s3_prefix: str):
+        return self._requests(join_s3(s3_prefix, "jobs"))
 
-    def list_interprotocol_target_requests(self, s3_prefix: str) -> list[str]:
-        output = self._command(
-            "ls", "--recursive", join_s3(s3_prefix, "interprotocol-target-jobs")
-        )
-        uris = [line.split()[-1] for line in output.splitlines() if line.split()]
-        return sorted(uri for uri in uris if uri.endswith("/request.json"))
+    def list_analysis_requests(self, s3_prefix: str):
+        return self._requests(join_s3(s3_prefix, "analysis-jobs"))
+
+    def list_interprotocol_requests(self, s3_prefix: str):
+        return self._requests(join_s3(s3_prefix, "interprotocol-jobs"))
+
+    def list_interprotocol_target_requests(self, s3_prefix: str):
+        return self._requests(join_s3(s3_prefix, "interprotocol-target-jobs"))
 
     def download(self, uri: str, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".part")
-        self._command("get", "--force", "--no-progress", uri, str(temporary))
-        temporary.replace(path)
+        if mounted_storage() and RAW_DATA_DIR.resolve() in path.resolve().parents:
+            if self.mapped_path(uri) != path:
+                raise ValueError(
+                    "refusing to hydrate raw S3 storage; configure IPID_ANALYSIS_S3_ROOTS"
+                )
+            self._check_mounted_input(uri, path)
+            return
+        with atomic_output(path) as temporary:
+            self._command("get", "--force", "--no-progress", uri, str(temporary))
 
     def upload(self, path: Path, uri: str) -> None:
+        assert_complete(path)
+        if mounted_storage() and self.mapped_path(uri) == path:
+            self._check_mounted_input(uri, path)
+            return
         self._command("put", "--no-progress", str(path), uri)
+
+    def delete_failure(self, uri: str) -> None:
+        if not uri.endswith("/failed.json"):
+            raise ValueError("only an explicitly retried failure marker may be removed")
+        self._command("del", uri)
+        (work_path(uri, category="terminal") / "seen").unlink(missing_ok=True)
 
 
 def build_unclassified_targets(strategies_path: Path, output_path: Path) -> int:
     """Stream UNCLASSIFIED addresses into the schema consumed by ipid-measure."""
-    con = duckdb.connect()
-    reader = con.execute(
-        "SELECT CAST(IP_ADDR AS VARCHAR) AS IP_ADDR, "
-        "       CAST('' AS VARCHAR) AS REPLY_TYPE "
-        "FROM read_parquet($path) "
-        "WHERE CAST(IPID_SELECTION_STRATEGY AS VARCHAR) = 'UNCLASSIFIED'",
-        {"path": str(strategies_path)},
-    ).to_arrow_reader(1_000_000)
-    schema = pa.schema([("IP_ADDR", pa.string()), ("REPLY_TYPE", pa.string())])
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = pq.ParquetWriter(output_path, schema, compression="zstd")
-    rows = 0
-    try:
-        for batch in reader:
-            batch = batch.cast(schema)
-            writer.write_batch(batch)
-            rows += batch.num_rows
-    finally:
-        writer.close()
-        con.close()
-    return rows
+    with connect() as con, atomic_output(output_path, inputs=[strategies_path]) as temporary:
+        reader = con.execute(
+            "SELECT CAST(IP_ADDR AS VARCHAR) AS IP_ADDR, "
+            "       CAST('' AS VARCHAR) AS REPLY_TYPE "
+            "FROM read_parquet($path) "
+            "WHERE CAST(IPID_SELECTION_STRATEGY AS VARCHAR) = 'UNCLASSIFIED'",
+            {"path": str(strategies_path)},
+        ).to_arrow_reader(1_000_000)
+        schema = pa.schema([("IP_ADDR", pa.string()), ("REPLY_TYPE", pa.string())])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        writer = pq.ParquetWriter(temporary, schema, compression="zstd")
+        rows = 0
+        try:
+            for batch in reader:
+                batch = batch.cast(schema)
+                writer.write_batch(batch)
+                rows += batch.num_rows
+        finally:
+            writer.close()
+            con.close()
+        return rows
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return file_digest(path)
 
 
 def write_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".part")
+    temporary = temporary_path(path)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
+    publish_file(temporary, path)
+    temporary.unlink(missing_ok=True)
 
 
 def cleanup_completed_job(work_dir: Path) -> None:
     try:
-        shutil.rmtree(work_dir)
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        logger.warning(f"could not remove completed job directory {work_dir}: {exc}")
+        if any(
+            root.resolve() == work_dir.resolve() or root.resolve() in work_dir.resolve().parents
+            for root in (RAW_DATA_DIR, PROCESSED_DATA_DIR, PROJ_ROOT / "reports")
+        ):
+            raise ValueError("refusing to clean persistent storage")
+        cleanup_work(work_dir, root=work_dir.parent)
+    except (OSError, ValueError):
+        # Completion is already durable. A locked local file must never turn a
+        # successful job into a second, contradictory terminal failure marker.
+        logger.exception(f"completed job retained for local cleanup: {work_dir}")
 
 
 def load_request(client: S3Client, request_uri: str, s3_prefix: str, work_dir: Path) -> Request:
     path = work_dir / "request.json"
     client.download(request_uri, path)
     return Request.parse(json.loads(path.read_text()), s3_prefix)
+
+
+def discard_failed_bulk(work_dir: Path) -> None:
+    if any(
+        root.resolve() == work_dir.resolve() or root.resolve() in work_dir.resolve().parents
+        for root in (RAW_DATA_DIR, PROCESSED_DATA_DIR, PROJ_ROOT / "reports")
+    ):
+        raise ValueError("refusing to discard data from persistent storage")
+    if not work_dir.is_dir() or work_dir.is_symlink():
+        return
+    for path in work_dir.rglob("*.pq"):
+        if path.is_symlink() or work_dir.resolve() not in path.resolve().parents:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(f"failed-job bulk file retained for local maintenance: {path}")
 
 
 def process_request(
@@ -471,13 +607,19 @@ def process_request(
     request = None
     try:
         request = load_request(client, request_uri, s3_prefix, work_dir)
+        if request.job_id != job_id:
+            raise ValueError("request job_id does not match request URI")
         input_path = work_dir / "ipid.pq"
         snapshot_path = work_dir / "ipid.snapshot.yaml"
         strategies_path = work_dir / "strategies.pq"
         result_path = work_dir / TARGET_NAME
 
-        client.download(request.ipid_uri, input_path)
-        client.download(request.snapshot_uri, snapshot_path)
+        if hasattr(client, "input_path"):
+            input_path = client.input_path(request.ipid_uri, input_path)
+            snapshot_path = client.input_path(request.snapshot_uri, snapshot_path)
+        else:
+            client.download(request.ipid_uri, input_path)
+            client.download(request.snapshot_uri, snapshot_path)
         classify_paths(
             input_path,
             snapshot_path,
@@ -491,6 +633,15 @@ def process_request(
         measurement_prefix = request.ipid_uri.rsplit("/", 1)[0]
         strategies_uri = join_s3(measurement_prefix, "strategies.pq")
         client.upload(strategies_path, strategies_uri)
+        # Keep portable generation evidence when successful local work is removed.
+        # This additive companion does not change the measurement/Done schemas.
+        provenance_path = work_dir / "classification-provenance.json"
+        evidence = json.loads(completion_path(strategies_path).read_text())
+        write_json(
+            provenance_path,
+            {"version": 1, "strategies_uri": strategies_uri, "generation": evidence},
+        )
+        client.upload(provenance_path, join_s3(measurement_prefix, provenance_path.name))
         if request.purpose == PURPOSE_RT_UNCLASSIFIED:
             rows = build_unclassified_targets(strategies_path, result_path)
         else:
@@ -538,6 +689,8 @@ def process_request(
         cleanup_completed_job(work_dir)
         return True
     except Exception as exc:
+        cleanup_current_artifacts()
+        discard_failed_bulk(work_dir)
         failed_path = work_dir / "failed.json"
         failed_job_id = request.job_id if request is not None else job_id
         write_json(
@@ -546,6 +699,7 @@ def process_request(
         )
         try:
             client.upload(failed_path, failed_uri)
+            (work_dir / ".failure-published").write_text(failed_uri, encoding="utf-8")
         except Exception:
             logger.exception(f"[{failed_job_id}] could not upload failure marker")
         raise
@@ -723,12 +877,16 @@ def run_postprocess(manifest_path: Path, log_path: Path, batch_size: int, thread
                 str(batch_size),
                 "--threads",
                 str(threads),
+                "--strict",
+                "--status-file",
+                str(log_path.with_name("postprocess-status.json")),
             ],
             cwd=PROJ_ROOT,
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
             check=True,
+            timeout=int(os.environ.get("IPID_ANALYSIS_POSTPROCESS_TIMEOUT", "172800")),
         )
 
 
@@ -741,6 +899,8 @@ def process_analysis_request(
     threads: int,
     postprocess: Callable[[Path, Path, int, int], None] = run_postprocess,
     raw_root: Path = RAW_DATA_DIR,
+    processed_root: Path = PROCESSED_DATA_DIR,
+    figures_root: Path = PROJ_ROOT / "reports" / "figures",
 ) -> bool:
     job_id = request_uri.rstrip("/").split("/")[-2]
     if not JOB_ID_RE.fullmatch(job_id):
@@ -758,12 +918,43 @@ def process_analysis_request(
     log_path = work_dir / "postprocess.log"
     try:
         request = load_analysis_request(client, request_uri, s3_prefix, work_dir)
+        if request.job_id != job_id:
+            raise ValueError("analysis request job_id does not match request URI")
         manifest_path = work_dir / "manifest.json"
         client.download(request.manifest_uri, manifest_path)
         manifest = load_manifest(manifest_path)
         validate_analysis_manifest(manifest, request)
         download_analysis_inputs(client, request, manifest, raw_root)
         postprocess(manifest_path, log_path, batch_size, threads)
+        status_path = log_path.with_name("postprocess-status.json")
+        status = json.loads(status_path.read_text())
+        if (
+            status.get("version") != 1
+            or status.get("required_complete") is not True
+            or status.get("manifest") != fingerprints([manifest_path])
+        ):
+            raise ValueError("postprocessing did not complete its mandatory stages")
+        from ipid_analysis.postprocess import required_core_artifacts
+
+        required = {
+            path.resolve()
+            for path in required_core_artifacts(
+                manifest, processed_root=processed_root, figures_root=figures_root
+            )
+        }
+        declared = {Path(name).resolve() for name in status["artifacts"]}
+        if not required or not required.issubset(declared):
+            raise ValueError(
+                "postprocessing omitted required artifacts from its completion report"
+            )
+        for name in status["artifacts"]:
+            artifact = Path(name)
+            if not artifact.is_file():
+                raise FileNotFoundError(artifact)
+            assert_complete(artifact)
+            if not completion_path(artifact).is_file():
+                raise ValueError(f"postprocessing did not commit artifact: {artifact}")
+        client.upload(status_path, join_s3(job_prefix, "postprocess-status.json"))
         if log_path.is_file():
             client.upload(log_path, log_uri)
 
@@ -778,8 +969,11 @@ def process_analysis_request(
         write_json(done_path, asdict(done))
         client.upload(done_path, request.done_uri)
         logger.success(f"[{request.job_id}] automatic postprocessing completed")
+        cleanup_completed_job(work_dir)
         return True
     except Exception as exc:
+        cleanup_current_artifacts()
+        discard_failed_bulk(work_dir)
         failed_job_id = request.job_id if request is not None else job_id
         if log_path.is_file():
             try:
@@ -798,6 +992,7 @@ def process_analysis_request(
         )
         try:
             client.upload(failed_path, failed_uri)
+            (work_dir / ".failure-published").write_text(failed_uri, encoding="utf-8")
         except Exception:
             logger.exception(f"[{failed_job_id}] could not upload analysis failure marker")
         raise
@@ -863,18 +1058,36 @@ def process_interprotocol_target_request(
             campaign_path,
             {"campaign_id": request.campaign_id, "manifests": manifests},
         )
-        output_dir = build_target_files(
-            campaign_path,
-            processed_root=processed_root,
-            output_root=output_root,
-            figures_root=figures_root,
-        )
-        for path in sorted(output_dir.iterdir()):
-            if path.is_file():
-                client.upload(path, join_s3(request.target_prefix, path.name))
+        with publication_inventory() as published:
+            output_dir = build_target_files(
+                campaign_path,
+                processed_root=processed_root,
+                output_root=output_root,
+                figures_root=figures_root,
+            )
+
         figure_dir = figures_root / request.campaign_id
-        for path in sorted(figure_dir.glob("*.pdf")):
-            client.upload(path, join_s3(job_prefix, "reports", "figures", path.name))
+        inventory = []
+        for path in dict.fromkeys(published):
+            if output_dir in path.parents:
+                uri = join_s3(request.target_prefix, path.relative_to(output_dir).as_posix())
+            elif figure_dir in path.parents:
+                uri = join_s3(
+                    job_prefix, "reports", "figures", path.relative_to(figure_dir).as_posix()
+                )
+            else:
+                continue
+            assert_complete(path)
+            client.upload(path, uri)
+            info = json.loads(completion_path(path).read_text())
+            inventory.append(
+                {"uri": uri, "sha256": info["sha256"], "size_bytes": info["size_bytes"]}
+            )
+        if not inventory:
+            raise ValueError("target producer published no artifacts")
+        inventory_path = work_dir / "artifacts.json"
+        write_json(inventory_path, {"version": 1, "artifacts": inventory})
+        client.upload(inventory_path, join_s3(job_prefix, "artifacts.json"))
         summary = json.loads((output_dir / "target-summary.json").read_text())
         rows = {
             group: sum(int(value) for value in counts.values())
@@ -892,8 +1105,11 @@ def process_interprotocol_target_request(
         write_json(done_path, asdict(done))
         client.upload(done_path, request.done_uri)
         logger.success(f"[{request.job_id}] inter-protocol targets completed")
+        cleanup_completed_job(work_dir)
         return True
     except Exception as exc:
+        cleanup_current_artifacts()
+        discard_failed_bulk(work_dir)
         failed_path = work_dir / "failed.json"
         write_json(
             failed_path,
@@ -905,6 +1121,7 @@ def process_interprotocol_target_request(
         )
         try:
             client.upload(failed_path, failed_uri)
+            (work_dir / ".failure-published").write_text(failed_uri, encoding="utf-8")
         except Exception:
             logger.exception(f"[{job_id}] could not upload target-build failure marker")
         raise
@@ -966,34 +1183,49 @@ def process_interprotocol_request(
         if manifest["campaign_id"] != request.campaign_id:
             raise ValueError("inter-protocol manifest campaign_id does not match request")
         from ipid_analysis.interprotocol import measurement_items
+
         for specification in manifest["groups"].values():
             for sample, measurement_id in measurement_items(specification):
                 remote = join_s3(request.ipid_prefix, measurement_id)
                 local = raw_root / measurement_id
                 client.download(join_s3(remote, "interprotocol.pq"), local / "interprotocol.pq")
-                client.download(join_s3(remote, "interprotocol.snapshot.yaml"), local / "interprotocol.snapshot.yaml")
-        output_dir = classify_campaign(
-            manifest_path,
-            raw_root=raw_root,
-            output_root=output_root,
-            figures_root=figures_root,
-        )
-        for path in sorted(output_dir.rglob("*")):
-            if path.is_file():
-                client.upload(
-                    path, join_s3(request.result_prefix, path.relative_to(output_dir).as_posix())
+                client.download(
+                    join_s3(remote, "interprotocol.snapshot.yaml"),
+                    local / "interprotocol.snapshot.yaml",
                 )
+        with publication_inventory() as published:
+            output_dir = classify_campaign(
+                manifest_path,
+                raw_root=raw_root,
+                output_root=output_root,
+                figures_root=figures_root,
+            )
+
         figure_dir = figures_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
-        for path in sorted(figure_dir.rglob("*.pdf")):
-            client.upload(
-                path,
-                join_s3(
+        inventory = []
+        for path in dict.fromkeys(published):
+            if output_dir in path.parents:
+                uri = join_s3(request.result_prefix, path.relative_to(output_dir).as_posix())
+            elif figure_dir in path.parents:
+                uri = join_s3(
                     request.result_prefix,
                     "reports",
                     "figures",
                     path.relative_to(figure_dir).as_posix(),
-                ),
+                )
+            else:
+                continue
+            assert_complete(path)
+            client.upload(path, uri)
+            info = json.loads(completion_path(path).read_text())
+            inventory.append(
+                {"uri": uri, "sha256": info["sha256"], "size_bytes": info["size_bytes"]}
             )
+        if not inventory:
+            raise ValueError("interprotocol producer published no artifacts")
+        inventory_path = work_dir / "artifacts.json"
+        write_json(inventory_path, {"version": 1, "artifacts": inventory})
+        client.upload(inventory_path, join_s3(request.result_prefix, "artifacts.json"))
         summary = json.loads((output_dir / "interprotocol-campaign-summary.json").read_text())
         done = InterprotocolDone(
             version=INTERPROTOCOL_JOB_VERSION,
@@ -1007,8 +1239,11 @@ def process_interprotocol_request(
         write_json(done_path, asdict(done))
         client.upload(done_path, request.done_uri)
         logger.success(f"[{request.job_id}] automatic inter-protocol analysis completed")
+        cleanup_completed_job(work_dir)
         return True
     except Exception as exc:
+        cleanup_current_artifacts()
+        discard_failed_bulk(work_dir)
         failed_job_id = request.job_id if request is not None else job_id
         failed_path = work_dir / "failed.json"
         write_json(
@@ -1021,6 +1256,7 @@ def process_interprotocol_request(
         )
         try:
             client.upload(failed_path, failed_uri)
+            (work_dir / ".failure-published").write_text(failed_uri, encoding="utf-8")
         except Exception:
             logger.exception(f"[{failed_job_id}] could not upload inter-protocol failure marker")
         raise
@@ -1042,44 +1278,103 @@ def run_interprotocol_pending(
     return processed
 
 
+def retry_failed_request(client: S3Client, request_uri: str, s3_prefix: str) -> None:
+    """Explicit recovery only: archive the terminal failure before removing it."""
+    prefix = s3_prefix.rstrip("/") + "/"
+    if not request_uri.startswith(prefix):
+        raise ValueError("retry request is outside workflow prefix")
+    parts = request_uri[len(prefix) :].split("/")
+    parsers = {
+        "jobs": Request,
+        "analysis-jobs": AnalysisRequest,
+        "interprotocol-jobs": InterprotocolRequest,
+        "interprotocol-target-jobs": InterprotocolTargetRequest,
+    }
+    if (
+        len(parts) != 3
+        or parts[0] not in parsers
+        or parts[2] != "request.json"
+        or not JOB_ID_RE.fullmatch(parts[1])
+    ):
+        raise ValueError("retry needs a canonical request URI")
+    job_prefix = request_uri.rsplit("/", 1)[0]
+    if client.exists(job_prefix + "/done.json"):
+        raise ValueError("refusing to retry an already completed job")
+    if not client.exists(job_prefix + "/failed.json"):
+        raise ValueError("job has no terminal failure to retry")
+    root = work_path(request_uri, category="retry")
+    request_path = root / "request.json"
+    client.download(request_uri, request_path)
+    request = parsers[parts[0]].parse(json.loads(request_path.read_text()), s3_prefix)
+    if request.job_id != parts[1]:
+        raise ValueError("retry request job_id mismatch")
+    failure = root / "failed.json"
+    client.download(job_prefix + "/failed.json", failure)
+    attempt = str(time.time_ns())
+    client.upload(failure, job_prefix + "/attempts/" + attempt + "/failed.json")
+    client.delete_failure(job_prefix + "/failed.json")
+    cleanup_work(root)
+
+
 @app.command()
 def main(
     s3_prefix: str = typer.Option(
         ..., envvar="IPID_ANALYSIS_S3_PREFIX", help="shared S3 workflow prefix"
     ),
-    work_root: Path = typer.Option(INTERIM_DATA_DIR / "s3-workflow"),
+    work_root: Path | None = typer.Option(
+        None, help="local worker directory; defaults to tmp/workflow"
+    ),
     poll_interval: int = typer.Option(30, min=1, help="poll interval in seconds"),
     batch_size: int = typer.Option(1_000_000, min=1),
     threads: int = typer.Option(0, min=0, help="DuckDB threads; 0 uses all cores"),
     once: bool = typer.Option(False, help="process pending jobs once and exit"),
+    retry_request_uri: str | None = typer.Option(
+        None, help="archive and requeue this failed request URI"
+    ),
+    storage_mode: str = typer.Option(
+        "mounted-s3",
+        envvar="IPID_ANALYSIS_STORAGE_MODE",
+        help="mounted-s3 production or explicit local compatibility mode",
+    ),
 ) -> None:
+    os.environ["IPID_ANALYSIS_STORAGE_MODE"] = storage_mode
+    start_run()
     if not s3_prefix.startswith("s3://") or not s3_prefix.removeprefix("s3://").strip("/"):
         raise typer.BadParameter("s3_prefix must be a non-empty s3:// URI")
     # Propagate the resolved CLI/env prefix to the postprocessing subprocess.
     os.environ["IPID_ANALYSIS_S3_PREFIX"] = s3_prefix
+    validate_storage()
+    if mounted_storage():
+        roots = json.loads(os.environ.get("IPID_ANALYSIS_S3_ROOTS", "{}"))
+        if not isinstance(roots, dict) or not str(roots.get("raw", "")).startswith("s3://"):
+            raise typer.BadParameter(
+                "mounted-s3 requires an explicit raw URI in IPID_ANALYSIS_S3_ROOTS before accepting jobs"
+            )
+    work_root = work_root or scratch_root() / "workflow"
+    if mounted_storage() and scratch_root() not in work_root.resolve().parents:
+        raise ValueError("mounted-s3 worker work-root must be under local scratch")
     client = S3Client()
-    while True:
-        run_pending(client, s3_prefix, work_root, batch_size, threads)
-        run_analysis_pending(
-            client,
-            s3_prefix,
-            DATA_DIR / "analysis-jobs",
-            batch_size,
-            threads,
-        )
-        run_interprotocol_targets_pending(
-            client,
-            s3_prefix,
-            DATA_DIR / "interprotocol-target-jobs",
-        )
-        run_interprotocol_pending(
-            client,
-            s3_prefix,
-            DATA_DIR / "interprotocol-jobs",
-        )
-        if once:
-            return
-        time.sleep(poll_interval)
+    with exclusive_lock("workflow-worker", timeout_seconds=0):
+        if retry_request_uri is not None:
+            retry_failed_request(client, retry_request_uri, s3_prefix)
+        while True:
+            listing_errors = []
+            for handler, category, options in (
+                (run_pending, "handoff", (batch_size, threads)),
+                (run_analysis_pending, "analysis", (batch_size, threads)),
+                (run_interprotocol_targets_pending, "interprotocol-targets", ()),
+                (run_interprotocol_pending, "interprotocol", ()),
+            ):
+                try:
+                    handler(client, s3_prefix, work_root / category, *options)
+                except Exception as exc:
+                    logger.exception(f"workflow listing/dispatch failed: {category}")
+                    listing_errors.append(str(exc))
+            if once:
+                if listing_errors:
+                    raise RuntimeError("workflow dispatch failed: " + "; ".join(listing_errors))
+                return
+            time.sleep(poll_interval)
 
 
 if __name__ == "__main__":
