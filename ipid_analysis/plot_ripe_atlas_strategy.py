@@ -10,6 +10,10 @@ from pathlib import Path
 import duckdb
 import matplotlib
 
+from ipid_analysis.artifacts import publish_file, save_figure, write_text
+from ipid_analysis.network_role_utils import record_cache_inputs
+from ipid_analysis.runtime import connect, temporary_path
+
 matplotlib.use("Agg")
 
 from matplotlib.patches import Patch
@@ -90,10 +94,11 @@ def _source_metadata(source: IpidMeasurement | StrategyMerge) -> dict:
 
 def _write_query(con: duckdb.DuckDBPyConnection, query: str, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    partial = output.with_suffix(output.suffix + ".part")
+    partial = temporary_path(output)
     partial.unlink(missing_ok=True)
     con.execute(f"COPY ({query}) TO '{_sql_path(partial)}' (FORMAT PARQUET, COMPRESSION ZSTD)")
-    partial.replace(output)
+    publish_file(partial, output)
+    partial.unlink(missing_ok=True)
 
 
 def _artifact_paths(
@@ -240,7 +245,8 @@ def _plot_roles(
     )
     fig.subplots_adjust(left=0.20, right=0.995, bottom=0.24, top=0.68)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output,
         bbox_inches="tight",
         pad_inches=0.02,
@@ -286,7 +292,7 @@ def _plot_agreement(rows: list[tuple[str, int, float]], output: Path) -> None:
     colorbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
     colorbar.set_label("Common addresses [%]")
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, bbox_inches="tight", pad_inches=0.02)
+    save_figure(fig, output, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
 
 
@@ -378,7 +384,7 @@ def _plot_intersection(
     )
     fig.subplots_adjust(left=0.29, right=0.995, bottom=0.19, top=0.75)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, bbox_inches="tight", pad_inches=0.02)
+    save_figure(fig, output, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
     return percentages, totals
 
@@ -422,243 +428,244 @@ def render_ripe_atlas_analysis(
     ):
         log_cache_reuse(source.target, outputs.role_json)
         return outputs
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    joined_path = _sql_path(outputs.joined)
-    try:
-        _write_query(
-            con,
-            f"""
-            SELECT
-                s.IP_ADDR,
-                CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR) AS IPID_SELECTION_STRATEGY,
-                r.T,
-                r.D,
-                TRUE AS RIPE_MATCH,
-                CASE
-                    WHEN r.T THEN '{TRANSIT_ROLE}'
-                    ELSE '{NO_TRANSIT_ROLE}'
-                END AS OBSERVED_ROLE
-            FROM read_parquet('{_sql_path(strategies)}') AS s
-            INNER JOIN read_parquet('{_sql_path(dataset.roles_path)}') AS r USING (IP_ADDR)
-            """,
-            outputs.joined,
-        )
-        _write_query(
-            con,
-            f"""
-            SELECT
-                OBSERVED_ROLE,
-                IPID_SELECTION_STRATEGY,
-                count(*)::BIGINT AS COUNT,
-                100.0 * count(*) / sum(count(*)) OVER (PARTITION BY OBSERVED_ROLE)
-                    AS PERCENTAGE
-            FROM read_parquet('{joined_path}')
-            GROUP BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
-            ORDER BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
-            """,
-            outputs.distribution,
-        )
-        role_rows = con.execute(
-            f"""
-            SELECT OBSERVED_ROLE, IPID_SELECTION_STRATEGY, COUNT
-            FROM read_parquet('{_sql_path(outputs.distribution)}')
-            """
-        ).fetchall()
-        match_counts = con.execute(
-            f"""
-            SELECT
-                count(*)::BIGINT,
-                count(*) FILTER (WHERE T AND D)::BIGINT,
-                count(*) FILTER (WHERE T AND NOT D)::BIGINT,
-                count(*) FILTER (WHERE NOT T AND D)::BIGINT,
-                count(*) FILTER (WHERE NOT T AND NOT D)::BIGINT
-            FROM read_parquet('{joined_path}')
-            """
-        ).fetchone()
-        total = int(
-            con.execute(
-                f"SELECT count(*)::BIGINT FROM read_parquet('{_sql_path(strategies)}')"
-            ).fetchone()[0]
-        )
-        matched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, match_counts)
-        coverage = (total, matched, total - matched, t1_d1, t1_d0, t0_d1, t0_d0)
-        if not matched:
-            raise ValueError(f"{source.target}: no measured IP address matched RIPE Atlas")
-
-        agreement_rows = []
-        intersection_rows = []
-        if (
-            itdk is not None
-            and outputs.caida_agreement is not None
-            and outputs.caida_intersection is not None
-        ):
+    with connect(config={"threads": threads} if threads else {}) as con:
+        joined_path = _sql_path(outputs.joined)
+        try:
             _write_query(
                 con,
                 f"""
-                WITH dual_matches AS (
-                    SELECT j.IP_ADDR, j.T AS RIPE_T, i.T AS ITDK_T
-                    FROM read_parquet('{joined_path}') AS j
-                    JOIN read_parquet('{_sql_path(itdk.interfaces_path)}') AS i USING (IP_ADDR)
-                ), categorized AS (
-                    SELECT
-                        CASE
-                            WHEN RIPE_T AND ITDK_T THEN 'Both Transit-Observed'
-                            WHEN NOT RIPE_T AND ITDK_T THEN 'CAIDA Only Transit-Observed'
-                            WHEN RIPE_T AND NOT ITDK_T THEN 'RIPE Only Transit-Observed'
-                            ELSE 'Neither Transit-Observed'
-                        END AS CATEGORY
-                    FROM dual_matches
-                )
                 SELECT
-                    CATEGORY,
-                    count(*)::BIGINT AS COUNT,
-                    100.0 * count(*) / sum(count(*)) OVER () AS PERCENTAGE
-                FROM categorized
-                GROUP BY CATEGORY
-                ORDER BY COUNT DESC, CATEGORY
+                    s.IP_ADDR,
+                    CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR) AS IPID_SELECTION_STRATEGY,
+                    r.T,
+                    r.D,
+                    TRUE AS RIPE_MATCH,
+                    CASE
+                        WHEN r.T THEN '{TRANSIT_ROLE}'
+                        ELSE '{NO_TRANSIT_ROLE}'
+                    END AS OBSERVED_ROLE
+                FROM read_parquet('{_sql_path(strategies)}') AS s
+                INNER JOIN read_parquet('{_sql_path(dataset.roles_path)}') AS r USING (IP_ADDR)
                 """,
-                outputs.caida_agreement,
+                outputs.joined,
             )
-            agreement_rows = con.execute(
-                f"""
-                SELECT CATEGORY, COUNT, PERCENTAGE
-                FROM read_parquet('{_sql_path(outputs.caida_agreement)}')
-                ORDER BY COUNT DESC, CATEGORY
-                """
-            ).fetchall()
             _write_query(
                 con,
                 f"""
-                WITH dual_matches AS (
-                    SELECT
-                        j.IP_ADDR,
-                        j.IPID_SELECTION_STRATEGY,
-                        j.T AS RIPE_T,
-                        i.T AS ITDK_T
-                    FROM read_parquet('{joined_path}') AS j
-                    INNER JOIN read_parquet('{_sql_path(itdk.interfaces_path)}') AS i
-                        USING (IP_ADDR)
-                ), expanded AS (
-                    SELECT
-                        'CAIDA ITDK' AS SOURCE,
-                        CASE WHEN ITDK_T THEN '{TRANSIT_ROLE}'
-                             ELSE '{NO_TRANSIT_ROLE}' END AS OBSERVED_ROLE,
-                        IPID_SELECTION_STRATEGY
-                    FROM dual_matches
-                    UNION ALL
-                    SELECT
-                        'RIPE Atlas' AS SOURCE,
-                        CASE WHEN RIPE_T THEN '{TRANSIT_ROLE}'
-                             ELSE '{NO_TRANSIT_ROLE}' END AS OBSERVED_ROLE,
-                        IPID_SELECTION_STRATEGY
-                    FROM dual_matches
-                )
                 SELECT
-                    SOURCE,
                     OBSERVED_ROLE,
                     IPID_SELECTION_STRATEGY,
-                    count(*)::BIGINT AS COUNT
-                FROM expanded
-                GROUP BY SOURCE, OBSERVED_ROLE, IPID_SELECTION_STRATEGY
-                ORDER BY SOURCE, OBSERVED_ROLE, IPID_SELECTION_STRATEGY
+                    count(*)::BIGINT AS COUNT,
+                    100.0 * count(*) / sum(count(*)) OVER (PARTITION BY OBSERVED_ROLE)
+                        AS PERCENTAGE
+                FROM read_parquet('{joined_path}')
+                GROUP BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
+                ORDER BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
                 """,
-                outputs.caida_intersection,
+                outputs.distribution,
             )
-            intersection_rows = con.execute(
+            role_rows = con.execute(
                 f"""
-                SELECT SOURCE, OBSERVED_ROLE, IPID_SELECTION_STRATEGY, COUNT
-                FROM read_parquet('{_sql_path(outputs.caida_intersection)}')
-                ORDER BY SOURCE, OBSERVED_ROLE, IPID_SELECTION_STRATEGY
+                SELECT OBSERVED_ROLE, IPID_SELECTION_STRATEGY, COUNT
+                FROM read_parquet('{_sql_path(outputs.distribution)}')
                 """
             ).fetchall()
-    finally:
-        con.close()
-
-    percentages = _role_plot_data(role_rows)
-    role_totals = {
-        role: sum(int(count) for row_role, _, count in role_rows if row_role == role)
-        for role in ROLE_ORDER
-    }
-    _plot_roles(percentages, role_totals, outputs.role_pdf)
-    intersection_percentages: dict[str, dict[str, float]] = {}
-    intersection_totals: dict[str, int] = {}
-    if outputs.caida_agreement_pdf is not None:
-        _plot_agreement(agreement_rows, outputs.caida_agreement_pdf)
-    if outputs.caida_intersection_pdf is not None:
-        intersection_percentages, intersection_totals = _plot_intersection(
-            intersection_rows, outputs.caida_intersection_pdf
-        )
-    if outputs.caida_intersection_json is not None:
-        outputs.caida_intersection_json.parent.mkdir(parents=True, exist_ok=True)
-        outputs.caida_intersection_json.write_text(
-            json.dumps(
-                {
-                    **_source_metadata(source),
-                    "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
-                    "population": "addresses matched by both CAIDA ITDK and RIPE Atlas",
-                    "plot_percentages": intersection_percentages,
-                    "plot_role_totals": intersection_totals,
-                    "raw_distribution": [
-                        {
-                            "source": str(source_name),
-                            "role": str(role),
-                            "strategy": str(strategy),
-                            "count": int(count),
-                        }
-                        for source_name, role, strategy, count in intersection_rows
-                    ],
-                },
-                indent=2,
+            match_counts = con.execute(
+                f"""
+                SELECT
+                    count(*)::BIGINT,
+                    count(*) FILTER (WHERE T AND D)::BIGINT,
+                    count(*) FILTER (WHERE T AND NOT D)::BIGINT,
+                    count(*) FILTER (WHERE NOT T AND D)::BIGINT,
+                    count(*) FILTER (WHERE NOT T AND NOT D)::BIGINT
+                FROM read_parquet('{joined_path}')
+                """
+            ).fetchone()
+            total = int(
+                con.execute(
+                    f"SELECT count(*)::BIGINT FROM read_parquet('{_sql_path(strategies)}')"
+                ).fetchone()[0]
             )
-            + "\n",
-            encoding="utf-8",
-        )
-    total, matched, unmatched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, coverage)
-    report = {
-        **_source_metadata(source),
-        "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "ripe_atlas": {
-            "source": dataset.source,
-            "window_start": dataset.window.start.isoformat(),
-            "window_end": dataset.window.end.isoformat(),
-            "roles": str(dataset.roles_path),
-            "metadata": str(dataset.metadata_path),
-        },
-        "role_definition": {
-            TRANSIT_ROLE: "RIPE observation with T=true; D arbitrary",
-            NO_TRANSIT_ROLE: (
-                "RIPE observation with T=false; D arbitrary"
-            ),
-        },
-        "coverage": {
-            "total": total,
-            "matched": matched,
-            "unmatched": unmatched,
-            "match_percentage": 100.0 * matched / total if total else 0.0,
-            "t1_d1": t1_d1,
-            "t1_d0": t1_d0,
-            "t0_d1": t0_d1,
-            "t0_d0": t0_d0,
-        },
-        "plot_percentages": percentages,
-        "plot_role_totals": role_totals,
-        "raw_distribution": [
-            {"role": role, "strategy": strategy, "count": int(count)}
-            for role, strategy, count in role_rows
-        ],
-        "caida_ripe_agreement": [
-            {"category": category, "count": int(count), "percentage": float(percentage)}
-            for category, count, percentage in agreement_rows
-        ],
-        "artifact_semantics": {
-            "joined": "matched-only measured addresses; unmatched addresses are not materialized",
-            "caida_intersection": "addresses matched by both CAIDA ITDK and RIPE Atlas",
-        },
-        "outputs": {
-            key: (None if value is None else str(value)) for key, value in asdict(outputs).items()
-        },
-    }
-    outputs.role_json.parent.mkdir(parents=True, exist_ok=True)
-    outputs.role_json.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    return outputs
+            matched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, match_counts)
+            coverage = (total, matched, total - matched, t1_d1, t1_d0, t0_d1, t0_d0)
+            if not matched:
+                raise ValueError(f"{source.target}: no measured IP address matched RIPE Atlas")
+
+            agreement_rows = []
+            intersection_rows = []
+            if (
+                itdk is not None
+                and outputs.caida_agreement is not None
+                and outputs.caida_intersection is not None
+            ):
+                _write_query(
+                    con,
+                    f"""
+                    WITH dual_matches AS (
+                        SELECT j.IP_ADDR, j.T AS RIPE_T, i.T AS ITDK_T
+                        FROM read_parquet('{joined_path}') AS j
+                        JOIN read_parquet('{_sql_path(itdk.interfaces_path)}') AS i USING (IP_ADDR)
+                    ), categorized AS (
+                        SELECT
+                            CASE
+                                WHEN RIPE_T AND ITDK_T THEN 'Both Transit-Observed'
+                                WHEN NOT RIPE_T AND ITDK_T THEN 'CAIDA Only Transit-Observed'
+                                WHEN RIPE_T AND NOT ITDK_T THEN 'RIPE Only Transit-Observed'
+                                ELSE 'Neither Transit-Observed'
+                            END AS CATEGORY
+                        FROM dual_matches
+                    )
+                    SELECT
+                        CATEGORY,
+                        count(*)::BIGINT AS COUNT,
+                        100.0 * count(*) / sum(count(*)) OVER () AS PERCENTAGE
+                    FROM categorized
+                    GROUP BY CATEGORY
+                    ORDER BY COUNT DESC, CATEGORY
+                    """,
+                    outputs.caida_agreement,
+                )
+                agreement_rows = con.execute(
+                    f"""
+                    SELECT CATEGORY, COUNT, PERCENTAGE
+                    FROM read_parquet('{_sql_path(outputs.caida_agreement)}')
+                    ORDER BY COUNT DESC, CATEGORY
+                    """
+                ).fetchall()
+                _write_query(
+                    con,
+                    f"""
+                    WITH dual_matches AS (
+                        SELECT
+                            j.IP_ADDR,
+                            j.IPID_SELECTION_STRATEGY,
+                            j.T AS RIPE_T,
+                            i.T AS ITDK_T
+                        FROM read_parquet('{joined_path}') AS j
+                        INNER JOIN read_parquet('{_sql_path(itdk.interfaces_path)}') AS i
+                            USING (IP_ADDR)
+                    ), expanded AS (
+                        SELECT
+                            'CAIDA ITDK' AS SOURCE,
+                            CASE WHEN ITDK_T THEN '{TRANSIT_ROLE}'
+                                 ELSE '{NO_TRANSIT_ROLE}' END AS OBSERVED_ROLE,
+                            IPID_SELECTION_STRATEGY
+                        FROM dual_matches
+                        UNION ALL
+                        SELECT
+                            'RIPE Atlas' AS SOURCE,
+                            CASE WHEN RIPE_T THEN '{TRANSIT_ROLE}'
+                                 ELSE '{NO_TRANSIT_ROLE}' END AS OBSERVED_ROLE,
+                            IPID_SELECTION_STRATEGY
+                        FROM dual_matches
+                    )
+                    SELECT
+                        SOURCE,
+                        OBSERVED_ROLE,
+                        IPID_SELECTION_STRATEGY,
+                        count(*)::BIGINT AS COUNT
+                    FROM expanded
+                    GROUP BY SOURCE, OBSERVED_ROLE, IPID_SELECTION_STRATEGY
+                    ORDER BY SOURCE, OBSERVED_ROLE, IPID_SELECTION_STRATEGY
+                    """,
+                    outputs.caida_intersection,
+                )
+                intersection_rows = con.execute(
+                    f"""
+                    SELECT SOURCE, OBSERVED_ROLE, IPID_SELECTION_STRATEGY, COUNT
+                    FROM read_parquet('{_sql_path(outputs.caida_intersection)}')
+                    ORDER BY SOURCE, OBSERVED_ROLE, IPID_SELECTION_STRATEGY
+                    """
+                ).fetchall()
+        finally:
+            con.close()
+
+        percentages = _role_plot_data(role_rows)
+        role_totals = {
+            role: sum(int(count) for row_role, _, count in role_rows if row_role == role)
+            for role in ROLE_ORDER
+        }
+        _plot_roles(percentages, role_totals, outputs.role_pdf)
+        intersection_percentages: dict[str, dict[str, float]] = {}
+        intersection_totals: dict[str, int] = {}
+        if outputs.caida_agreement_pdf is not None:
+            _plot_agreement(agreement_rows, outputs.caida_agreement_pdf)
+        if outputs.caida_intersection_pdf is not None:
+            intersection_percentages, intersection_totals = _plot_intersection(
+                intersection_rows, outputs.caida_intersection_pdf
+            )
+        if outputs.caida_intersection_json is not None:
+            outputs.caida_intersection_json.parent.mkdir(parents=True, exist_ok=True)
+            write_text(
+                outputs.caida_intersection_json,
+                json.dumps(
+                    {
+                        **_source_metadata(source),
+                        "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
+                        "population": "addresses matched by both CAIDA ITDK and RIPE Atlas",
+                        "plot_percentages": intersection_percentages,
+                        "plot_role_totals": intersection_totals,
+                        "raw_distribution": [
+                            {
+                                "source": str(source_name),
+                                "role": str(role),
+                                "strategy": str(strategy),
+                                "count": int(count),
+                            }
+                            for source_name, role, strategy, count in intersection_rows
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        total, matched, unmatched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, coverage)
+        report = {
+            **_source_metadata(source),
+            "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "ripe_atlas": {
+                "source": dataset.source,
+                "window_start": dataset.window.start.isoformat(),
+                "window_end": dataset.window.end.isoformat(),
+                "roles": str(dataset.roles_path),
+                "metadata": str(dataset.metadata_path),
+            },
+            "role_definition": {
+                TRANSIT_ROLE: "RIPE observation with T=true; D arbitrary",
+                NO_TRANSIT_ROLE: ("RIPE observation with T=false; D arbitrary"),
+            },
+            "coverage": {
+                "total": total,
+                "matched": matched,
+                "unmatched": unmatched,
+                "match_percentage": 100.0 * matched / total if total else 0.0,
+                "t1_d1": t1_d1,
+                "t1_d0": t1_d0,
+                "t0_d1": t0_d1,
+                "t0_d0": t0_d0,
+            },
+            "plot_percentages": percentages,
+            "plot_role_totals": role_totals,
+            "raw_distribution": [
+                {"role": role, "strategy": strategy, "count": int(count)}
+                for role, strategy, count in role_rows
+            ],
+            "caida_ripe_agreement": [
+                {"category": category, "count": int(count), "percentage": float(percentage)}
+                for category, count, percentage in agreement_rows
+            ],
+            "artifact_semantics": {
+                "joined": "matched-only measured addresses; unmatched addresses are not materialized",
+                "caida_intersection": "addresses matched by both CAIDA ITDK and RIPE Atlas",
+            },
+            "outputs": {
+                key: (None if value is None else str(value))
+                for key, value in asdict(outputs).items()
+            },
+        }
+        outputs.role_json.parent.mkdir(parents=True, exist_ok=True)
+        write_text(outputs.role_json, json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        record_cache_inputs(outputs.role_json, cache_inputs)
+        return outputs

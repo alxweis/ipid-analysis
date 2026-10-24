@@ -12,23 +12,22 @@ import bz2
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import shutil
-import time
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
-import duckdb
 from loguru import logger
 import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import assert_complete, file_digest, publish_file
 from ipid_analysis.config import RAW_DATA_DIR
+from ipid_analysis.downloads import download as download_http
+from ipid_analysis.runtime import connect, exclusive_lock, start_run, temporary_path, work_path
 
 app = typer.Typer()
 
@@ -78,49 +77,15 @@ def dataset_paths(
 
 @contextmanager
 def _exclusive_lock(path: Path, timeout_seconds: float = 3600.0):
-    """Portable inter-process lock based on exclusive file creation."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + timeout_seconds
-    descriptor: int | None = None
-    while descriptor is None:
-        try:
-            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(descriptor, f"pid={os.getpid()}\n".encode())
-        except FileExistsError:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"timed out waiting for ITDK preparation lock: {path}")
-            time.sleep(1.0)
-    try:
+    with exclusive_lock(str(path), timeout_seconds):
         yield
-    finally:
-        os.close(descriptor)
-        path.unlink(missing_ok=True)
 
 
-def _download(url: str, destination: Path) -> None:
-    """Download *url* atomically, resuming a partial HTTP transfer when possible."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    partial = destination.with_suffix(destination.suffix + ".part")
-    offset = partial.stat().st_size if partial.is_file() else 0
-    headers = {"User-Agent": "ipid-analysis/caida-itdk"}
-    if offset:
-        headers["Range"] = f"bytes={offset}-"
-    request = Request(url, headers=headers)
-    try:
-        response = urlopen(request, timeout=60)
-    except HTTPError as exc:
-        if exc.code == 416 and offset:
-            partial.replace(destination)
-            return
-        raise
-    with response:
-        resumed = offset > 0 and getattr(response, "status", None) == 206
-        mode = "ab" if resumed else "wb"
-        if offset and not resumed:
-            logger.warning(f"server did not honor Range for {url}; restarting download")
-        with partial.open(mode) as output:
-            shutil.copyfileobj(response, output, length=8 * 1024 * 1024)
-    partial.replace(destination)
+def _download(url: str, destination: Path) -> Path:
+    local = work_path(url) / destination.name
+    result = download_http(url, local, opener=urlopen)
+    publish_file(result, destination, parameters={"source_url": url})
+    return result
 
 
 def _copy_atomic(source: Path, destination: Path) -> None:
@@ -128,18 +93,15 @@ def _copy_atomic(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists() and source == destination.resolve():
         return
-    partial = destination.with_suffix(destination.suffix + ".part")
+    partial = temporary_path(destination)
     with source.open("rb") as input_file, partial.open("wb") as output_file:
         shutil.copyfileobj(input_file, output_file, length=8 * 1024 * 1024)
-    partial.replace(destination)
+    publish_file(partial, destination)
+    partial.unlink(missing_ok=True)
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as input_file:
-        for block in iter(lambda: input_file.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    return file_digest(path)
 
 
 def _parse_ipv4(value: str) -> tuple[bool, bool]:
@@ -167,7 +129,7 @@ def parse_ifaces(
 ) -> dict[str, int]:
     """Stream an ITDK ``.ifaces.bz2`` file into a compact Parquet lookup."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    partial = destination.with_suffix(destination.suffix + ".part")
+    partial = temporary_path(destination)
     partial.unlink(missing_ok=True)
     metadata = {
         b"itdk_cache_version": ITDK_CACHE_VERSION.encode(),
@@ -231,25 +193,26 @@ def parse_ifaces(
         partial.unlink(missing_ok=True)
         raise ValueError(f"ITDK interface file contains no real IPv4 addresses: {source}")
 
-    con = duckdb.connect()
-    try:
-        total, distinct = con.execute(
-            "SELECT count(*), count(DISTINCT IP_ADDR) FROM read_parquet($path)",
-            {"path": str(partial)},
-        ).fetchone()
-    finally:
-        con.close()
-    if total != distinct:
+    with connect() as con:
+        try:
+            total, distinct = con.execute(
+                "SELECT count(*), count(DISTINCT IP_ADDR) FROM read_parquet($path)",
+                {"path": str(partial)},
+            ).fetchone()
+        finally:
+            con.close()
+        if total != distinct:
+            partial.unlink(missing_ok=True)
+            raise ValueError(
+                f"ITDK interface file contains duplicate IPv4 addresses: {total - distinct:,}"
+            )
+        publish_file(partial, destination, expected_rows=rows)
         partial.unlink(missing_ok=True)
-        raise ValueError(
-            f"ITDK interface file contains duplicate IPv4 addresses: {total - distinct:,}"
-        )
-    partial.replace(destination)
-    return {
-        "interfaces": rows,
-        "skipped_invalid": skipped_invalid,
-        "skipped_placeholder": skipped_placeholder,
-    }
+        return {
+            "interfaces": rows,
+            "skipped_invalid": skipped_invalid,
+            "skipped_placeholder": skipped_placeholder,
+        }
 
 
 def prepare_itdk(
@@ -269,16 +232,34 @@ def prepare_itdk(
     dataset.directory.mkdir(parents=True, exist_ok=True)
     lock_path = dataset.directory / ".prepare.lock"
     with _exclusive_lock(lock_path):
+        cached_valid = False
         if (
             not force
             and dataset.ifaces_path.is_file()
             and dataset.interfaces_path.is_file()
             and dataset.metadata_path.is_file()
         ):
-            logger.info(
-                f"reusing CAIDA ITDK {release}/{topology} cache: {dataset.interfaces_path}"
+            cached = json.loads(dataset.metadata_path.read_text())
+            assert_complete(dataset.interfaces_path)
+            source_path = (
+                Path(ifaces)
+                if ifaces is not None
+                else Path(source_dir) / f"{topology}.ifaces.bz2"
+                if source_dir is not None
+                else None
             )
-            return dataset
+            valid = (
+                cached.get("cache_version") == ITDK_CACHE_VERSION
+                and cached.get("ifaces_size") == dataset.ifaces_path.stat().st_size
+            )
+            if source_path is not None:
+                valid = valid and cached.get("ifaces_sha256") == _sha256(source_path)
+            cached_valid = valid
+            if cached_valid:
+                logger.info(
+                    f"reusing CAIDA ITDK {release}/{topology} cache: {dataset.interfaces_path}"
+                )
+                return dataset
 
         filename = f"{topology}.ifaces.bz2"
         source_kind: str
@@ -330,9 +311,10 @@ def prepare_itdk(
             **stats,
             "prepared_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
-        metadata_partial = dataset.metadata_path.with_suffix(".json.part")
+        metadata_partial = temporary_path(dataset.metadata_path)
         metadata_partial.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
-        metadata_partial.replace(dataset.metadata_path)
+        publish_file(metadata_partial, dataset.metadata_path)
+        metadata_partial.unlink(missing_ok=True)
         logger.success(
             f"prepared CAIDA ITDK {release}/{topology}: "
             f"{stats['interfaces']:,} real IPv4 interfaces"
@@ -365,6 +347,7 @@ def main(
     raw_root: Path = typer.Option(RAW_DATA_DIR, help="raw data root"),
     force: bool = typer.Option(False, help="replace and rebuild an existing cache"),
 ) -> None:
+    start_run()
     try:
         dataset = prepare_itdk(
             release=release,

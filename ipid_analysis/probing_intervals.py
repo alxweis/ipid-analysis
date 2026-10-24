@@ -17,12 +17,14 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-import duckdb
 from loguru import logger
+import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import atomic_output, cache_current
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
+from ipid_analysis.runtime import connect, start_run
 from ipid_analysis.strategies import DEFAULT_MANIFEST, INPUT_NAME
 
 app = typer.Typer()
@@ -64,20 +66,31 @@ def extract_probing_intervals(
         raise FileNotFoundError(input_path)
     output_path = probing_intervals_output_path(m)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if output_path.is_file() and output_path.stat().st_mtime_ns >= input_path.stat().st_mtime_ns:
+    parameters = {"algorithm": "probing-intervals-v1", "compression": compression}
+    if cache_current(output_path, [input_path], parameters):
         logger.info(f"[{m.target}] reusing probing intervals -> {output_path}")
         return output_path
 
     logger.info(f"[{m.target}] {m.measurement_id}: extracting probing intervals")
     start = time.monotonic()
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    con.execute(
-        INTERVALS_SQL,
-        {"input": str(input_path), "output": str(output_path), "compression": compression},
-    )
-    con.close()
-    logger.success(f"[{m.target}] intervals in {time.monotonic() - start:.1f}s -> {output_path}")
-    return output_path
+    with (
+        connect(config={"threads": threads} if threads else {}) as con,
+        atomic_output(
+            output_path,
+            inputs=[input_path],
+            parameters=parameters,
+            expected_rows=pq.ParquetFile(input_path).metadata.num_rows,
+        ) as temporary,
+    ):
+        con.execute(
+            INTERVALS_SQL,
+            {"input": str(input_path), "output": str(temporary), "compression": compression},
+        )
+        con.close()
+        logger.success(
+            f"[{m.target}] intervals in {time.monotonic() - start:.1f}s -> {output_path}"
+        )
+        return output_path
 
 
 @app.command()
@@ -89,6 +102,7 @@ def main(
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4"),
     threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
 ) -> None:
+    start_run()
     m = resolve(load_manifest(manifest), target)
     if m is None:
         logger.error(f"{target}: not present in {manifest}")

@@ -1,79 +1,117 @@
-"""Alternative per-protocol labels for changed or unconfirmed target sequences."""
+"""Alternative labels, streamed from observations with bounded summaries."""
 
-from collections import Counter
 import json
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ipid_analysis.artifacts import atomic_output, write_text
 from ipid_analysis.interprotocol_stability import STABILITY_SCHEMA, STABILITY_STRATEGIES
+from ipid_analysis.runtime import connect
 
 
 def write_alternative_reports(stability, deployments, output_dir: Path, measurements: dict):
-    """Keep all protocol observations for each affected IP/group, including unchanged ones.
-
-    Deployment rejection is not itself evidence of a different strategy. The
-    alternative is always the independently reclassified per-protocol label.
-    AMBIGUOUS is included because the paper deployment plot groups it with
-    STRATEGY_NOT_CONFIRMED; its original label is retained in the report.
-    """
-    def key(row, field):
-        return row["IP_ADDR"], row["PROTOCOL_GROUP"], row[field]
-
-    deployment_by_target = {
-        key(row, "IPID_SELECTION_STRATEGY"): row["DEPLOYMENT"]
-        for row in deployments.to_pylist()
-    }
-    observations = stability.to_pylist()
-    changed = {key(row, "BASELINE_STRATEGY") for row in observations
-               if row["STRATEGY_STATUS"] == "CHANGED"}
+    """Accept existing Arrow callers or parquet paths without materializing IPs."""
     schema = STABILITY_SCHEMA.append(pa.field("DEPLOYMENT", pa.string())).append(
         pa.field("TRIGGERS", pa.list_(pa.string()))
     )
-    by_strategy = {strategy: [] for strategy in STABILITY_STRATEGIES}
-    for row in observations:
-        target = key(row, "BASELINE_STRATEGY")
-        deployment = deployment_by_target.get(target)
-        triggers = []
-        if target in changed:
-            triggers.append("CHANGED")
-        if deployment in ("STRATEGY_NOT_CONFIRMED", "AMBIGUOUS"):
-            triggers.append("STRATEGY_NOT_CONFIRMED")
-        if triggers:
-            by_strategy[row["BASELINE_STRATEGY"]].append(
-                dict(row, DEPLOYMENT=deployment, TRIGGERS=triggers)
-            )
-    for strategy, rows in by_strategy.items():
-        stem = "interprotocol-campaign-" + strategy.lower().replace("_", "-") + "-alternatives"
-        pq.write_table(pa.Table.from_pylist(rows, schema=schema),
-                       output_dir / f"{stem}.pq", compression="zstd")
-        groups = {}
-        for group, measurement_id in measurements.items():
-            selected = [row for row in rows if row["PROTOCOL_GROUP"] == group]
-            transitions = Counter((r["PROTOCOL"], r["OBSERVED_STRATEGY"],
-                                   r["STRATEGY_STATUS"], r["REASON"], r["DEPLOYMENT"])
-                                  for r in selected)
-            groups[group] = {
-                "measurement_id": measurement_id,
-                "affected_ips": len({r["IP_ADDR"] for r in selected}),
-                "protocol_observations": len(selected),
-                "trigger_ip_counts": {trigger: len({r["IP_ADDR"] for r in selected
-                                                    if trigger in r["TRIGGERS"]})
-                                      for trigger in ("CHANGED", "STRATEGY_NOT_CONFIRMED")},
-                "alternatives": [dict(zip(
-                    ("protocol", "observed_strategy", "status", "reason", "deployment", "count"),
-                    (*values, count), strict=True,
-                )) for values, count in sorted(transitions.items(), key=lambda item: str(item[0]))],
+    with connect() as con:
+        for name, source in (("observations", stability), ("deployments", deployments)):
+            if isinstance(source, (str, Path)):
+                escaped = str(source).replace("'", "''")
+                con.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet('{escaped}')")
+            else:
+                con.register(name, source)
+        con.execute("""
+            CREATE TEMP TABLE alternatives AS
+            WITH changed AS (
+                SELECT DISTINCT IP_ADDR, PROTOCOL_GROUP, BASELINE_STRATEGY
+                FROM observations WHERE STRATEGY_STATUS = 'CHANGED'
+            ), joined AS (
+                SELECT s.*, d.DEPLOYMENT,
+                    list_filter([
+                        CASE WHEN c.IP_ADDR IS NOT NULL THEN 'CHANGED' END,
+                        CASE WHEN d.DEPLOYMENT IN ('STRATEGY_NOT_CONFIRMED', 'AMBIGUOUS')
+                             THEN 'STRATEGY_NOT_CONFIRMED' END
+                    ], value -> value IS NOT NULL) AS TRIGGERS
+                FROM observations s
+                LEFT JOIN deployments d ON s.IP_ADDR = d.IP_ADDR
+                    AND s.PROTOCOL_GROUP = d.PROTOCOL_GROUP
+                    AND s.BASELINE_STRATEGY = d.IPID_SELECTION_STRATEGY
+                LEFT JOIN changed c ON s.IP_ADDR = c.IP_ADDR
+                    AND s.PROTOCOL_GROUP = c.PROTOCOL_GROUP
+                    AND s.BASELINE_STRATEGY = c.BASELINE_STRATEGY
+            ) SELECT * FROM joined WHERE len(TRIGGERS) > 0
+        """)
+        for strategy in STABILITY_STRATEGIES:
+            stem = "interprotocol-campaign-" + strategy.lower().replace("_", "-") + "-alternatives"
+            path = output_dir / f"{stem}.pq"
+            with (
+                atomic_output(path) as temporary,
+                pq.ParquetWriter(temporary, schema, compression="zstd") as writer,
+            ):
+                reader = con.execute(
+                    "SELECT * FROM alternatives WHERE BASELINE_STRATEGY = ?", [strategy]
+                ).to_arrow_reader(8192)
+                for batch in reader:
+                    writer.write_batch(batch.cast(schema))
+            groups = {}
+            for group, measurement_id in measurements.items():
+                params = [strategy, group]
+                affected, observations, changed, unconfirmed = con.execute(
+                    """
+                    SELECT count(DISTINCT IP_ADDR), count(*),
+                        count(DISTINCT IP_ADDR) FILTER (WHERE list_contains(TRIGGERS, 'CHANGED')),
+                        count(DISTINCT IP_ADDR) FILTER (WHERE list_contains(TRIGGERS, 'STRATEGY_NOT_CONFIRMED'))
+                    FROM alternatives WHERE BASELINE_STRATEGY = ? AND PROTOCOL_GROUP = ?
+                """,
+                    params,
+                ).fetchone()
+                rows = con.execute(
+                    """
+                    SELECT PROTOCOL, OBSERVED_STRATEGY, STRATEGY_STATUS, REASON, DEPLOYMENT, count(*)
+                    FROM alternatives WHERE BASELINE_STRATEGY = ? AND PROTOCOL_GROUP = ?
+                    GROUP BY 1, 2, 3, 4, 5
+                """,
+                    params,
+                ).fetchall()
+                groups[group] = {
+                    "measurement_id": measurement_id,
+                    "affected_ips": affected,
+                    "protocol_observations": observations,
+                    "trigger_ip_counts": {
+                        "CHANGED": changed,
+                        "STRATEGY_NOT_CONFIRMED": unconfirmed,
+                    },
+                    "alternatives": [
+                        dict(
+                            zip(
+                                (
+                                    "protocol",
+                                    "observed_strategy",
+                                    "status",
+                                    "reason",
+                                    "deployment",
+                                    "count",
+                                ),
+                                row,
+                                strict=True,
+                            )
+                        )
+                        for row in sorted(rows, key=lambda row: str(row[:-1]))
+                    ],
+                }
+            report = {
+                "version": 1,
+                "baseline_strategy": strategy,
+                "unit": "IP/protocol observations; affected_ips counts unique IPs within each group",
+                "selection": "All protocols of targets with CHANGED or unconfirmed deployment (including AMBIGUOUS)",
+                "interpretation": "Unconfirmed shared-counter deployment can coexist with unchanged per-protocol labels",
+                "trigger_counts_overlap": True,
+                "classifier_metadata": {
+                    k.decode(): v.decode() for k, v in STABILITY_SCHEMA.metadata.items()
+                },
+                "groups": groups,
             }
-        report = {
-            "version": 1,
-            "baseline_strategy": strategy,
-            "unit": "IP/protocol observations; affected_ips counts unique IPs within each group",
-            "selection": "All protocols of targets with CHANGED or unconfirmed deployment (including AMBIGUOUS)",
-            "interpretation": "Unconfirmed shared-counter deployment can coexist with unchanged per-protocol labels",
-            "trigger_counts_overlap": True,
-            "classifier_metadata": {k.decode(): v.decode() for k, v in STABILITY_SCHEMA.metadata.items()},
-            "groups": groups,
-        }
-        (output_dir / f"{stem}.json").write_text(json.dumps(report, indent=2) + "\n")
+            write_text(output_dir / f"{stem}.json", json.dumps(report, indent=2) + "\n")

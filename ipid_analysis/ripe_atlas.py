@@ -34,11 +34,24 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import uuid
+from zoneinfo import ZoneInfo
 
-import duckdb
 from loguru import logger
 import pyarrow.parquet as pq
 import typer
+
+from ipid_analysis.artifacts import assert_complete, file_digest, publish_file
+from ipid_analysis.downloads import download as download_http
+from ipid_analysis.runtime import (
+    available_memory,
+    connect,
+    cpu_budget,
+    reserve_download,
+    scratch_root,
+    start_run,
+    temporary_path,
+    work_path,
+)
 
 try:
     import orjson
@@ -101,7 +114,11 @@ def _parse_measurement_timestamp(value: str) -> datetime | None:
     match = _MEASUREMENT_TIMESTAMP_RE.search(value)
     if match is None:
         return None
-    return datetime.strptime(match.group("stamp") + "+0000", "%Y-%m-%d_%H-%M-%S%z")
+    zone = ZoneInfo(os.environ.get("IPID_ANALYSIS_CAMPAIGN_TIMEZONE", "UTC"))
+    local = datetime.strptime(match.group("stamp"), "%Y-%m-%d_%H-%M-%S").replace(tzinfo=zone)
+    if local.utcoffset() != local.replace(fold=1).utcoffset():
+        raise ValueError("ambiguous campaign timestamp; provide --ripe-campaign-start explicitly")
+    return local.astimezone(timezone.utc)
 
 
 def infer_campaign_start(manifest: dict) -> datetime:
@@ -455,74 +472,26 @@ def _download(
     url: str,
     destination: Path,
     *,
-    resume: bool = True,
-    expected_size: int | None = None,
-    max_attempts: int = DEFAULT_DOWNLOAD_ATTEMPTS,
+    resume=True,
+    expected_size=None,
+    max_attempts=DEFAULT_DOWNLOAD_ATTEMPTS,
 ) -> Path:
-    if max_attempts < 1:
-        raise ValueError("max_attempts must be positive")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    partial = destination.with_suffix(destination.suffix + ".part")
-    work_path = partial
-    if destination.is_file():
-        actual_size = destination.stat().st_size
-        if expected_size is None or actual_size == expected_size:
-            return destination
-        logger.warning(
-            f"incomplete RIPE download {destination}: {actual_size:,}/{expected_size:,} bytes; "
-            "resuming"
-        )
-        if partial.is_file() and partial.stat().st_size >= actual_size:
-            work_path = partial
-        else:
-            partial.unlink(missing_ok=True)
-            # Renaming an existing object may fail on object-storage FUSE mounts.
-            # Resume the validated-size final path in place instead. It is never
-            # returned to callers until it has the expected remote size.
-            work_path = destination
-
-    for attempt in range(1, max_attempts + 1):
-        offset = work_path.stat().st_size if resume and work_path.is_file() else 0
-        if expected_size is not None and offset > expected_size:
-            logger.warning(f"discarding oversized RIPE partial download: {work_path}")
-            work_path.unlink()
-            offset = 0
-        if expected_size is not None and offset == expected_size:
-            return _finalize_download(work_path, destination, expected_size)
-        headers = {"User-Agent": "ipid-analysis/ripe-atlas"}
-        if offset:
-            headers["Range"] = f"bytes={offset}-"
-        request = Request(url, headers=headers)
-        try:
-            response = urlopen(request, timeout=120)
-        except HTTPError as exc:
-            if exc.code == 416 and expected_size is not None and offset == expected_size:
-                return _finalize_download(work_path, destination, expected_size)
-            raise
-        with response:
-            resumed = offset > 0 and getattr(response, "status", None) == 206
-            mode = "ab" if resumed else "wb"
-            if offset and not resumed:
-                logger.warning(f"server did not honor Range for {url}; restarting download")
-            with work_path.open(mode) as output:
-                shutil.copyfileobj(response, output, length=8 * 1024 * 1024)
-        if expected_size is None:
-            return _finalize_download(work_path, destination, expected_size)
-        actual_size = work_path.stat().st_size
-        if actual_size == expected_size:
-            return _finalize_download(work_path, destination, expected_size)
-        if attempt < max_attempts:
-            logger.warning(
-                f"incomplete RIPE download retained at {work_path}: "
-                f"{actual_size:,}/{expected_size:,} bytes; automatically resuming "
-                f"(attempt {attempt + 1}/{max_attempts})"
-            )
-            continue
-        raise OSError(
-            f"incomplete RIPE download retained at {work_path}: "
-            f"{actual_size:,}/{expected_size:,} bytes after {max_attempts} attempts"
-        )
-    raise AssertionError("unreachable")
+    # Persistent paths are never opened for append. Preserve API raw artifacts.
+    local = destination
+    if RAW_DATA_DIR.resolve() in destination.resolve().parents:
+        local = work_path(url) / destination.name
+    result = download_http(
+        url,
+        local,
+        opener=urlopen,
+        resume=resume,
+        expected_size=expected_size,
+        max_attempts=max_attempts,
+        finalize=_finalize_download,
+    )
+    if local != destination:
+        publish_file(result, destination, parameters={"source_url": url})
+    return result
 
 
 def _finalize_download(
@@ -578,18 +547,15 @@ def _copy_atomic(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists() and source.resolve() == destination.resolve():
         return
-    partial = destination.with_suffix(destination.suffix + ".part")
+    partial = temporary_path(destination)
     with source.open("rb") as input_file, partial.open("wb") as output_file:
         shutil.copyfileobj(input_file, output_file, length=8 * 1024 * 1024)
-    partial.replace(destination)
+    publish_file(partial, destination)
+    partial.unlink(missing_ok=True)
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as input_file:
-        for block in iter(lambda: input_file.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    return file_digest(path)
 
 
 def _is_public_ipv4(value: object) -> bool:
@@ -680,8 +646,8 @@ def _build_role_part(
     started = time.monotonic()
     bitmaps, counters = _parse_role_file(path, window=window, apply_window=apply_window)
     part.parent.mkdir(parents=True, exist_ok=True)
-    temporary = part.with_name(f".{part.name}.{os.getpid()}.part")
-    metadata_temporary = metadata.with_name(f".{metadata.name}.{os.getpid()}.part")
+    temporary = temporary_path(part)
+    metadata_temporary = temporary_path(metadata)
     rows = 0
     try:
         with pq.ParquetWriter(temporary, _PART_SCHEMA, compression="zstd") as writer:
@@ -699,9 +665,13 @@ def _build_role_part(
             "prepare_seconds": time.monotonic() - started,
         }
         metadata_temporary.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
-        metadata.unlink(missing_ok=True)
-        temporary.replace(part)
-        metadata_temporary.replace(metadata)
+        publish_file(
+            temporary,
+            part,
+            parameters={"cache_version": RIPE_PART_CACHE_VERSION},
+            expected_rows=rows,
+        )
+        publish_file(metadata_temporary, metadata)
     finally:
         bitmaps.close()
         temporary.unlink(missing_ok=True)
@@ -718,7 +688,11 @@ def _cached_role_part(part: Path, metadata: Path) -> dict | None:
         return None
     try:
         info = json.loads(metadata.read_text(encoding="utf-8"))
-        schema = pq.ParquetFile(part).schema_arrow
+        assert_complete(part)
+        parquet = pq.ParquetFile(part)
+        schema = parquet.schema_arrow
+        if parquet.metadata.num_rows != info.get("addresses"):
+            return None
     except (OSError, ValueError, TypeError):
         return None
     if info.get("cache_version") != RIPE_PART_CACHE_VERSION:
@@ -732,7 +706,7 @@ def _prepare_role_part(arguments: tuple[str, str, str, str, str, bool]) -> tuple
     source, part, metadata, start, end, apply_window, *options = arguments
     part_path = Path(part)
     metadata_path = Path(metadata)
-    with _exclusive_lock(part_path.with_suffix(".lock")):
+    with _exclusive_lock(work_path(str(part_path), category="locks") / "part.lock"):
         info = _cached_role_part(part_path, metadata_path)
         cache = RoleCache()
         remote_key = f"parts/{part_path.stem}"
@@ -772,12 +746,17 @@ def build_role_lookup(
         raise ValueError("RIPE preprocessing workers must be positive")
     # Keep CPUs available to the measurement workflow and cap all active prepares
     # on this VM with the outer preparation lock.
-    budget_gib = int(os.environ.get("IPID_ANALYSIS_RIPE_MEMORY_GIB", "16"))
+    budget_gib = min(
+        int(os.environ.get("IPID_ANALYSIS_RIPE_MEMORY_GIB", "16")),
+        max(1, available_memory() // (1 << 30)),
+    )
+    workers = min(workers, cpu_budget(), max(1, available_memory() // (2 << 30)))
     if budget_gib < 4:
         raise ValueError("RIPE memory budget must be at least 4 GiB")
     workers = min(workers, max(1, (os.cpu_count() or 2) - 1), (budget_gib - 2) // 2)
     apply_window = not source.startswith("daily-dumps")
     parts_root = destination.parents[2] / "file-parts"
+    parts_root.mkdir(parents=True, exist_ok=True)
     prepared, metadata_rows = [], []
     started = time.monotonic()
 
@@ -827,16 +806,16 @@ def build_role_lookup(
     if not prepared:
         raise ValueError("RIPE Atlas input list is empty")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    partial = destination.with_suffix(destination.suffix + ".part")
+    partial = temporary_path(destination)
     partial.unlink(missing_ok=True)
     threads = min(
         max(1, (os.cpu_count() or 2) - 1),
         max(1, int(os.environ.get("IPID_ANALYSIS_RIPE_DUCKDB_THREADS", "4"))),
     )
     memory = os.environ.get("IPID_ANALYSIS_RIPE_DUCKDB_MEMORY", "8GB")
-    temp = destination.parent / ".duckdb-tmp"
+    temp = scratch_root() / "duckdb-ripe"
     logger.info(f"merging {len(prepared)} RIPE parts (threads={threads}, memory={memory})")
-    with duckdb.connect(
+    with connect(
         config={"threads": threads, "memory_limit": memory, "temp_directory": str(temp)}
     ) as con:
         con.execute(f"""
@@ -854,7 +833,8 @@ def build_role_lookup(
             "FROM read_parquet(?)",
             [str(partial)],
         ).fetchone()
-    partial.replace(destination)
+    publish_file(partial, destination)
+    partial.unlink(missing_ok=True)
     return {
         "traces": sum(int(row["traces"]) for row in metadata_rows),
         "addresses": addresses,
@@ -936,7 +916,7 @@ def _daily_dump_files(
         url = f"{base_url.rstrip('/')}/{day}/{filename}"
         identity = hashlib.sha256(f"{RIPE_PART_CACHE_VERSION}|{url}".encode()).hexdigest()
         part, metadata = parts_root / f"{identity}.pq", parts_root / f"{identity}.json"
-        with _exclusive_lock(part.with_suffix(".lock")):
+        with _exclusive_lock(work_path(str(part), category="locks") / "part.lock"):
             info = _cached_role_part(part, metadata)
             cache = RoleCache()
             if info is None and cache.restore(
@@ -949,19 +929,23 @@ def _daily_dump_files(
                 return part
         existing = Path(raw_root) / "ripe-atlas" / "daily-dumps" / day / filename
         scratch = Path(
-            os.environ.get("IPID_ANALYSIS_RIPE_WORK_DIR", str(parts_root.parent / "work"))
+            os.environ.get("IPID_ANALYSIS_RIPE_WORK_DIR", str(scratch_root() / "ripe-downloads"))
         )
         destination = existing if existing.is_file() else scratch / day / filename
         cleanup = destination != existing
         destination.parent.mkdir(parents=True, exist_ok=True)
         expected_size = _remote_file_size(url)
+        if existing.is_file() and existing.stat().st_size == expected_size:
+            assert_complete(existing)
+            return existing, identity, False
         present = destination.stat().st_size if destination.is_file() else 0
         required_space = max(0, expected_size - present) + (1 << 30)
         if shutil.disk_usage(destination.parent).free < required_space:
             raise OSError(f"insufficient local RIPE scratch space for {filename}")
         started = time.monotonic()
         logger.info(f"downloading RIPE Atlas daily dump: {url}")
-        source_path = _download(url, destination, expected_size=expected_size)
+        with reserve_download(required_space):
+            source_path = _download(url, destination, expected_size=expected_size)
         logger.info(f"RIPE download ready: {filename} ({time.monotonic() - started:.1f}s)")
         return source_path, identity, cleanup
 
@@ -1031,7 +1015,7 @@ def _local_files(input_dir: Path, raw_root: Path, window: RipeWindow) -> list[Pa
     destination_dir = Path(raw_root) / "ripe-atlas" / "local" / window.label
     copied = []
     for index, source in enumerate(source_files):
-        destination = destination_dir / f"{index:04d}-{source.name}"
+        destination = destination_dir / f"{index:04d}-{_sha256(source)[:16]}-{source.name}"
         if not destination.is_file():
             _copy_atomic(source, destination)
         copied.append(destination)
@@ -1063,7 +1047,16 @@ def prepare_ripe_atlas(
         else ()
     )
     if input_dir is not None:
-        local_digest = hashlib.sha256(str(Path(input_dir).resolve()).encode()).hexdigest()[:12]
+        local_sources = sorted(
+            path
+            for path in Path(input_dir).rglob("*")
+            if path.is_file() and path.suffix in {".bz2", ".jsonl", ".txt"}
+        )
+        local_digest = hashlib.sha256(
+            "\n".join(
+                str(path.relative_to(input_dir)) + ":" + _sha256(path) for path in local_sources
+            ).encode()
+        ).hexdigest()[:12]
         key = f"local-{local_digest}"
     else:
         key = _source_key(source, samples=dump_samples, measurement_ids=measurement_ids)
@@ -1075,8 +1068,11 @@ def prepare_ripe_atlas(
         f"{window.label}|{key}|{dump_base_url}|{api_base_url}".encode()
     ).hexdigest()
     remote_key = f"windows/{identity}"
-    budget_lock = Path(processed_root) / "ripe-atlas" / ".resources.lock"
-    with _exclusive_lock(budget_lock), _exclusive_lock(dataset.directory / ".prepare.lock"):
+    budget_lock = work_path("ripe-resources", category="locks") / "resources.lock"
+    with (
+        _exclusive_lock(budget_lock),
+        _exclusive_lock(work_path(str(dataset.directory), category="locks") / "prepare.lock"),
+    ):
         if not force and dataset.roles_path.is_file() and dataset.metadata_path.is_file():
             try:
                 cached_info = json.loads(dataset.metadata_path.read_text(encoding="utf-8"))
@@ -1154,10 +1150,12 @@ def prepare_ripe_atlas(
             "measurement_ids": list(measurement_ids),
             **stats,
             "prepared_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "measurement_id_timezone": os.environ.get("IPID_ANALYSIS_CAMPAIGN_TIMEZONE", "UTC"),
         }
-        partial = dataset.metadata_path.with_suffix(".json.part")
+        partial = temporary_path(dataset.metadata_path)
         partial.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
-        partial.replace(dataset.metadata_path)
+        publish_file(partial, dataset.metadata_path)
+        partial.unlink(missing_ok=True)
         cache.publish(remote_key, dataset.roles_path, dataset.metadata_path)
         logger.success(
             f"prepared RIPE Atlas {window.label}: {stats['addresses']:,} public IPv4 "
@@ -1205,6 +1203,7 @@ def main(
     processed_root: Path = typer.Option(PROCESSED_DATA_DIR),
     force: bool = typer.Option(False, help="rebuild an existing cache"),
 ) -> None:
+    start_run()
     try:
         dataset = prepare_ripe_atlas(
             campaign_start=parse_datetime(campaign_start),

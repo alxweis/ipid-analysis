@@ -36,6 +36,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import (
+    atomic_output,
+    local_log_handler,
+    publish_logs,
+    save_figure,
+    write_text,
+)
+from ipid_analysis.runtime import start_run
+
 matplotlib.use("Agg")
 
 from matplotlib.colors import Normalize
@@ -540,58 +549,59 @@ def _evaluate_test_data(
 ) -> dict[tuple[int, str, str], list[int]]:
     counts: dict[tuple[int, str, str], list[int]] = {}
     score_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = pq.ParquetWriter(score_path, SCORE_SCHEMA, compression="zstd")
-    try:
-        produced = 0
-        batch_index = 0
-        while produced < samples_per_strategy:
-            size = min(batch_size, samples_per_strategy - produced)
-            LOGGER.info(
-                "Evaluating test batch %d (%d..%d per strategy)",
-                batch_index + 1,
-                produced,
-                produced + size - 1,
-            )
-            generator_rng = _stable_rng(seed, 201, batch_index)
-            generated = generate_evaluation_sequences(size, generator_rng)
-            for strategy_index, strategy in enumerate(EVALUATION_GENERATORS):
-                ideal = generated[strategy]
-                for condition_index, condition in enumerate(CONDITIONS):
-                    impairment_rng = _stable_rng(
-                        seed,
-                        202,
-                        batch_index,
-                        strategy_index,
-                        condition_index,
-                    )
-                    values, present, reorder_count = apply_impairment(
-                        ideal,
-                        condition,
-                        impairment_rng,
-                    )
-                    scores = compute_metric_scores(values, present, null_tables)
-                    _write_score_batch(
-                        writer,
-                        condition,
-                        strategy,
-                        produced,
-                        present,
-                        reorder_count,
-                        scores,
-                    )
-                    for mask, calibration in calibrated.items():
-                        combined = scores[:, _subset_indices(mask)].min(axis=1)
-                        random_compatible = combined >= calibration["threshold"]
-                        key = (mask, condition.name, strategy)
-                        if key not in counts:
-                            counts[key] = [0, 0]
-                        counts[key][0] += int(random_compatible.sum())
-                        counts[key][1] += size
-            produced += size
-            batch_index += 1
-    finally:
-        writer.close()
-    return counts
+    with atomic_output(score_path) as score_temporary:
+        writer = pq.ParquetWriter(score_temporary, SCORE_SCHEMA, compression="zstd")
+        try:
+            produced = 0
+            batch_index = 0
+            while produced < samples_per_strategy:
+                size = min(batch_size, samples_per_strategy - produced)
+                LOGGER.info(
+                    "Evaluating test batch %d (%d..%d per strategy)",
+                    batch_index + 1,
+                    produced,
+                    produced + size - 1,
+                )
+                generator_rng = _stable_rng(seed, 201, batch_index)
+                generated = generate_evaluation_sequences(size, generator_rng)
+                for strategy_index, strategy in enumerate(EVALUATION_GENERATORS):
+                    ideal = generated[strategy]
+                    for condition_index, condition in enumerate(CONDITIONS):
+                        impairment_rng = _stable_rng(
+                            seed,
+                            202,
+                            batch_index,
+                            strategy_index,
+                            condition_index,
+                        )
+                        values, present, reorder_count = apply_impairment(
+                            ideal,
+                            condition,
+                            impairment_rng,
+                        )
+                        scores = compute_metric_scores(values, present, null_tables)
+                        _write_score_batch(
+                            writer,
+                            condition,
+                            strategy,
+                            produced,
+                            present,
+                            reorder_count,
+                            scores,
+                        )
+                        for mask, calibration in calibrated.items():
+                            combined = scores[:, _subset_indices(mask)].min(axis=1)
+                            random_compatible = combined >= calibration["threshold"]
+                            key = (mask, condition.name, strategy)
+                            if key not in counts:
+                                counts[key] = [0, 0]
+                            counts[key][0] += int(random_compatible.sum())
+                            counts[key][1] += size
+                produced += size
+                batch_index += 1
+        finally:
+            writer.close()
+        return counts
 
 
 def _benchmark_metrics(
@@ -833,7 +843,7 @@ def _write_csv(rows: list[dict], path: Path) -> Path:
 
 def _write_json(value: dict, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    write_text(path, json.dumps(value, indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -873,7 +883,7 @@ def _plot_metric_heatmap(detail_rows: list[dict], output_path: Path) -> Path:
     colorbar.set_label("Worst-condition False-RANDOM [%]")
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    save_figure(fig, output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     return output_path
 
@@ -922,7 +932,7 @@ def _plot_subset_tradeoff(rows: list[dict], frontier: list[dict], output_path: P
     colorbar.set_label("True-RANDOM false rejection [%]")
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    save_figure(fig, output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     return output_path
 
@@ -987,12 +997,16 @@ def _write_recommendations(
             "",
         ]
     )
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    write_text(output_path, "\n".join(lines), encoding="utf-8")
     return output_path
 
 
 def _create_review_bundle(paths: list[Path], output_path: Path) -> Path:
-    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    publish_logs()
+    with (
+        atomic_output(output_path) as bundle_temporary,
+        zipfile.ZipFile(bundle_temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive,
+    ):
         for path in paths:
             archive.write(path, arcname=path.name)
     return output_path
@@ -1172,7 +1186,7 @@ def _configure_logging(log_path: Path) -> None:
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
-    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler = local_log_handler(log_path)
     file_handler.setFormatter(formatter)
     logging.basicConfig(level=logging.INFO, handlers=[stream, file_handler], force=True)
 
@@ -1205,6 +1219,7 @@ def main(
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR),  # noqa: B008
     figure_dir: Path = typer.Option(DEFAULT_FIGURE_DIR),  # noqa: B008
 ) -> None:
+    start_run()
     log_path = output_dir / "run.log"
     _configure_logging(log_path)
     outputs = evaluate_random_classifier_metrics(
@@ -1218,8 +1233,7 @@ def main(
         figure_dir=figure_dir,
     )
     # Add the completed log after all handlers have flushed the final message.
-    for handler in logging.getLogger().handlers:
-        handler.flush()
+    publish_logs()
     bundle_inputs = [
         path for name, path in outputs.items() if name not in {"metric_scores", "review_bundle"}
     ]

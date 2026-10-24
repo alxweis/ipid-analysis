@@ -193,3 +193,6 @@ cython_debug/
 
 # MaxMind databases are licensed external inputs, not repository artifacts.
 references/*.mmdb
+
+# Local POSIX scratch is never a repository artifact.
+/tmp/

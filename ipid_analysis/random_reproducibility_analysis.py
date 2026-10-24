@@ -15,20 +15,32 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
+import heapq
 import json
 import math
 from pathlib import Path
 
-import duckdb
 import matplotlib
+
+from ipid_analysis.artifacts import (
+    fingerprints,
+    provenance,
+    publish_file,
+    save_figure,
+    validate_ip_population,
+    write_csv,
+    write_table,
+    write_text,
+)
+from ipid_analysis.runtime import batch_budget, connect, start_run, temporary_path
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pyarrow as pa
-import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 import typer
+import yaml
 
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.deterministic_transition_analysis import (
@@ -44,9 +56,11 @@ from ipid_analysis.random_classifier_candidate import (
     production_candidate_null_tables,
 )
 from ipid_analysis.strategies import (
+    CLASSIFIER_VERSION,
     INPUT_NAME,
     MULTI_MAX_CLUSTERS,
     OUTPUT_NAME,
+    RANDOM_STRUCTURE_SCORE_VERSION,
     IPIDStrategy,
     MeasurementConfig,
     _cluster_counts_mass,
@@ -54,6 +68,7 @@ from ipid_analysis.strategies import (
     classify_batch_mass,
     load_config,
     random_structure_features,
+    validate_strategies,
 )
 
 app = typer.Typer(add_completion=False)
@@ -94,26 +109,21 @@ def _measurement_paths(
     return measurement, raw_path, snapshot_path, strategy_path
 
 
-def _load_classified_sequences(raw_path: Path, strategy_path: Path) -> list[tuple[str, str, str]]:
-    connection = duckdb.connect()
-    try:
-        rows = connection.execute(
+def _load_classified_sequences(raw_path: Path, strategy_path: Path):
+    with connect() as connection:
+        reader = connection.execute(
             """
-            SELECT
-                CAST(raw.IP_ADDR AS VARCHAR),
-                CAST(classified.IPID_SELECTION_STRATEGY AS VARCHAR),
-                CAST(raw.IPID_SEQUENCE AS VARCHAR)
+            SELECT CAST(raw.IP_ADDR AS VARCHAR) AS IP_ADDR,
+                   CAST(classified.IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY,
+                   CAST(raw.IPID_SEQUENCE AS VARCHAR) AS SEQUENCE
             FROM read_parquet($raw) AS raw
             INNER JOIN read_parquet($strategies) AS classified USING (IP_ADDR)
             WHERE CAST(classified.IPID_SELECTION_STRATEGY AS VARCHAR)
                   IN ('UNCLASSIFIED', 'RANDOM')
-            ORDER BY IP_ADDR
             """,
             {"raw": str(raw_path), "strategies": str(strategy_path)},
-        ).fetchall()
-    finally:
-        connection.close()
-    return [(str(ip), str(strategy), str(sequence)) for ip, strategy, sequence in rows]
+        ).to_arrow_reader(batch_budget(8192))
+        yield from reader
 
 
 def _stable_key(ip_addr: str, seed: int) -> bytes:
@@ -208,7 +218,7 @@ def _write_table(rows: list[dict[str, object]], path: Path) -> pa.Table:
         table = pa.Table.from_pylist(normalized)
     else:
         table = pa.table({"IP_ADDR": pa.array([], pa.string())})
-    pq.write_table(table, path)
+    write_table(table, path)
     return table
 
 
@@ -296,6 +306,47 @@ def _proportional_stratified_sample(
     return selected
 
 
+class _Candidate:
+    def __init__(self, key, row):
+        self.key, self.row = key, row
+
+    def __lt__(self, other):
+        return self.key > other.key  # worst candidate first
+
+
+def _keep_best(heap, row, key, maximum):
+    if maximum <= 0:
+        return
+    item = _Candidate(key, row)
+    if len(heap) < maximum:
+        heapq.heappush(heap, item)
+    elif key < heap[0].key:
+        heapq.heapreplace(heap, item)
+
+
+def _sample_quotas(population, maximum):
+    total = sum(population.values())
+    if total <= maximum:
+        return dict(population)
+    if not maximum:
+        return {component: 0 for component in population}
+    exact = {component: maximum * count / total for component, count in population.items()}
+    quotas = {component: math.floor(value) for component, value in exact.items()}
+    order = sorted(
+        population,
+        key=lambda component: (-(exact[component] - math.floor(exact[component])), component),
+    )
+    remaining = maximum - sum(quotas.values())
+    while remaining:
+        for component in order:
+            if quotas[component] < population[component]:
+                quotas[component] += 1
+                remaining -= 1
+                if not remaining:
+                    break
+    return quotas
+
+
 def prepare_random_reproducibility_paths(
     raw_path: Path,
     snapshot_path: Path,
@@ -320,57 +371,97 @@ def prepare_random_reproducibility_paths(
         raise ValueError("maximum_targets must be non-negative")
 
     cfg = load_config(snapshot_path)
+    validate_strategies(strategy_path, validate_ip_population(raw_path))
     tables = production_candidate_null_tables() if null_tables is None else null_tables
-    classified = _load_classified_sequences(raw_path, strategy_path)
-    all_rows: list[dict[str, object]] = []
-    for ip_addr, strategy, raw_sequence in classified:
-        sequence = parse_sequence(raw_sequence, cfg.sequence_length)
-        all_rows.append(
-            {
+    if control_count is not None and control_count < 0:
+        raise ValueError("control_count must be non-negative")
+    component_population = Counter()
+    random_population = 0
+    candidates = {component: [] for component in COMPONENTS}
+    random_near, random_hash = [], []
+    maximum_unclassified = maximum_targets // 2
+    for batch in _load_classified_sequences(raw_path, strategy_path):
+        raw_rows = batch.to_pylist()
+        values = np.asarray(
+            [parse_sequence(row["SEQUENCE"], cfg.sequence_length) for row in raw_rows]
+        )
+        components = candidate_random_score_components(values, values >= 0, tables, config=cfg)
+        for index, raw_row in enumerate(raw_rows):
+            ip_addr, strategy, raw_sequence = (
+                raw_row["IP_ADDR"],
+                raw_row["STRATEGY"],
+                raw_row["SEQUENCE"],
+            )
+            component_values = {
+                "RAW": float(components.raw_uniformity[index]),
+                "INCREMENT": float(components.increment_uniformity[index]),
+                "GAP": float(components.gap_uniformity[index]),
+            }
+            row = {
                 "IP_ADDR": ip_addr,
                 "COHORT": strategy,
                 "BASELINE_CLASS": strategy,
                 "BASELINE_MEASUREMENT_ID": measurement_id,
                 "BASELINE_SEQUENCE": raw_sequence,
-                **_diagnostics(sequence, cfg, tables),
+                "RANDOM_SCORE": float(components.score[index]),
+                "LIMITING_COMPONENT": min(component_values, key=component_values.get),
             }
-        )
-
-    unclassified_population = [row for row in all_rows if row["COHORT"] == "UNCLASSIFIED"]
-    random_rows = [row for row in all_rows if row["COHORT"] == "RANDOM"]
-    maximum_unclassified = maximum_targets // 2
-    unclassified = _proportional_stratified_sample(
-        unclassified_population,
-        maximum_unclassified,
-        seed,
-    )
+            if strategy == "UNCLASSIFIED":
+                component = row["LIMITING_COMPONENT"]
+                component_population[component] += 1
+                _keep_best(
+                    candidates[component],
+                    row,
+                    (_stable_key(ip_addr, seed), ip_addr),
+                    maximum_unclassified,
+                )
+            else:
+                random_population += 1
+                _keep_best(random_near, row, (row["RANDOM_SCORE"], ip_addr), maximum_targets)
+                _keep_best(
+                    random_hash, row, (_stable_key(ip_addr, seed), ip_addr), maximum_targets
+                )
+    quotas = _sample_quotas(component_population, maximum_unclassified)
+    unclassified = []
+    for component, heap in candidates.items():
+        chosen = [
+            item.row
+            for item in sorted(heap, key=lambda item: item.key)[: quotas.get(component, 0)]
+        ]
+        for row in chosen:
+            probability = len(chosen) / component_population[component]
+            row.update(
+                SELECTION_PROBABILITY=probability,
+                SELECTION_WEIGHT=1.0 / probability,
+                CONTROL_STRATUM="",
+            )
+        unclassified.extend(chosen)
     wanted = len(unclassified) if control_count is None else control_count
-    if wanted < 0:
-        raise ValueError("control_count must be non-negative")
-    wanted = min(wanted, len(random_rows), maximum_targets - len(unclassified))
+    wanted = min(wanted, random_population, maximum_targets - len(unclassified))
     near_count = (wanted + 1) // 2
-    near = sorted(random_rows, key=lambda row: (row["RANDOM_SCORE"], row["IP_ADDR"]))[:near_count]
-    near_ips = {str(row["IP_ADDR"]) for row in near}
-    far_candidates = [row for row in random_rows if str(row["IP_ADDR"]) not in near_ips]
-    far = sorted(far_candidates, key=lambda row: _stable_key(str(row["IP_ADDR"]), seed))[
-        : wanted - near_count
-    ]
-    for row in near:
-        row["CONTROL_STRATUM"] = "NEAR_THRESHOLD"
-        row["SELECTION_PROBABILITY"] = None
-        row["SELECTION_WEIGHT"] = None
-    for row in far:
-        row["CONTROL_STRATUM"] = "RANDOM_SAMPLE"
-        row["SELECTION_PROBABILITY"] = None
-        row["SELECTION_WEIGHT"] = None
-    for row in unclassified:
-        row["CONTROL_STRATUM"] = ""
-    selected = sorted(unclassified + near + far, key=lambda row: str(row["IP_ADDR"]))
+    # The two candidate lists share row dictionaries: copy before adding strata.
+    near = [dict(item.row) for item in sorted(random_near, key=lambda item: item.key)[:near_count]]
+    near_ips = {row["IP_ADDR"] for row in near}
+    far = [
+        dict(item.row)
+        for item in sorted(random_hash, key=lambda item: item.key)
+        if item.row["IP_ADDR"] not in near_ips
+    ][: wanted - near_count]
+    for stratum, rows in (("NEAR_THRESHOLD", near), ("RANDOM_SAMPLE", far)):
+        for row in rows:
+            row.update(CONTROL_STRATUM=stratum, SELECTION_PROBABILITY=None, SELECTION_WEIGHT=None)
+    selected = sorted(unclassified + near + far, key=lambda row: row["IP_ADDR"])
+    for row in selected:
+        row.update(
+            _diagnostics(
+                parse_sequence(row["BASELINE_SEQUENCE"], cfg.sequence_length), cfg, tables
+            )
+        )
 
     table = _write_table(selected, cohort_path)
     if csv_path is not None:
         csv_path.parent.mkdir(parents=True, exist_ok=True)
-        pacsv.write_csv(table, csv_path)
+        write_csv(table, csv_path)
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_table = pa.table(
@@ -379,22 +470,27 @@ def prepare_random_reproducibility_paths(
             "REPLY_TYPE": pa.array([""] * len(selected), pa.string()),
         }
     )
-    pq.write_table(target_table, target_path)
+    write_table(target_table, target_path)
 
-    component_population = Counter(
-        str(row["LIMITING_COMPONENT"]) for row in unclassified_population
-    )
     component_sample = Counter(str(row["LIMITING_COMPONENT"]) for row in unclassified)
     metadata = {
+        **provenance(),
+        "sources": fingerprints([raw_path, snapshot_path, strategy_path]),
+        "classifier_version": CLASSIFIER_VERSION,
+        "score_version": RANDOM_STRUCTURE_SCORE_VERSION,
+        "null_models": {
+            "increment": {"samples": tables.increment.sample_count, "seed": tables.increment.seed},
+            "gap": {"samples": tables.gap.sample_count, "seed": tables.gap.seed},
+        },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "target": target,
         "measurement_id": measurement_id,
         "threshold": CANDIDATE_RANDOM_MIN_SCORE,
         "selection": {
             "maximum_targets": maximum_targets,
-            "unclassified_population": len(unclassified_population),
+            "unclassified_population": sum(component_population.values()),
             "unclassified_selected": len(unclassified),
-            "random_population": len(random_rows),
+            "random_population": random_population,
             "random_controls": len(near) + len(far),
             "near_threshold_controls": len(near),
             "random_sample_controls": len(far),
@@ -424,9 +520,10 @@ def prepare_random_reproducibility_paths(
 
 def _write_json_atomic(path: Path, value: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".part")
+    temporary = temporary_path(path)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
+    publish_file(temporary, path)
+    temporary.unlink(missing_ok=True)
 
 
 def prepare_random_reproducibility(
@@ -482,23 +579,31 @@ def prepare_random_reproducibility(
     return outputs
 
 
+def _snapshot_semantics(path: Path) -> dict:
+    data = yaml.safe_load(path.read_text())
+    return {
+        key: data.get(key)
+        for key in ("protocol", "fixed_interval", "rt_based", "tcp", "interprotocol")
+    }
+
+
 def _read_repeat_sequences(raw_path: Path, cohort_ips: list[str]) -> dict[str, str]:
     if not raw_path.is_file():
         raise FileNotFoundError(raw_path)
-    connection = duckdb.connect()
-    try:
-        rows = connection.execute(
-            """
-            SELECT CAST(IP_ADDR AS VARCHAR), CAST(IPID_SEQUENCE AS VARCHAR)
-            FROM read_parquet($raw)
-            WHERE CAST(IP_ADDR AS VARCHAR) IN (SELECT unnest($ips))
-            ORDER BY IP_ADDR
-            """,
-            {"raw": str(raw_path), "ips": cohort_ips},
-        ).fetchall()
-    finally:
-        connection.close()
-    return {str(ip): str(sequence) for ip, sequence in rows}
+    with connect() as connection:
+        try:
+            rows = connection.execute(
+                """
+                SELECT CAST(IP_ADDR AS VARCHAR), CAST(IPID_SEQUENCE AS VARCHAR)
+                FROM read_parquet($raw)
+                WHERE CAST(IP_ADDR AS VARCHAR) IN (SELECT unnest($ips))
+                ORDER BY IP_ADDR
+                """,
+                {"raw": str(raw_path), "ips": cohort_ips},
+            ).fetchall()
+        finally:
+            connection.close()
+        return {str(ip): str(sequence) for ip, sequence in rows}
 
 
 def _summary_rows(long_rows: list[dict[str, object]], cohort: pa.Table) -> list[dict[str, object]]:
@@ -625,7 +730,7 @@ def _render_summary(
     axes[1].legend(fontsize=8)
     axes[2].legend(fontsize=8)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output_path)
+    save_figure(figure, output_path)
     plt.close(figure)
 
 
@@ -644,7 +749,7 @@ def evaluate_random_reproducibility(
     """Classify repeated raw Mass runs and report per-address stability."""
     if not repeat_ids:
         raise ValueError("at least one repeat measurement id is required")
-    measurement, _, baseline_snapshot, _ = _measurement_paths(
+    measurement, baseline_raw, baseline_snapshot, _ = _measurement_paths(
         manifest_path,
         target,
         raw_root=raw_root,
@@ -680,6 +785,8 @@ def evaluate_random_reproducibility(
         if (
             cfg.connection_count != baseline_cfg.connection_count
             or cfg.requests_per_connection != baseline_cfg.requests_per_connection
+            or not np.array_equal(cfg.request_ip_ids, baseline_cfg.request_ip_ids)
+            or _snapshot_semantics(snapshot_path) != _snapshot_semantics(baseline_snapshot)
         ):
             raise ValueError(
                 f"{repeat_id}: shape {cfg.connection_count}x{cfg.requests_per_connection} "
@@ -732,12 +839,27 @@ def evaluate_random_reproducibility(
     long_table = _write_table(long_rows, long_path)
     summary_table = _write_table(summary_rows, summary_path)
     figure_dir.mkdir(parents=True, exist_ok=True)
-    pacsv.write_csv(long_table, long_csv)
-    pacsv.write_csv(summary_table, summary_csv)
+    write_csv(long_table, long_csv)
+    write_csv(summary_table, summary_csv)
     _render_summary(long_rows, summary_rows, pdf_path)
 
     observed = [row for row in long_rows if row["OBSERVED"]]
     metadata = {
+        **provenance(),
+        "sources": fingerprints(
+            [baseline_raw, baseline_snapshot, cohort_path]
+            + [
+                raw_root / "ipid" / mid / filename
+                for mid in repeat_ids
+                for filename in (INPUT_NAME, "ipid.snapshot.yaml")
+            ]
+        ),
+        "classifier_version": CLASSIFIER_VERSION,
+        "score_version": RANDOM_STRUCTURE_SCORE_VERSION,
+        "null_models": {
+            "increment": {"samples": tables.increment.sample_count, "seed": tables.increment.seed},
+            "gap": {"samples": tables.gap.sample_count, "seed": tables.gap.seed},
+        },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "manifest": str(manifest_path),
         "target": target,
@@ -751,7 +873,7 @@ def evaluate_random_reproducibility(
             for component in COMPONENTS
         },
         "methodology": {
-            "classification": "production v7 classifier applied directly to repeated raw rows",
+            "classification": f"production v{CLASSIFIER_VERSION} classifier applied directly to repeated raw rows",
             "component_stability": "all below-threshold components are retained; limiting component is additional metadata",
             "near_match": "distance to every exact deterministic rule is reported as violation count and rate",
             "missing_targets": "cohort addresses absent from a repeated ipid.pq are NO_MEASUREMENT and excluded from p-value fractions",
@@ -765,7 +887,7 @@ def evaluate_random_reproducibility(
             "figure": str(pdf_path),
         },
     }
-    json_path.write_text(json.dumps(metadata, indent=2) + "\n")
+    write_text(json_path, json.dumps(metadata, indent=2) + "\n")
     return {
         "repetitions": long_path,
         "summary": summary_path,
@@ -793,6 +915,7 @@ def prepare_command(
     seed: int = typer.Option(42, help="deterministic control-sampling seed"),
 ) -> None:
     """Create the frozen cohort, offline diagnostics, and measurement targets."""
+    start_run()
     artifacts = prepare_random_reproducibility(
         manifest,
         target=target,
@@ -812,6 +935,7 @@ def evaluate_command(
     cohort: Path | None = COHORT_OPTION,
 ) -> None:
     """Evaluate repeated raw measurements without overwriting classifications."""
+    start_run()
     artifacts = evaluate_random_reproducibility(
         manifest,
         repeat_id,

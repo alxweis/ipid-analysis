@@ -11,6 +11,10 @@ from pathlib import Path
 import duckdb
 import matplotlib
 
+from ipid_analysis.artifacts import publish_file, save_figure, write_text
+from ipid_analysis.network_role_utils import record_cache_inputs
+from ipid_analysis.runtime import connect, temporary_path
+
 matplotlib.use("Agg")
 
 from matplotlib.patches import Patch
@@ -83,10 +87,11 @@ def _source_metadata(source: IpidMeasurement | StrategyMerge) -> dict:
 
 def _write_query(con: duckdb.DuckDBPyConnection, query: str, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    partial = output.with_suffix(output.suffix + ".part")
+    partial = temporary_path(output)
     partial.unlink(missing_ok=True)
     con.execute(f"COPY ({query}) TO '{_sql_path(partial)}' (FORMAT PARQUET, COMPRESSION ZSTD)")
-    partial.replace(output)
+    publish_file(partial, output)
+    partial.unlink(missing_ok=True)
 
 
 def _artifact_paths(
@@ -208,7 +213,8 @@ def _plot_roles(
     )
     fig.subplots_adjust(left=0.20, right=0.995, bottom=0.24, top=0.68)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output,
         bbox_inches="tight",
         pad_inches=0.02,
@@ -300,7 +306,8 @@ def _plot_combinations(rows: list[tuple[str, int, float]], output: Path) -> None
         ax.set_axis_off()
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.subplots_adjust(left=0.25, right=0.995, bottom=0.24, top=0.98)
-    fig.savefig(
+    save_figure(
+        fig,
         output,
         bbox_inches="tight",
         pad_inches=0.02,
@@ -340,242 +347,245 @@ def render_itdk_analysis(
     ):
         log_cache_reuse(source.target, outputs.role_json)
         return outputs
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    strategy_path = _sql_path(strategies)
-    interface_path = _sql_path(dataset.interfaces_path)
-    joined_path = _sql_path(outputs.joined)
-    node_path = _sql_path(outputs.node_consistency)
-    try:
-        _write_query(
-            con,
-            f"""
-            SELECT
-                s.IP_ADDR,
-                CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR) AS IPID_SELECTION_STRATEGY,
-                i.NODE_ID,
-                i.T,
-                i.D,
-                TRUE AS ITDK_MATCH,
-                CASE
-                    WHEN i.T THEN '{TRANSIT_ROLE}'
-                    ELSE '{NO_TRANSIT_ROLE}'
-                END AS OBSERVED_ROLE
-            FROM read_parquet('{strategy_path}') AS s
-            INNER JOIN read_parquet('{interface_path}') AS i USING (IP_ADDR)
-            """,
-            outputs.joined,
-        )
-        _write_query(
-            con,
-            f"""
-            SELECT
-                OBSERVED_ROLE,
-                IPID_SELECTION_STRATEGY,
-                count(*)::BIGINT AS COUNT,
-                100.0 * count(*) / sum(count(*)) OVER (PARTITION BY OBSERVED_ROLE)
-                    AS PERCENTAGE
-            FROM read_parquet('{joined_path}')
-            GROUP BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
-            ORDER BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
-            """,
-            outputs.distribution,
-        )
-        role_rows = con.execute(
-            f"""
-            SELECT OBSERVED_ROLE, IPID_SELECTION_STRATEGY, COUNT
-            FROM read_parquet('{_sql_path(outputs.distribution)}')
-            """
-        ).fetchall()
-        match_counts = con.execute(
-            f"""
-            SELECT
-                count(*)::BIGINT AS matched,
-                count(*) FILTER (WHERE T AND D)::BIGINT AS t1_d1,
-                count(*) FILTER (WHERE T AND NOT D)::BIGINT AS t1_d0,
-                count(*) FILTER (WHERE NOT T AND D)::BIGINT AS t0_d1,
-                count(*) FILTER (WHERE NOT T AND NOT D)::BIGINT AS t0_d0
-            FROM read_parquet('{joined_path}')
-            """
-        ).fetchone()
-        total = int(
-            con.execute(
-                f"SELECT count(*)::BIGINT FROM read_parquet('{strategy_path}')"
-            ).fetchone()[0]
-        )
-        matched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, match_counts)
-        coverage = (total, matched, total - matched, t1_d1, t1_d0, t0_d1, t0_d0)
-        if not matched:
-            raise ValueError(f"{source.target}: no measured IP address matched CAIDA ITDK")
-
-        _write_query(
-            con,
-            f"""
-            WITH classified AS (
-                SELECT NODE_ID, IP_ADDR, IPID_SELECTION_STRATEGY, T
+    with connect(config={"threads": threads} if threads else {}) as con:
+        strategy_path = _sql_path(strategies)
+        interface_path = _sql_path(dataset.interfaces_path)
+        joined_path = _sql_path(outputs.joined)
+        node_path = _sql_path(outputs.node_consistency)
+        try:
+            _write_query(
+                con,
+                f"""
+                SELECT
+                    s.IP_ADDR,
+                    CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR) AS IPID_SELECTION_STRATEGY,
+                    i.NODE_ID,
+                    i.T,
+                    i.D,
+                    TRUE AS ITDK_MATCH,
+                    CASE
+                        WHEN i.T THEN '{TRANSIT_ROLE}'
+                        ELSE '{NO_TRANSIT_ROLE}'
+                    END AS OBSERVED_ROLE
+                FROM read_parquet('{strategy_path}') AS s
+                INNER JOIN read_parquet('{interface_path}') AS i USING (IP_ADDR)
+                """,
+                outputs.joined,
+            )
+            _write_query(
+                con,
+                f"""
+                SELECT
+                    OBSERVED_ROLE,
+                    IPID_SELECTION_STRATEGY,
+                    count(*)::BIGINT AS COUNT,
+                    100.0 * count(*) / sum(count(*)) OVER (PARTITION BY OBSERVED_ROLE)
+                        AS PERCENTAGE
                 FROM read_parquet('{joined_path}')
-                WHERE NODE_ID IS NOT NULL
-                  AND IPID_SELECTION_STRATEGY NOT IN ('UNCLASSIFIED', 'NOT_ENOUGH_SAMPLES')
-            ), strategy_counts AS (
+                GROUP BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
+                ORDER BY OBSERVED_ROLE, IPID_SELECTION_STRATEGY
+                """,
+                outputs.distribution,
+            )
+            role_rows = con.execute(
+                f"""
+                SELECT OBSERVED_ROLE, IPID_SELECTION_STRATEGY, COUNT
+                FROM read_parquet('{_sql_path(outputs.distribution)}')
+                """
+            ).fetchall()
+            match_counts = con.execute(
+                f"""
+                SELECT
+                    count(*)::BIGINT AS matched,
+                    count(*) FILTER (WHERE T AND D)::BIGINT AS t1_d1,
+                    count(*) FILTER (WHERE T AND NOT D)::BIGINT AS t1_d0,
+                    count(*) FILTER (WHERE NOT T AND D)::BIGINT AS t0_d1,
+                    count(*) FILTER (WHERE NOT T AND NOT D)::BIGINT AS t0_d0
+                FROM read_parquet('{joined_path}')
+                """
+            ).fetchone()
+            total = int(
+                con.execute(
+                    f"SELECT count(*)::BIGINT FROM read_parquet('{strategy_path}')"
+                ).fetchone()[0]
+            )
+            matched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, match_counts)
+            coverage = (total, matched, total - matched, t1_d1, t1_d0, t0_d1, t0_d0)
+            if not matched:
+                raise ValueError(f"{source.target}: no measured IP address matched CAIDA ITDK")
+
+            _write_query(
+                con,
+                f"""
+                WITH classified AS (
+                    SELECT NODE_ID, IP_ADDR, IPID_SELECTION_STRATEGY, T
+                    FROM read_parquet('{joined_path}')
+                    WHERE NODE_ID IS NOT NULL
+                      AND IPID_SELECTION_STRATEGY NOT IN ('UNCLASSIFIED', 'NOT_ENOUGH_SAMPLES')
+                ), strategy_counts AS (
+                    SELECT
+                        NODE_ID,
+                        IPID_SELECTION_STRATEGY,
+                        count(DISTINCT IP_ADDR)::BIGINT AS INTERFACES,
+                        bool_or(T) AS STRATEGY_HAS_TRANSIT
+                    FROM classified
+                    GROUP BY NODE_ID, IPID_SELECTION_STRATEGY
+                )
                 SELECT
                     NODE_ID,
-                    IPID_SELECTION_STRATEGY,
-                    count(DISTINCT IP_ADDR)::BIGINT AS INTERFACES,
-                    bool_or(T) AS STRATEGY_HAS_TRANSIT
-                FROM classified
-                GROUP BY NODE_ID, IPID_SELECTION_STRATEGY
-            )
-            SELECT
-                NODE_ID,
-                sum(INTERFACES)::BIGINT AS CLASSIFIED_INTERFACES,
-                count(*)::BIGINT AS STRATEGY_COUNT,
-                bool_or(STRATEGY_HAS_TRANSIT) AS HAS_TRANSIT_EVIDENCE,
-                array_to_string(
-                    list_sort(list(IPID_SELECTION_STRATEGY)), ' + '
-                ) AS STRATEGY_SET,
-                sum(INTERFACES * (INTERFACES - 1) / 2)::DOUBLE
-                    / (sum(INTERFACES) * (sum(INTERFACES) - 1) / 2)
-                    AS PAIRWISE_AGREEMENT
-            FROM strategy_counts
-            GROUP BY NODE_ID
-            HAVING sum(INTERFACES) >= 2
-            ORDER BY NODE_ID
-            """,
-            outputs.node_consistency,
-        )
-        _write_query(
-            con,
-            f"""
-            WITH discordant AS (
-                SELECT STRATEGY_SET
-                FROM read_parquet('{node_path}')
-                WHERE STRATEGY_COUNT > 1
-            ), combinations AS (
-                SELECT STRATEGY_SET, count(*)::BIGINT AS NODES
-                FROM discordant
-                GROUP BY STRATEGY_SET
-            )
-            SELECT
-                STRATEGY_SET,
-                NODES,
-                100.0 * NODES / sum(NODES) OVER () AS PERCENTAGE
-            FROM combinations
-            ORDER BY NODES DESC, STRATEGY_SET
-            """,
-            outputs.combinations,
-        )
-
-        node_counts = con.execute(
-            f"""
-            SELECT
-                count(*)::BIGINT AS eligible,
-                count(*) FILTER (WHERE STRATEGY_COUNT = 1)::BIGINT AS strict,
-                avg(PAIRWISE_AGREEMENT)::DOUBLE AS mean_pairwise,
-                count(*) FILTER (WHERE HAS_TRANSIT_EVIDENCE)::BIGINT AS transit_eligible,
-                count(*) FILTER (
-                    WHERE HAS_TRANSIT_EVIDENCE AND STRATEGY_COUNT = 1
-                )::BIGINT AS transit_strict
-            FROM read_parquet('{node_path}')
-            """
-        ).fetchone()
-        matched_multi_nodes = con.execute(
-            f"""
-            SELECT count(*)::BIGINT
-            FROM (
-                SELECT NODE_ID
-                FROM read_parquet('{joined_path}')
-                WHERE NODE_ID IS NOT NULL
+                    sum(INTERFACES)::BIGINT AS CLASSIFIED_INTERFACES,
+                    count(*)::BIGINT AS STRATEGY_COUNT,
+                    bool_or(STRATEGY_HAS_TRANSIT) AS HAS_TRANSIT_EVIDENCE,
+                    array_to_string(
+                        list_sort(list(IPID_SELECTION_STRATEGY)), ' + '
+                    ) AS STRATEGY_SET,
+                    sum(INTERFACES * (INTERFACES - 1) / 2)::DOUBLE
+                        / (sum(INTERFACES) * (sum(INTERFACES) - 1) / 2)
+                        AS PAIRWISE_AGREEMENT
+                FROM strategy_counts
                 GROUP BY NODE_ID
-                HAVING count(DISTINCT IP_ADDR) >= 2
+                HAVING sum(INTERFACES) >= 2
+                ORDER BY NODE_ID
+                """,
+                outputs.node_consistency,
             )
-            """
-        ).fetchone()[0]
-        combination_rows = con.execute(
-            f"""
-            SELECT STRATEGY_SET, NODES, PERCENTAGE
-            FROM read_parquet('{_sql_path(outputs.combinations)}')
-            ORDER BY NODES DESC, STRATEGY_SET
-            """
-        ).fetchall()
-    finally:
-        con.close()
+            _write_query(
+                con,
+                f"""
+                WITH discordant AS (
+                    SELECT STRATEGY_SET
+                    FROM read_parquet('{node_path}')
+                    WHERE STRATEGY_COUNT > 1
+                ), combinations AS (
+                    SELECT STRATEGY_SET, count(*)::BIGINT AS NODES
+                    FROM discordant
+                    GROUP BY STRATEGY_SET
+                )
+                SELECT
+                    STRATEGY_SET,
+                    NODES,
+                    100.0 * NODES / sum(NODES) OVER () AS PERCENTAGE
+                FROM combinations
+                ORDER BY NODES DESC, STRATEGY_SET
+                """,
+                outputs.combinations,
+            )
 
-    percentages = _role_plot_data(role_rows)
-    role_totals = {
-        role: sum(int(count) for row_role, _, count in role_rows if row_role == role)
-        for role in ROLE_ORDER
-    }
-    _plot_roles(percentages, role_totals, outputs.role_pdf)
-    _plot_combinations(combination_rows, outputs.combinations_pdf)
+            node_counts = con.execute(
+                f"""
+                SELECT
+                    count(*)::BIGINT AS eligible,
+                    count(*) FILTER (WHERE STRATEGY_COUNT = 1)::BIGINT AS strict,
+                    avg(PAIRWISE_AGREEMENT)::DOUBLE AS mean_pairwise,
+                    count(*) FILTER (WHERE HAS_TRANSIT_EVIDENCE)::BIGINT AS transit_eligible,
+                    count(*) FILTER (
+                        WHERE HAS_TRANSIT_EVIDENCE AND STRATEGY_COUNT = 1
+                    )::BIGINT AS transit_strict
+                FROM read_parquet('{node_path}')
+                """
+            ).fetchone()
+            matched_multi_nodes = con.execute(
+                f"""
+                SELECT count(*)::BIGINT
+                FROM (
+                    SELECT NODE_ID
+                    FROM read_parquet('{joined_path}')
+                    WHERE NODE_ID IS NOT NULL
+                    GROUP BY NODE_ID
+                    HAVING count(DISTINCT IP_ADDR) >= 2
+                )
+                """
+            ).fetchone()[0]
+            combination_rows = con.execute(
+                f"""
+                SELECT STRATEGY_SET, NODES, PERCENTAGE
+                FROM read_parquet('{_sql_path(outputs.combinations)}')
+                ORDER BY NODES DESC, STRATEGY_SET
+                """
+            ).fetchall()
+        finally:
+            con.close()
 
-    total, matched, unmatched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, coverage)
-    role_report = {
-        **_source_metadata(source),
-        "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "itdk": {
-            "release": dataset.release,
-            "topology": dataset.topology,
-            "interfaces": str(dataset.interfaces_path),
-            "metadata": str(dataset.metadata_path),
-        },
-        "role_definition": {
-            TRANSIT_ROLE: "ITDK match with T=true; D arbitrary",
-            NO_TRANSIT_ROLE: "ITDK match with T=false; D arbitrary",
-        },
-        "coverage": {
-            "total": total,
-            "matched": matched,
-            "unmatched": unmatched,
-            "match_percentage": 100.0 * matched / total if total else 0.0,
-            "t1_d1": t1_d1,
-            "t1_d0": t1_d0,
-            "t0_d1": t0_d1,
-            "t0_d0": t0_d0,
-        },
-        "plot_percentages": percentages,
-        "plot_role_totals": role_totals,
-        "artifact_semantics": {
-            "joined": "matched-only measured addresses; unmatched addresses are not materialized",
-        },
-        "raw_distribution": [
-            {"role": role, "strategy": strategy, "count": int(count)}
-            for role, strategy, count in role_rows
-        ],
-    }
-    outputs.role_json.parent.mkdir(parents=True, exist_ok=True)
-    outputs.role_json.write_text(json.dumps(role_report, indent=2) + "\n", encoding="utf-8")
+        percentages = _role_plot_data(role_rows)
+        role_totals = {
+            role: sum(int(count) for row_role, _, count in role_rows if row_role == role)
+            for role in ROLE_ORDER
+        }
+        _plot_roles(percentages, role_totals, outputs.role_pdf)
+        _plot_combinations(combination_rows, outputs.combinations_pdf)
 
-    eligible, strict, mean_pairwise, transit_eligible, transit_strict = node_counts
-    eligible = int(eligible or 0)
-    strict = int(strict or 0)
-    transit_eligible = int(transit_eligible or 0)
-    transit_strict = int(transit_strict or 0)
-    consistency_report = {
-        **_source_metadata(source),
-        "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "itdk_release": dataset.release,
-        "itdk_topology": dataset.topology,
-        "matched_multi_interface_nodes": int(matched_multi_nodes),
-        "eligible_nodes_with_two_classified_interfaces": eligible,
-        "excluded_for_classification_coverage": max(int(matched_multi_nodes) - eligible, 0),
-        "strict_agreement_nodes": strict,
-        "strict_agreement_percentage": 100.0 * strict / eligible if eligible else 0.0,
-        "mean_node_pairwise_agreement": (
-            float(mean_pairwise)
-            if mean_pairwise is not None and math.isfinite(mean_pairwise)
-            else 0.0
-        ),
-        "transit_evidenced_eligible_nodes": transit_eligible,
-        "transit_evidenced_strict_nodes": transit_strict,
-        "transit_evidenced_strict_percentage": (
-            100.0 * transit_strict / transit_eligible if transit_eligible else 0.0
-        ),
-        "discordant_nodes": eligible - strict,
-        "outputs": {key: str(value) for key, value in asdict(outputs).items()},
-    }
-    outputs.consistency_json.parent.mkdir(parents=True, exist_ok=True)
-    outputs.consistency_json.write_text(
-        json.dumps(consistency_report, indent=2) + "\n", encoding="utf-8"
-    )
-    return outputs
+        total, matched, unmatched, t1_d1, t1_d0, t0_d1, t0_d0 = map(int, coverage)
+        role_report = {
+            **_source_metadata(source),
+            "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "itdk": {
+                "release": dataset.release,
+                "topology": dataset.topology,
+                "interfaces": str(dataset.interfaces_path),
+                "metadata": str(dataset.metadata_path),
+            },
+            "role_definition": {
+                TRANSIT_ROLE: "ITDK match with T=true; D arbitrary",
+                NO_TRANSIT_ROLE: "ITDK match with T=false; D arbitrary",
+            },
+            "coverage": {
+                "total": total,
+                "matched": matched,
+                "unmatched": unmatched,
+                "match_percentage": 100.0 * matched / total if total else 0.0,
+                "t1_d1": t1_d1,
+                "t1_d0": t1_d0,
+                "t0_d1": t0_d1,
+                "t0_d0": t0_d0,
+            },
+            "plot_percentages": percentages,
+            "plot_role_totals": role_totals,
+            "artifact_semantics": {
+                "joined": "matched-only measured addresses; unmatched addresses are not materialized",
+            },
+            "raw_distribution": [
+                {"role": role, "strategy": strategy, "count": int(count)}
+                for role, strategy, count in role_rows
+            ],
+        }
+        outputs.role_json.parent.mkdir(parents=True, exist_ok=True)
+        write_text(outputs.role_json, json.dumps(role_report, indent=2) + "\n", encoding="utf-8")
+
+        eligible, strict, mean_pairwise, transit_eligible, transit_strict = node_counts
+        eligible = int(eligible or 0)
+        strict = int(strict or 0)
+        transit_eligible = int(transit_eligible or 0)
+        transit_strict = int(transit_strict or 0)
+        consistency_report = {
+            **_source_metadata(source),
+            "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "itdk_release": dataset.release,
+            "itdk_topology": dataset.topology,
+            "matched_multi_interface_nodes": int(matched_multi_nodes),
+            "eligible_nodes_with_two_classified_interfaces": eligible,
+            "excluded_for_classification_coverage": max(int(matched_multi_nodes) - eligible, 0),
+            "strict_agreement_nodes": strict,
+            "strict_agreement_percentage": 100.0 * strict / eligible if eligible else 0.0,
+            "mean_node_pairwise_agreement": (
+                float(mean_pairwise)
+                if mean_pairwise is not None and math.isfinite(mean_pairwise)
+                else 0.0
+            ),
+            "transit_evidenced_eligible_nodes": transit_eligible,
+            "transit_evidenced_strict_nodes": transit_strict,
+            "transit_evidenced_strict_percentage": (
+                100.0 * transit_strict / transit_eligible if transit_eligible else 0.0
+            ),
+            "discordant_nodes": eligible - strict,
+            "outputs": {key: str(value) for key, value in asdict(outputs).items()},
+        }
+        outputs.consistency_json.parent.mkdir(parents=True, exist_ok=True)
+        write_text(
+            outputs.consistency_json,
+            json.dumps(consistency_report, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        record_cache_inputs(outputs.role_json, (strategies, dataset.interfaces_path))
+        return outputs

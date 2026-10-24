@@ -18,13 +18,13 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
-import duckdb
 from loguru import logger
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import cache_current, publish_file, write_text
 from ipid_analysis.config import PROCESSED_DATA_DIR
 from ipid_analysis.manifest import (
     CONNECTION_ABBREVIATIONS,
@@ -34,6 +34,7 @@ from ipid_analysis.manifest import (
     load_manifest,
     resolve,
 )
+from ipid_analysis.runtime import connect, start_run, temporary_path
 from ipid_analysis.strategies import (
     DEFAULT_MANIFEST,
     OUTPUT_SCHEMA,
@@ -157,7 +158,10 @@ def merge_paths(
             raise FileNotFoundError(path)
 
     metadata_path = output_path.with_suffix(".meta.json")
-    if output_path.is_file() and metadata_path.is_file():
+    if (
+        cache_current(output_path, [base_path, mass_path], {"merge_version": MERGE_CACHE_VERSION})
+        and metadata_path.is_file()
+    ):
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
@@ -170,77 +174,84 @@ def merge_paths(
             metadata.get("cache_version") == MERGE_CACHE_VERSION
             and metadata.get("sources") == current_sources
         ):
-            con = duckdb.connect()
-            try:
-                rows, not_enough = con.execute(
-                    """
-                    SELECT count(*)::BIGINT,
-                           count(*) FILTER (
-                               WHERE CAST(IPID_SELECTION_STRATEGY AS VARCHAR)
-                                   = 'NOT_ENOUGH_SAMPLES'
-                           )::BIGINT
-                    FROM read_parquet($output)
-                    """,
-                    {"output": str(output_path)},
-                ).fetchone()
-            finally:
-                con.close()
-            logger.info(f"reusing current merged strategies -> {output_path}")
-            return MergeStats(int(rows), int(not_enough))
+            with connect() as con:
+                try:
+                    rows, not_enough = con.execute(
+                        """
+                        SELECT count(*)::BIGINT,
+                               count(*) FILTER (
+                                   WHERE CAST(IPID_SELECTION_STRATEGY AS VARCHAR)
+                                       = 'NOT_ENOUGH_SAMPLES'
+                               )::BIGINT
+                        FROM read_parquet($output)
+                        """,
+                        {"output": str(output_path)},
+                    ).fetchone()
+                finally:
+                    con.close()
+                logger.info(f"reusing current merged strategies -> {output_path}")
+                return MergeStats(int(rows), int(not_enough))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
 
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    reader = con.execute(
-        MERGE_SQL,
-        {"base": str(base_path), "mass": str(mass_path)},
-    ).to_arrow_reader(batch_size)
-    writer = pq.ParquetWriter(temporary, OUTPUT_SCHEMA, compression=compression)
-    rows = 0
-    not_enough = 0
-    try:
-        for batch in reader:
-            names = batch.column("strategy").cast(pa.string())
-            codes = pc.index_in(names, value_set=STRATEGY_DICT)
-            if pc.any(pc.is_null(codes)).as_py():
-                invalid = pc.unique(pc.filter(names, pc.is_null(codes))).to_pylist()
-                raise ValueError(f"unknown IPID strategies in merge input: {invalid}")
-            strategy = pa.DictionaryArray.from_arrays(codes.cast(pa.int8()), STRATEGY_DICT)
-            ip_addr = batch.column("IP_ADDR").cast(pa.string())
-            writer.write_batch(pa.record_batch([ip_addr, strategy], schema=OUTPUT_SCHEMA))
-            rows += batch.num_rows
-            not_enough += int(pc.sum(pc.equal(names, "NOT_ENOUGH_SAMPLES")).as_py() or 0)
-    except Exception:
-        writer.close()
-        temporary.unlink(missing_ok=True)
-        raise
-    else:
-        writer.close()
-        temporary.replace(output_path)
-    finally:
-        con.close()
+    with connect(config={"threads": threads} if threads else {}) as con:
+        reader = con.execute(
+            MERGE_SQL,
+            {"base": str(base_path), "mass": str(mass_path)},
+        ).to_arrow_reader(batch_size)
+        writer = pq.ParquetWriter(temporary, OUTPUT_SCHEMA, compression=compression)
+        rows = 0
+        not_enough = 0
+        try:
+            for batch in reader:
+                names = batch.column("strategy").cast(pa.string())
+                codes = pc.index_in(names, value_set=STRATEGY_DICT)
+                if pc.any(pc.is_null(codes)).as_py():
+                    invalid = pc.unique(pc.filter(names, pc.is_null(codes))).to_pylist()
+                    raise ValueError(f"unknown IPID strategies in merge input: {invalid}")
+                strategy = pa.DictionaryArray.from_arrays(codes.cast(pa.int8()), STRATEGY_DICT)
+                ip_addr = batch.column("IP_ADDR").cast(pa.string())
+                writer.write_batch(pa.record_batch([ip_addr, strategy], schema=OUTPUT_SCHEMA))
+                rows += batch.num_rows
+                not_enough += int(pc.sum(pc.equal(names, "NOT_ENOUGH_SAMPLES")).as_py() or 0)
+        except Exception:
+            writer.close()
+            temporary.unlink(missing_ok=True)
+            raise
+        else:
+            writer.close()
+            publish_file(
+                temporary,
+                output_path,
+                inputs=[base_path, mass_path],
+                parameters={"merge_version": MERGE_CACHE_VERSION},
+            )
+            temporary.unlink(missing_ok=True)
+        finally:
+            con.close()
 
-    metadata_path.write_text(
-        json.dumps(
-            {
-                "cache_version": MERGE_CACHE_VERSION,
-                "sources": {
-                    str(path): {
-                        "size": path.stat().st_size,
-                        "mtime_ns": path.stat().st_mtime_ns,
-                    }
-                    for path in (base_path, mass_path)
+        write_text(
+            metadata_path,
+            json.dumps(
+                {
+                    "cache_version": MERGE_CACHE_VERSION,
+                    "sources": {
+                        str(path): {
+                            "size": path.stat().st_size,
+                            "mtime_ns": path.stat().st_mtime_ns,
+                        }
+                        for path in (base_path, mass_path)
+                    },
                 },
-            },
-            indent=2,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
 
-    return MergeStats(rows=rows, not_enough_samples=not_enough)
+        return MergeStats(rows=rows, not_enough_samples=not_enough)
 
 
 def merge_strategies(
@@ -274,6 +285,7 @@ def main(
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, min=0, help="DuckDB threads; 0 uses all cores"),
 ) -> None:
+    start_run()
     try:
         merge = resolve_strategy_merge(load_manifest(manifest), base_target, mass_target)
         output, stats = merge_strategies(

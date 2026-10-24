@@ -19,6 +19,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import publish_file, save_figure
+from ipid_analysis.runtime import start_run, temporary_path
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -936,7 +939,8 @@ def _add_normalized_confusion_labels(
 
 def _save_figure(fig, output_path: Path, *, title: str, subject: str) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output_path,
         format="pdf",
         bbox_inches="tight",
@@ -1149,19 +1153,21 @@ def _empty_validation_columns() -> dict[str, list]:
 
 def _write_parquet(table: pa.Table, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     pq.write_table(table, temporary, compression="zstd")
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
 def _write_json(value: dict, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
@@ -1752,6 +1758,7 @@ def main(
         help="selected candidate minimum-score threshold",
     ),
 ) -> None:
+    start_run()
     outputs = validate_classifier(
         samples_per_strategy=samples_per_strategy,
         seed=seed,

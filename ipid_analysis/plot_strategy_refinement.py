@@ -13,12 +13,14 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-import duckdb
 from loguru import logger
 import matplotlib
 import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
+
+from ipid_analysis.artifacts import publish_file, save_figure
+from ipid_analysis.runtime import connect, start_run, temporary_path
 
 matplotlib.use("Agg")
 
@@ -70,24 +72,27 @@ OUTPUT_SCHEMA = pa.schema(
 
 def _write_table(table: pa.Table, output_path: Path, compression: str | None) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     pq.write_table(table, temporary, compression=compression)
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
 def _write_json(output_path: Path, value: dict) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
 def _save_figure(fig, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output_path,
         bbox_inches="tight",
         pad_inches=0.02,
@@ -114,122 +119,124 @@ def aggregate_measurement_type_strategies(
         if not path.is_file():
             raise FileNotFoundError(path)
 
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    try:
-        population = con.execute(
-            """
-            SELECT
-                (SELECT count(*) FROM read_parquet($rt)) AS rt_rows,
-                (SELECT count(DISTINCT IP_ADDR) FROM read_parquet($rt)) AS rt_ips,
-                (SELECT count(*) FROM read_parquet($rt)
-                 WHERE CAST(IPID_SELECTION_STRATEGY AS VARCHAR) = 'UNCLASSIFIED')
-                    AS rt_unclassified,
-                (SELECT count(*) FROM read_parquet($fixed)) AS fixed_rows,
-                (SELECT count(DISTINCT IP_ADDR) FROM read_parquet($fixed)) AS fixed_ips,
-                (SELECT count(*)
-                 FROM read_parquet($fixed) AS f
-                 LEFT JOIN read_parquet($rt) AS r USING (IP_ADDR)
-                 WHERE r.IP_ADDR IS NULL
-                    OR CAST(r.IPID_SELECTION_STRATEGY AS VARCHAR) <> 'UNCLASSIFIED')
-                    AS invalid_fixed_rows
-            """,
-            {"rt": str(rt_path), "fixed": str(fixed_path)},
-        ).fetchone()
-        rt_rows, rt_ips, rt_unclassified, fixed_rows, fixed_ips, invalid_fixed_rows = map(
-            int, population
+    with connect(config={"threads": threads} if threads else {}) as con:
+        try:
+            population = con.execute(
+                """
+                SELECT
+                    (SELECT count(*) FROM read_parquet($rt)) AS rt_rows,
+                    (SELECT count(DISTINCT IP_ADDR) FROM read_parquet($rt)) AS rt_ips,
+                    (SELECT count(*) FROM read_parquet($rt)
+                     WHERE CAST(IPID_SELECTION_STRATEGY AS VARCHAR) = 'UNCLASSIFIED')
+                        AS rt_unclassified,
+                    (SELECT count(*) FROM read_parquet($fixed)) AS fixed_rows,
+                    (SELECT count(DISTINCT IP_ADDR) FROM read_parquet($fixed)) AS fixed_ips,
+                    (SELECT count(*)
+                     FROM read_parquet($fixed) AS f
+                     LEFT JOIN read_parquet($rt) AS r USING (IP_ADDR)
+                     WHERE r.IP_ADDR IS NULL
+                        OR CAST(r.IPID_SELECTION_STRATEGY AS VARCHAR) <> 'UNCLASSIFIED')
+                        AS invalid_fixed_rows
+                """,
+                {"rt": str(rt_path), "fixed": str(fixed_path)},
+            ).fetchone()
+            rt_rows, rt_ips, rt_unclassified, fixed_rows, fixed_ips, invalid_fixed_rows = map(
+                int, population
+            )
+
+            if rt_rows == 0:
+                raise ValueError(f"{rt_path}: RT-based strategy result is empty")
+            if rt_rows != rt_ips:
+                raise ValueError(f"{rt_path}: duplicate IP addresses in RT-based strategy result")
+            if fixed_rows != fixed_ips:
+                raise ValueError(
+                    f"{fixed_path}: duplicate IP addresses in fixed-interval strategy result"
+                )
+            if invalid_fixed_rows:
+                raise ValueError(
+                    f"{fixed_path}: {invalid_fixed_rows} fixed-interval IP address(es) were not "
+                    "UNCLASSIFIED in the RT-based result"
+                )
+            if fixed_ips > rt_unclassified:
+                raise ValueError(
+                    f"{fixed_path}: fixed-interval population exceeds the RT UNCLASSIFIED population"
+                )
+            if rt_unclassified == 0:
+                raise ValueError(f"{rt_path}: no RT-based UNCLASSIFIED population to refine")
+
+            rows = con.execute(
+                """
+                SELECT MEASUREMENT_TYPE, STRATEGY, count(*)::BIGINT AS N
+                FROM (
+                    SELECT 'RT-based' AS MEASUREMENT_TYPE,
+                           CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY
+                    FROM read_parquet($rt)
+                    UNION ALL
+                    SELECT 'Fixed-Interval' AS MEASUREMENT_TYPE,
+                           CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY
+                    FROM read_parquet($fixed)
+                )
+                GROUP BY MEASUREMENT_TYPE, STRATEGY
+                """,
+                {"rt": str(rt_path), "fixed": str(fixed_path)},
+            ).fetchall()
+        finally:
+            con.close()
+
+        known = set(STRATEGY_NAMES)
+        unknown = sorted({str(strategy) for _, strategy, _ in rows} - known)
+        if unknown:
+            raise ValueError(f"unknown IP-ID strategies in refinement input: {unknown}")
+
+        counts = {(str(mode), str(strategy)): int(count) for mode, strategy, count in rows}
+        missing = rt_unclassified - fixed_ips
+        counts[(FIXED_MODE, "NOT_ENOUGH_SAMPLES")] = (
+            counts.get((FIXED_MODE, "NOT_ENOUGH_SAMPLES"), 0) + missing
         )
+        totals = {RT_MODE: rt_rows, FIXED_MODE: rt_unclassified}
+        output_rows = []
+        bars = {}
+        for mode in MODES:
+            mode_counts = {
+                strategy: counts.get((mode, strategy), 0) for strategy in STRATEGY_NAMES
+            }
+            mode_percentages = {
+                strategy: 100.0 * count / totals[mode] for strategy, count in mode_counts.items()
+            }
+            bars[mode] = {
+                "total": totals[mode],
+                "counts": mode_counts,
+                "percentages": mode_percentages,
+            }
+            for strategy in STRATEGY_NAMES:
+                count = mode_counts[strategy]
+                if count == 0:
+                    continue
+                output_rows.append(
+                    {
+                        "MEASUREMENT_TYPE": mode,
+                        "IPID_SELECTION_STRATEGY": strategy,
+                        "COUNT": count,
+                        "TOTAL": totals[mode],
+                        "PERCENTAGE": mode_percentages[strategy],
+                    }
+                )
 
-        if rt_rows == 0:
-            raise ValueError(f"{rt_path}: RT-based strategy result is empty")
-        if rt_rows != rt_ips:
-            raise ValueError(f"{rt_path}: duplicate IP addresses in RT-based strategy result")
-        if fixed_rows != fixed_ips:
-            raise ValueError(
-                f"{fixed_path}: duplicate IP addresses in fixed-interval strategy result"
-            )
-        if invalid_fixed_rows:
-            raise ValueError(
-                f"{fixed_path}: {invalid_fixed_rows} fixed-interval IP address(es) were not "
-                "UNCLASSIFIED in the RT-based result"
-            )
-        if fixed_ips > rt_unclassified:
-            raise ValueError(
-                f"{fixed_path}: fixed-interval population exceeds the RT UNCLASSIFIED population"
-            )
-        if rt_unclassified == 0:
-            raise ValueError(f"{rt_path}: no RT-based UNCLASSIFIED population to refine")
+        table = pa.Table.from_pylist(output_rows, schema=OUTPUT_SCHEMA)
+        _write_table(table, output_path, compression)
 
-        rows = con.execute(
-            """
-            SELECT MEASUREMENT_TYPE, STRATEGY, count(*)::BIGINT AS N
-            FROM (
-                SELECT 'RT-based' AS MEASUREMENT_TYPE,
-                       CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY
-                FROM read_parquet($rt)
-                UNION ALL
-                SELECT 'Fixed-Interval' AS MEASUREMENT_TYPE,
-                       CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY
-                FROM read_parquet($fixed)
-            )
-            GROUP BY MEASUREMENT_TYPE, STRATEGY
-            """,
-            {"rt": str(rt_path), "fixed": str(fixed_path)},
-        ).fetchall()
-    finally:
-        con.close()
-
-    known = set(STRATEGY_NAMES)
-    unknown = sorted({str(strategy) for _, strategy, _ in rows} - known)
-    if unknown:
-        raise ValueError(f"unknown IP-ID strategies in refinement input: {unknown}")
-
-    counts = {(str(mode), str(strategy)): int(count) for mode, strategy, count in rows}
-    missing = rt_unclassified - fixed_ips
-    counts[(FIXED_MODE, "NOT_ENOUGH_SAMPLES")] = (
-        counts.get((FIXED_MODE, "NOT_ENOUGH_SAMPLES"), 0) + missing
-    )
-    totals = {RT_MODE: rt_rows, FIXED_MODE: rt_unclassified}
-    output_rows = []
-    bars = {}
-    for mode in MODES:
-        mode_counts = {strategy: counts.get((mode, strategy), 0) for strategy in STRATEGY_NAMES}
-        mode_percentages = {
-            strategy: 100.0 * count / totals[mode] for strategy, count in mode_counts.items()
+        return {
+            "rt_based_ip_count": rt_ips,
+            "rt_based_unclassified_ip_count": rt_unclassified,
+            "fixed_interval_target_ip_count": rt_unclassified,
+            "fixed_interval_result_ip_count": fixed_ips,
+            "fixed_interval_missing_result_ip_count": missing,
+            "not_enough_samples_count": bars[FIXED_MODE]["counts"]["NOT_ENOUGH_SAMPLES"],
+            "fixed_interval_result_coverage_percent": (
+                100.0 * fixed_ips / rt_unclassified if rt_unclassified else 0.0
+            ),
+            "bars": bars,
         }
-        bars[mode] = {
-            "total": totals[mode],
-            "counts": mode_counts,
-            "percentages": mode_percentages,
-        }
-        for strategy in STRATEGY_NAMES:
-            count = mode_counts[strategy]
-            if count == 0:
-                continue
-            output_rows.append(
-                {
-                    "MEASUREMENT_TYPE": mode,
-                    "IPID_SELECTION_STRATEGY": strategy,
-                    "COUNT": count,
-                    "TOTAL": totals[mode],
-                    "PERCENTAGE": mode_percentages[strategy],
-                }
-            )
-
-    table = pa.Table.from_pylist(output_rows, schema=OUTPUT_SCHEMA)
-    _write_table(table, output_path, compression)
-
-    return {
-        "rt_based_ip_count": rt_ips,
-        "rt_based_unclassified_ip_count": rt_unclassified,
-        "fixed_interval_target_ip_count": rt_unclassified,
-        "fixed_interval_result_ip_count": fixed_ips,
-        "fixed_interval_missing_result_ip_count": missing,
-        "not_enough_samples_count": bars[FIXED_MODE]["counts"]["NOT_ENOUGH_SAMPLES"],
-        "fixed_interval_result_coverage_percent": (
-            100.0 * fixed_ips / rt_unclassified if rt_unclassified else 0.0
-        ),
-        "bars": bars,
-    }
 
 
 def aggregate_measurement_type_strategies_with_connection(
@@ -245,81 +252,82 @@ def aggregate_measurement_type_strategies_with_connection(
     if not connection_path.is_file():
         raise FileNotFoundError(connection_path)
 
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    try:
-        connection_rows, connection_ips = map(
-            int,
-            con.execute(
+    with connect(config={"threads": threads} if threads else {}) as con:
+        try:
+            connection_rows, connection_ips = map(
+                int,
+                con.execute(
+                    """
+                    SELECT count(*), count(DISTINCT IP_ADDR)
+                    FROM read_parquet($connection)
+                    """,
+                    {"connection": str(connection_path)},
+                ).fetchone(),
+            )
+            rows = con.execute(
                 """
-                SELECT count(*), count(DISTINCT IP_ADDR)
+                SELECT CAST(IPID_SELECTION_STRATEGY AS VARCHAR), count(*)::BIGINT
                 FROM read_parquet($connection)
+                GROUP BY IPID_SELECTION_STRATEGY
                 """,
                 {"connection": str(connection_path)},
-            ).fetchone(),
+            ).fetchall()
+        finally:
+            con.close()
+
+        if connection_rows == 0:
+            raise ValueError(f"{connection_path}: connection-oriented strategy result is empty")
+        if connection_rows != connection_ips:
+            raise ValueError(
+                f"{connection_path}: duplicate IP addresses in connection-oriented strategy result"
+            )
+
+        known = set(STRATEGY_NAMES)
+        unknown = sorted({str(strategy) for strategy, _ in rows} - known)
+        if unknown:
+            raise ValueError(f"unknown IP-ID strategies in connection-oriented input: {unknown}")
+
+        stats = aggregate_measurement_type_strategies(
+            rt_path,
+            fixed_path,
+            output_path,
+            compression=compression,
+            threads=threads,
         )
-        rows = con.execute(
-            """
-            SELECT CAST(IPID_SELECTION_STRATEGY AS VARCHAR), count(*)::BIGINT
-            FROM read_parquet($connection)
-            GROUP BY IPID_SELECTION_STRATEGY
-            """,
-            {"connection": str(connection_path)},
-        ).fetchall()
-    finally:
-        con.close()
 
-    if connection_rows == 0:
-        raise ValueError(f"{connection_path}: connection-oriented strategy result is empty")
-    if connection_rows != connection_ips:
-        raise ValueError(
-            f"{connection_path}: duplicate IP addresses in connection-oriented strategy result"
-        )
-
-    known = set(STRATEGY_NAMES)
-    unknown = sorted({str(strategy) for strategy, _ in rows} - known)
-    if unknown:
-        raise ValueError(f"unknown IP-ID strategies in connection-oriented input: {unknown}")
-
-    stats = aggregate_measurement_type_strategies(
-        rt_path,
-        fixed_path,
-        output_path,
-        compression=compression,
-        threads=threads,
-    )
-
-    connection_counts = {strategy: 0 for strategy in STRATEGY_NAMES} | {
-        str(strategy): int(count) for strategy, count in rows
-    }
-    connection_percentages = {
-        strategy: 100.0 * count / connection_rows for strategy, count in connection_counts.items()
-    }
-    connection_output_rows = [
-        {
-            "MEASUREMENT_TYPE": CONNECTION_MODE,
-            "IPID_SELECTION_STRATEGY": strategy,
-            "COUNT": count,
-            "TOTAL": connection_rows,
-            "PERCENTAGE": connection_percentages[strategy],
+        connection_counts = {strategy: 0 for strategy in STRATEGY_NAMES} | {
+            str(strategy): int(count) for strategy, count in rows
         }
-        for strategy, count in connection_counts.items()
-        if count
-    ]
-    table = pa.concat_tables(
-        [
-            pq.read_table(output_path, schema=OUTPUT_SCHEMA),
-            pa.Table.from_pylist(connection_output_rows, schema=OUTPUT_SCHEMA),
+        connection_percentages = {
+            strategy: 100.0 * count / connection_rows
+            for strategy, count in connection_counts.items()
+        }
+        connection_output_rows = [
+            {
+                "MEASUREMENT_TYPE": CONNECTION_MODE,
+                "IPID_SELECTION_STRATEGY": strategy,
+                "COUNT": count,
+                "TOTAL": connection_rows,
+                "PERCENTAGE": connection_percentages[strategy],
+            }
+            for strategy, count in connection_counts.items()
+            if count
         ]
-    )
-    _write_table(table, output_path, compression)
+        table = pa.concat_tables(
+            [
+                pq.read_table(output_path, schema=OUTPUT_SCHEMA),
+                pa.Table.from_pylist(connection_output_rows, schema=OUTPUT_SCHEMA),
+            ]
+        )
+        _write_table(table, output_path, compression)
 
-    stats["connection_oriented_ip_count"] = connection_ips
-    stats["bars"][CONNECTION_MODE] = {
-        "total": connection_rows,
-        "counts": connection_counts,
-        "percentages": connection_percentages,
-    }
-    return stats
+        stats["connection_oriented_ip_count"] = connection_ips
+        stats["bars"][CONNECTION_MODE] = {
+            "total": connection_rows,
+            "counts": connection_counts,
+            "percentages": connection_percentages,
+        }
+        return stats
 
 
 def _label_percentage(value: float) -> str:
@@ -629,6 +637,7 @@ def main(
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, min=0, help="DuckDB threads; 0 uses all cores"),
 ) -> None:
+    start_run()
     try:
         manifest_data = load_manifest(manifest)
         merge = resolve_strategy_merge(manifest_data, base_target, mass_target)

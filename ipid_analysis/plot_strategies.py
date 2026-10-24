@@ -16,9 +16,11 @@ from pathlib import Path
 from loguru import logger
 import typer
 
+from ipid_analysis.artifacts import write_text
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.plots import plot_strategy_distribution, strategy_counts, strategy_percentages
+from ipid_analysis.runtime import start_run
 from ipid_analysis.strategies import DEFAULT_MANIFEST
 from ipid_analysis.strategy_merge import StrategyMerge, resolve_strategy_merge
 
@@ -60,7 +62,7 @@ def _render_paths(
         "percentages": percentages,
     }
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(info, indent=2) + "\n")
+    write_text(json_path, json.dumps(info, indent=2) + "\n")
 
     plot_strategy_distribution(percentages, pdf_path, title=title)
     return pdf_path, json_path
@@ -116,6 +118,7 @@ def main(
     ),
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="measurement manifest JSON"),
 ) -> None:
+    start_run()
     data = load_manifest(manifest)
     try:
         if len(targets) == 1:

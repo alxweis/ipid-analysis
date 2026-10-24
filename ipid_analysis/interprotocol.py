@@ -11,11 +11,10 @@ from collections import Counter
 from dataclasses import dataclass
 import json
 import math
-import re
 from pathlib import Path
+import re
 import time
 
-import duckdb
 import matplotlib.pyplot as plt
 import numpy as np
 import pyarrow as pa
@@ -23,9 +22,17 @@ import pyarrow.parquet as pq
 import typer
 import yaml
 
+from ipid_analysis.artifacts import (
+    atomic_output,
+    publish_file,
+    save_figure,
+    validate_ip_population,
+    write_text,
+)
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.interprotocol_alternatives import write_alternative_reports
 from ipid_analysis.interprotocol_stability import (
+    STABILITY_SCHEMA,
     STABILITY_STRATEGIES,
     classify_stability_file,
     plot_campaign_strategy_stability,
@@ -39,6 +46,7 @@ from ipid_analysis.paper_figures import (
     COMPACT_PAPER_STROKE_WIDTH,
     configure_compact_validation_style,
 )
+from ipid_analysis.runtime import connect, start_run, temporary_path
 from ipid_analysis.strategies import MAX_INC, MODULUS, STRATEGY_COLORS, STRATEGY_PRETTY
 from ipid_analysis.strategy_merge import iter_strategy_merges
 
@@ -174,70 +182,81 @@ def build_target_files(
     }
     output_dir = (output_root or processed_root / "interprotocol") / campaign_id
     output_dir.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    for protocol, path in inputs.items():
-        escaped_input = str(path).replace("'", "''")
-        con.execute(
-            f"CREATE VIEW {protocol} AS SELECT IP_ADDR, "
-            "CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS strategy "
-            f"FROM read_parquet('{escaped_input}') WHERE "
-            "CAST(IPID_SELECTION_STRATEGY AS VARCHAR) "
-            f"IN ({','.join(repr(s) for s in STABILITY_STRATEGIES)})"
-        )
-    triple_sql = """
-        SELECT i.IP_ADDR, i.strategy AS IPID_SELECTION_STRATEGY
-        FROM icmp i JOIN tcp t USING (IP_ADDR) JOIN udp u USING (IP_ADDR)
-        WHERE i.strategy = t.strategy AND i.strategy = u.strategy
-    """
-    con.execute(f"CREATE TEMP TABLE triple AS {triple_sql}")
-    queries = {
-        "icmp-tcp": """SELECT i.IP_ADDR, i.strategy AS IPID_SELECTION_STRATEGY
-            FROM icmp i JOIN tcp t USING (IP_ADDR)
-            LEFT JOIN triple x ON x.IP_ADDR=i.IP_ADDR AND x.IPID_SELECTION_STRATEGY=i.strategy
-            WHERE i.strategy=t.strategy AND x.IP_ADDR IS NULL""",
-        "icmp-udp": """SELECT i.IP_ADDR, i.strategy AS IPID_SELECTION_STRATEGY
-            FROM icmp i JOIN udp u USING (IP_ADDR)
-            LEFT JOIN triple x ON x.IP_ADDR=i.IP_ADDR AND x.IPID_SELECTION_STRATEGY=i.strategy
-            WHERE i.strategy=u.strategy AND x.IP_ADDR IS NULL""",
-        "tcp-udp": """SELECT t.IP_ADDR, t.strategy AS IPID_SELECTION_STRATEGY
-            FROM tcp t JOIN udp u USING (IP_ADDR)
-            LEFT JOIN triple x ON x.IP_ADDR=t.IP_ADDR AND x.IPID_SELECTION_STRATEGY=t.strategy
-            WHERE t.strategy=u.strategy AND x.IP_ADDR IS NULL""",
-        "icmp-tcp-udp": "SELECT * FROM triple",
-    }
-    counts: dict[str, dict[str, int]] = {}
-    for group, query in queries.items():
-        target = output_dir / f"{group}-targets.pq"
-        escaped = str(target).replace("'", "''")
-        con.execute(
-            f"COPY ({query} ORDER BY IP_ADDR) TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
-        rows = con.execute(
-            "SELECT IPID_SELECTION_STRATEGY, count(*) FROM read_parquet(?) GROUP BY 1",
-            [str(target)],
-        ).fetchall()
-        counts[group] = {str(strategy): int(count) for strategy, count in rows}
-    input_rows = {
-        protocol: int(
-            con.execute("SELECT count(*) FROM read_parquet(?)", [str(path)]).fetchone()[0]
-        )
-        for protocol, path in inputs.items()
-    }
-    con.close()
-    summary = {
-        "campaign_id": campaign_id,
-        "inputs": {key: str(value) for key, value in inputs.items()},
-        "input_rows": input_rows,
-        "strategies": list(STABILITY_STRATEGIES),
-        "pair_semantics": "pair intersection minus same-strategy triple",
-        "targets": counts,
-    }
-    (output_dir / "target-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    figure_dir = figures_root / campaign_id
-    figure_dir.mkdir(parents=True, exist_ok=True)
-    plot_target_population(counts, figure_dir / "target-population.pdf")
-    (output_dir / "target-population.pdf").unlink(missing_ok=True)
-    return output_dir
+    with connect(config={"threads": threads} if threads else {}) as con:
+        for protocol, path in inputs.items():
+            from ipid_analysis.strategies import validate_strategies
+
+            validate_strategies(path)
+            escaped_input = str(path).replace("'", "''")
+            con.execute(
+                f"CREATE VIEW {protocol} AS SELECT IP_ADDR, "
+                "CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS strategy "
+                f"FROM read_parquet('{escaped_input}') WHERE "
+                "CAST(IPID_SELECTION_STRATEGY AS VARCHAR) "
+                f"IN ({','.join(repr(s) for s in STABILITY_STRATEGIES)})"
+            )
+        triple_sql = """
+            SELECT i.IP_ADDR, i.strategy AS IPID_SELECTION_STRATEGY
+            FROM icmp i JOIN tcp t USING (IP_ADDR) JOIN udp u USING (IP_ADDR)
+            WHERE i.strategy = t.strategy AND i.strategy = u.strategy
+        """
+        con.execute(f"CREATE TEMP TABLE triple AS {triple_sql}")
+        queries = {
+            "icmp-tcp": """SELECT i.IP_ADDR, i.strategy AS IPID_SELECTION_STRATEGY
+                FROM icmp i JOIN tcp t USING (IP_ADDR)
+                LEFT JOIN triple x ON x.IP_ADDR=i.IP_ADDR AND x.IPID_SELECTION_STRATEGY=i.strategy
+                WHERE i.strategy=t.strategy AND x.IP_ADDR IS NULL""",
+            "icmp-udp": """SELECT i.IP_ADDR, i.strategy AS IPID_SELECTION_STRATEGY
+                FROM icmp i JOIN udp u USING (IP_ADDR)
+                LEFT JOIN triple x ON x.IP_ADDR=i.IP_ADDR AND x.IPID_SELECTION_STRATEGY=i.strategy
+                WHERE i.strategy=u.strategy AND x.IP_ADDR IS NULL""",
+            "tcp-udp": """SELECT t.IP_ADDR, t.strategy AS IPID_SELECTION_STRATEGY
+                FROM tcp t JOIN udp u USING (IP_ADDR)
+                LEFT JOIN triple x ON x.IP_ADDR=t.IP_ADDR AND x.IPID_SELECTION_STRATEGY=t.strategy
+                WHERE t.strategy=u.strategy AND x.IP_ADDR IS NULL""",
+            "icmp-tcp-udp": "SELECT * FROM triple",
+        }
+        counts: dict[str, dict[str, int]] = {}
+        for group, query in queries.items():
+            target = output_dir / f"{group}-targets.pq"
+            temporary_target = temporary_path(target)
+            escaped = str(temporary_target).replace("'", "''")
+            con.execute(
+                f"COPY ({query} ORDER BY IP_ADDR) TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+            )
+            publish_file(
+                temporary_target,
+                target,
+                inputs=inputs.values(),
+                parameters={"pair_semantics": "exclusive-same-strategy-triple-v1"},
+            )
+            temporary_target.unlink(missing_ok=True)
+            rows = con.execute(
+                "SELECT IPID_SELECTION_STRATEGY, count(*) FROM read_parquet(?) GROUP BY 1",
+                [str(target)],
+            ).fetchall()
+            counts[group] = {str(strategy): int(count) for strategy, count in rows}
+        input_rows = {
+            protocol: int(
+                con.execute("SELECT count(*) FROM read_parquet(?)", [str(path)]).fetchone()[0]
+            )
+            for protocol, path in inputs.items()
+        }
+        con.close()
+        summary = {
+            "campaign_id": campaign_id,
+            "inputs": {key: str(value) for key, value in inputs.items()},
+            "input_rows": input_rows,
+            "strategies": list(STABILITY_STRATEGIES),
+            "pair_semantics": "pair intersection minus same-strategy triple",
+            "targets": counts,
+        }
+        write_text(output_dir / "target-summary.json", json.dumps(summary, indent=2) + "\n")
+        figure_dir = figures_root / campaign_id
+        figure_dir.mkdir(parents=True, exist_ok=True)
+        plot_target_population(counts, figure_dir / "target-population.pdf")
+        (output_dir / "target-population.pdf").unlink(missing_ok=True)
+        return output_dir
 
 
 def _increments_ok(values: np.ndarray, upper: int) -> bool:
@@ -325,18 +344,20 @@ def classify_file(
     snapshot = yaml.safe_load(snapshot_path.read_text())
     if "sample" in snapshot.get("interprotocol", {}):
         from ipid_analysis.interprotocol_outcomes import classify_file as classify_outcomes
+
         return classify_outcomes(raw_path, snapshot_path, output_dir, figure_dir=figure_dir)
     cfg = load_interprotocol_config(snapshot_path)
     protocol_request_patterns(cfg, snapshot.get("request_ip_ids", []))
+    validate_ip_population(raw_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / "interprotocol-deployments.pq"
-    temporary = output.with_suffix(".pq.part")
+    temporary = temporary_path(output)
     temporary.unlink(missing_ok=True)
     counts: Counter[tuple[str, str]] = Counter()
     total = 0
     writer = pq.ParquetWriter(temporary, RESULT_SCHEMA, compression="zstd")
+    parquet = pq.ParquetFile(raw_path)
     try:
-        parquet = pq.ParquetFile(raw_path)
         for batch in parquet.iter_batches(
             batch_size=100_000,
             columns=["IP_ADDR", "IPID_SELECTION_STRATEGY", "IPID_SEQUENCE"],
@@ -362,7 +383,9 @@ def classify_file(
                 writer.write_table(pa.Table.from_pylist(output_rows, schema=RESULT_SCHEMA))
     finally:
         writer.close()
-    temporary.replace(output)
+        parquet.close()
+    publish_file(temporary, output)
+    temporary.unlink(missing_ok=True)
     summary = {
         "classifier_version": CLASSIFIER_VERSION,
         "protocols": list(cfg.protocols),
@@ -371,14 +394,14 @@ def classify_file(
             f"{strategy}:{deployment}": count for (strategy, deployment), count in counts.items()
         },
     }
-    (output_dir / "interprotocol-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    write_text(output_dir / "interprotocol-summary.json", json.dumps(summary, indent=2) + "\n")
     figure_dir = figure_dir or INTERPROTOCOL_FIGURES_DIR / output_dir.name
     figure_dir.mkdir(parents=True, exist_ok=True)
     plot_deployments(counts, figure_dir / "interprotocol-deployments.pdf")
     stability = classify_stability_file(
         raw_path, cfg, snapshot.get("request_ip_ids", []), output_dir
     )
-    plot_stability(pq.read_table(stability), figure_dir, "interprotocol")
+    plot_stability(stability, figure_dir, "interprotocol")
     (output_dir / "interprotocol-deployments.pdf").unlink(missing_ok=True)
     return output
 
@@ -401,13 +424,14 @@ def plot_target_population(counts: dict[str, dict[str, int]], output: Path) -> N
     ax.legend(frameon=False, fontsize=7, ncol=2)
     ax.tick_params(axis="x", rotation=20)
     fig.tight_layout()
-    fig.savefig(output)
+    save_figure(fig, output)
     plt.close(fig)
 
 
 def plot_deployments(counts: Counter[tuple[str, str]], output: Path) -> None:
-    deployments = sorted({deployment for strategy, deployment in counts
-                          if strategy in COUNTER_STRATEGIES})
+    deployments = sorted(
+        {deployment for strategy, deployment in counts if strategy in COUNTER_STRATEGIES}
+    )
     fig, axes = plt.subplots(1, len(COUNTER_STRATEGIES), figsize=(7.16, 2.8), squeeze=False)
     colors = plt.get_cmap("tab10").colors
     for ax, strategy in zip(axes[0], COUNTER_STRATEGIES, strict=True):
@@ -432,14 +456,16 @@ def plot_deployments(counts: Counter[tuple[str, str]], output: Path) -> None:
     if deployments:
         axes[0, -1].legend(frameon=False, fontsize=7, bbox_to_anchor=(1.02, 1), loc="upper left")
     fig.tight_layout()
-    fig.savefig(output)
+    save_figure(fig, output)
     plt.close(fig)
 
 
 def measurement_items(specification):
     """Return stage IDs; legacy campaigns have one measurement per group."""
     if "measurements" in specification:
-        return [(sample, str(specification["measurements"][sample])) for sample in ("base", "mass")]
+        return [
+            (sample, str(specification["measurements"][sample])) for sample in ("base", "mass")
+        ]
     return [("legacy", str(specification.get("measurement_id", "")))]
 
 
@@ -469,9 +495,11 @@ def load_run_manifest(path: Path) -> dict:
         if data["version"] == 2 and set(specification.get("measurements", {})) != {"base", "mass"}:
             raise ValueError("v2 groups require base and mass measurement IDs")
         for sample, measurement_id in measurement_items(specification):
-            if not re.fullmatch(r"[A-Za-z0-9._-]+", measurement_id) or not measurement_id.startswith(f"interprotocol-{group}_"):
+            if not re.fullmatch(
+                r"[A-Za-z0-9._-]+", measurement_id
+            ) or not measurement_id.startswith(f"interprotocol-{group}_"):
                 raise ValueError(f"invalid measurement id for {group!r}: {measurement_id!r}")
-            if data["version"] == 2 and not measurement_id.endswith("_"+sample):
+            if data["version"] == 2 and not measurement_id.endswith("_" + sample):
                 raise ValueError("measurement id must identify its BASE/MASS sample")
     return data
 
@@ -489,8 +517,12 @@ def _campaign_counts(rows: list[dict]) -> dict[str, Counter[tuple[str, str]]]:
 def plot_campaign_deployments(counts: dict[str, Counter[tuple[str, str]]], output: Path) -> None:
     groups = [group for group in GROUPS if group in counts]
     deployments = sorted(
-        {deployment for group_counts in counts.values()
-         for strategy, deployment in group_counts if strategy in COUNTER_STRATEGIES}
+        {
+            deployment
+            for group_counts in counts.values()
+            for strategy, deployment in group_counts
+            if strategy in COUNTER_STRATEGIES
+        }
     )
     colors = {
         deployment: plt.get_cmap("tab10").colors[index % 10]
@@ -528,7 +560,7 @@ def plot_campaign_deployments(counts: dict[str, Counter[tuple[str, str]]], outpu
     if deployments:
         axes[0, -1].legend(frameon=False, fontsize=7, bbox_to_anchor=(1.02, 1), loc="upper left")
     fig.tight_layout()
-    fig.savefig(output)
+    save_figure(fig, output)
     plt.close(fig)
 
 
@@ -558,7 +590,7 @@ def plot_campaign_missing(counts: dict[str, Counter[tuple[str, str]]], output: P
     ax.set_ylim(bottom=0)
     ax.legend(frameon=False)
     fig.tight_layout()
-    fig.savefig(output)
+    save_figure(fig, output)
     plt.close(fig)
 
 
@@ -652,7 +684,8 @@ def plot_campaign_strategy_deployments(
         fig.subplots_adjust(left=0.095, right=0.995, bottom=0.28, top=0.79)
         slug = strategy.lower().replace("_", "-")
         output = output_dir / f"interprotocol-campaign-{slug}.pdf"
-        fig.savefig(
+        save_figure(
+            fig,
             output,
             format="pdf",
             bbox_inches="tight",
@@ -678,7 +711,13 @@ def classify_campaign(
     manifest = load_run_manifest(run_manifest_path)
     if manifest["version"] == 2:
         from ipid_analysis.interprotocol_outcomes import classify_campaign as classify_outcomes
-        return classify_outcomes(run_manifest_path, raw_root=raw_root, output_root=output_root, figures_root=figures_root)
+
+        return classify_outcomes(
+            run_manifest_path,
+            raw_root=raw_root,
+            output_root=output_root,
+            figures_root=figures_root,
+        )
     output_dir = output_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
     output_dir.mkdir(parents=True, exist_ok=True)
     figure_dir = figures_root / manifest["campaign_id"] / "runs" / manifest["run_id"]
@@ -699,26 +738,34 @@ def classify_campaign(
             output_dir / group,
             figure_dir=figure_dir / group,
         )
-        tables.append(pq.read_table(result).cast(RESULT_SCHEMA))
-        stability_tables.append(pq.read_table(result.parent / "interprotocol-strategy-stability.pq"))
-    combined = pa.concat_tables(tables) if len(tables) > 1 else tables[0]
+        tables.append(result)
+        stability_tables.append(result.parent / "interprotocol-strategy-stability.pq")
     combined_path = output_dir / "interprotocol-campaign-deployments.pq"
-    temporary = combined_path.with_suffix(".pq.part")
-    pq.write_table(combined, temporary, compression="zstd")
-    temporary.replace(combined_path)
-    stability = pa.concat_tables(stability_tables)
     stability_path = output_dir / "interprotocol-campaign-strategy-stability.pq"
-    stability_temporary = stability_path.with_suffix(".pq.part")
-    pq.write_table(stability, stability_temporary, compression="zstd")
-    stability_temporary.replace(stability_path)
+    for paths, destination, schema in (
+        (tables, combined_path, RESULT_SCHEMA),
+        (stability_tables, stability_path, STABILITY_SCHEMA),
+    ):
+        with (
+            atomic_output(destination) as temporary,
+            pq.ParquetWriter(temporary, schema, compression="zstd") as writer,
+        ):
+            for path in paths:
+                with pq.ParquetFile(path) as parquet:
+                    for batch in parquet.iter_batches(batch_size=8192):
+                        writer.write_batch(batch.cast(schema))
+    combined, stability = combined_path, stability_path
     write_alternative_reports(stability, combined, output_dir, measurement_ids)
     write_stability_summary(
         stability, output_dir / "interprotocol-campaign-strategy-stability-summary.json"
     )
     plot_stability(stability, figure_dir, "interprotocol-campaign")
     plot_campaign_strategy_stability(stability, figure_dir, tuple(GROUPS))
-    output_rows = combined.to_pylist()
-    counts = _campaign_counts(output_rows)
+    counts = {}
+    with pq.ParquetFile(combined) as parquet:
+        for batch in parquet.iter_batches(batch_size=8192):
+            for group, group_counts in _campaign_counts(batch.to_pylist()).items():
+                counts.setdefault(group, Counter()).update(group_counts)
     for group in measurement_ids:
         counts.setdefault(group, Counter())
     summary = {
@@ -736,10 +783,10 @@ def classify_campaign(
             }
             for group, group_counts in counts.items()
         },
-        "rows": len(output_rows),
+        "rows": pq.read_metadata(combined).num_rows,
     }
-    (output_dir / "interprotocol-campaign-summary.json").write_text(
-        json.dumps(summary, indent=2) + "\n"
+    write_text(
+        output_dir / "interprotocol-campaign-summary.json", json.dumps(summary, indent=2) + "\n"
     )
     analysis_run = {
         "classifier_version": CLASSIFIER_VERSION,
@@ -748,8 +795,8 @@ def classify_campaign(
         "run_id": manifest["run_id"],
         "measurements": measurement_ids,
     }
-    (output_dir / "interprotocol-campaign-run.json").write_text(
-        json.dumps(analysis_run, indent=2) + "\n"
+    write_text(
+        output_dir / "interprotocol-campaign-run.json", json.dumps(analysis_run, indent=2) + "\n"
     )
     plot_campaign_deployments(counts, figure_dir / "interprotocol-campaign-deployments.pdf")
     plot_campaign_missing(counts, figure_dir / "interprotocol-campaign-missing.pdf")
@@ -859,7 +906,7 @@ def validate_classifier(
         ),
     }
     path = processed_dir / "interprotocol-validation.json"
-    path.write_text(json.dumps(report, indent=2) + "\n")
+    write_text(path, json.dumps(report, indent=2) + "\n")
     plot_confusion(
         [case for case in cases if case[0].count("-") == 1],
         figure_dir / "interprotocol-validation-pair-confusion.pdf",
@@ -889,7 +936,7 @@ def plot_confusion(cases: list[tuple[str, str, str, str]], output: Path) -> None
             ax.text(column, row, str(matrix[row, column]), ha="center", va="center")
     fig.colorbar(image, ax=ax)
     fig.tight_layout()
-    fig.savefig(output)
+    save_figure(fig, output)
     plt.close(fig)
 
 
@@ -901,6 +948,7 @@ def build_targets_command(
     figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
     threads: int = 0,
 ) -> None:
+    start_run()
     typer.echo(
         build_target_files(
             campaign,
@@ -919,6 +967,7 @@ def classify_command(
     output_dir: Path,
     figure_dir: Path | None = None,
 ) -> None:
+    start_run()
     typer.echo(classify_file(raw, snapshot, output_dir, figure_dir=figure_dir))
 
 
@@ -929,6 +978,7 @@ def analyse_campaign_command(
     output_root: Path = PROCESSED_DATA_DIR / "interprotocol",
     figures_root: Path = INTERPROTOCOL_FIGURES_DIR,
 ) -> None:
+    start_run()
     typer.echo(
         classify_campaign(
             run_manifest,
@@ -946,6 +996,7 @@ def validate_command(
     samples: int = 1000,
     seed: int = 42,
 ) -> None:
+    start_run()
     typer.echo(
         validate_classifier(
             processed_dir,
@@ -958,4 +1009,3 @@ def validate_command(
 
 if __name__ == "__main__":
     app()
-

@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 from ipid_analysis import ripe_atlas as ripe_atlas_module
 from ipid_analysis.caida_itdk import ITDKDataset
 from ipid_analysis.manifest import IpidMeasurement
+from ipid_analysis.runtime import work_path
 from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
 from ipid_analysis.ripe_atlas import (
     RipeAtlasDataset,
@@ -38,6 +39,9 @@ class _HTTPResponse(io.BytesIO):
     def __init__(self, data: bytes, *, status: int):
         super().__init__(data)
         self.status = status
+        self.headers = {"ETag": '"fixture-v1"'}
+        if status == 206:
+            self.headers["Content-Range"] = "bytes 3-4/5"
 
     def __enter__(self):
         return self
@@ -182,7 +186,7 @@ class RipeAtlasTest(unittest.TestCase):
                     "ipid_analysis.ripe_atlas.urlopen",
                     return_value=_HTTPResponse(b"abc", status=200),
                 ),
-                self.assertRaisesRegex(OSError, "3/5 bytes after 1 attempts"),
+                self.assertRaisesRegex(OSError, "incomplete HTTP download"),
             ):
                 _download(
                     "https://example.invalid/dump",
@@ -221,7 +225,7 @@ class RipeAtlasTest(unittest.TestCase):
             destination.write_bytes(b"abc")
             with patch(
                 "ipid_analysis.ripe_atlas.urlopen",
-                return_value=_HTTPResponse(b"de", status=206),
+                return_value=_HTTPResponse(b"abcde", status=200),
             ):
                 result = _download("https://example.invalid/dump", destination, expected_size=5)
             self.assertEqual(result, destination)
@@ -232,6 +236,15 @@ class RipeAtlasTest(unittest.TestCase):
             destination = Path(directory) / "dump.bz2"
             partial = destination.with_suffix(".bz2.part")
             partial.write_bytes(b"abc")
+            partial.with_suffix(".part.http.json").write_text(
+                json.dumps(
+                    {
+                        "url": "https://example.invalid/dump",
+                        "validator": '"fixture-v1"',
+                        "expected_size": 5,
+                    }
+                )
+            )
             with (
                 patch(
                     "ipid_analysis.ripe_atlas.urlopen",
@@ -592,8 +605,9 @@ class RipeAtlasTest(unittest.TestCase):
                 window,
                 apply_window=False,
             )
-            part_lock = destination.parents[2] / "file-parts" / f"{part_key}.lock"
-            part_lock.parent.mkdir(parents=True)
+            part_path = destination.parents[2] / "file-parts" / f"{part_key}.pq"
+            part_lock = work_path(str(part_path), category="locks") / "part.lock"
+            part_lock.parent.mkdir(parents=True, exist_ok=True)
             part_lock.write_text("pid=512719\n", encoding="utf-8")
 
             with patch.object(ripe_atlas_module, "_pid_is_alive", return_value=False):
@@ -635,16 +649,16 @@ class RipeAtlasTest(unittest.TestCase):
                 "processed_root": root / "processed",
             }
             window = campaign_window(arguments["campaign_start"])
-            local_digest = hashlib.sha256(str(source_dir.resolve()).encode()).hexdigest()[:12]
-            prepare_lock = (
-                root
-                / "processed"
-                / "ripe-atlas"
-                / window.label
-                / f"local-{local_digest}"
-                / ".prepare.lock"
+            local_digest = hashlib.sha256(
+                (
+                    "traceroute.bz2:" + ripe_atlas_module._sha256(source_dir / "traceroute.bz2")
+                ).encode()
+            ).hexdigest()[:12]
+            dataset_directory = (
+                root / "processed" / "ripe-atlas" / window.label / f"local-{local_digest}"
             )
-            prepare_lock.parent.mkdir(parents=True)
+            prepare_lock = work_path(str(dataset_directory), category="locks") / "prepare.lock"
+            prepare_lock.parent.mkdir(parents=True, exist_ok=True)
             prepare_lock.write_text("pid=512719\n", encoding="utf-8")
             with patch.object(ripe_atlas_module, "_pid_is_alive", return_value=False):
                 first = prepare_ripe_atlas(**arguments)

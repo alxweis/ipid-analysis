@@ -15,6 +15,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import (
+    atomic_output,
+    local_log_handler,
+    publish_file,
+    publish_logs,
+    save_figure,
+)
+from ipid_analysis.runtime import start_run, temporary_path
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -134,15 +143,20 @@ def _condition_inputs(
 
 def _write_json(value: dict, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
 def _create_bundle(paths: list[Path], output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    publish_logs()
+    with (
+        atomic_output(output_path) as bundle_temporary,
+        zipfile.ZipFile(bundle_temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive,
+    ):
         for path in paths:
             archive.write(path, arcname=path.name)
     return output_path
@@ -342,7 +356,8 @@ def _plot_test_heatmap(
         text_upward_offset_points=CONFUSION_NUMERIC_TEXT_UPWARD_OFFSET_POINTS,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output_path,
         format="pdf",
         bbox_inches="tight",
@@ -379,7 +394,7 @@ def render(
     acceptance_counts: dict[tuple[str, str, str], int] = {}
     sample_counts: dict[tuple[str, str], int] = {}
     aggregate_path = output_dir / "mass-4x25-nist-baseline-scores.pq"
-    temporary = aggregate_path.with_suffix(aggregate_path.suffix + ".part")
+    temporary = temporary_path(aggregate_path)
     temporary.unlink(missing_ok=True)
 
     with pq.ParquetWriter(temporary, SCORE_SCHEMA, compression="zstd") as writer:
@@ -418,7 +433,8 @@ def render(
                         ) + int(np.count_nonzero(components[name] >= NIST_COMPONENT_THRESHOLD))
                 scores[condition][strategy] = np.concatenate(score_parts)
                 sample_counts[(condition, strategy)] = len(values)
-    temporary.replace(aggregate_path)
+    publish_file(temporary, aggregate_path)
+    temporary.unlink(missing_ok=True)
 
     acceptance_percentages = {
         key: 100.0 * count / sample_counts[(key[0], key[2])]
@@ -531,7 +547,7 @@ def _configure_logging(log_path: Path) -> None:
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
-    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler = local_log_handler(log_path)
     file_handler.setFormatter(formatter)
     logging.basicConfig(level=logging.INFO, handlers=[stream, file_handler], force=True)
     logging.getLogger("fontTools").setLevel(logging.WARNING)
@@ -547,6 +563,7 @@ def main(
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR),  # noqa: B008
     figure_dir: Path = typer.Option(DEFAULT_FIGURE_DIR),  # noqa: B008
 ) -> None:
+    start_run()
     log_path = output_dir / "nist-baseline.log"
     _configure_logging(log_path)
     outputs = render(
@@ -558,8 +575,7 @@ def main(
         output_dir=output_dir,
         figure_dir=figure_dir,
     )
-    for handler in logging.getLogger().handlers:
-        handler.flush()
+    publish_logs()
     bundle_inputs = [
         path for name, path in outputs.items() if name not in {"aggregate", "review_bundle"}
     ]

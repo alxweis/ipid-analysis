@@ -10,6 +10,10 @@ from pathlib import Path
 import duckdb
 import matplotlib
 
+from ipid_analysis.artifacts import publish_file, save_figure
+from ipid_analysis.network_role_utils import record_cache_inputs
+from ipid_analysis.runtime import connect, temporary_path
+
 matplotlib.use("Agg")
 
 from matplotlib.patches import Patch
@@ -71,17 +75,19 @@ def _sql_path(path: Path) -> str:
 
 def _write_query(con: duckdb.DuckDBPyConnection, query: str, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    partial = output.with_suffix(output.suffix + ".part")
+    partial = temporary_path(output)
     partial.unlink(missing_ok=True)
     con.execute(f"COPY ({query}) TO '{_sql_path(partial)}' (FORMAT PARQUET, COMPRESSION ZSTD)")
-    partial.replace(output)
+    publish_file(partial, output)
+    partial.unlink(missing_ok=True)
 
 
 def _write_json(output: Path, value: dict) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    partial = output.with_suffix(output.suffix + ".part")
+    partial = temporary_path(output)
     partial.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-    partial.replace(output)
+    publish_file(partial, output)
+    partial.unlink(missing_ok=True)
 
 
 def _source_metadata(source: IpidMeasurement | StrategyMerge) -> dict:
@@ -281,7 +287,8 @@ def _plot_roles(
         )
     fig.subplots_adjust(left=0.20, right=0.995, bottom=0.24, top=0.68)
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output,
         bbox_inches="tight",
         pad_inches=0.02,
@@ -330,197 +337,202 @@ def render_itdk_os_analysis(
     ):
         log_cache_reuse(source.target, outputs.role_json)
         return outputs
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    try:
-        _write_query(
-            con,
-            f"""
-            WITH population AS (
-                SELECT DISTINCT CAST(s.IP_ADDR AS VARCHAR) AS IP_ADDR,
-                    i.NODE_ID,
-                    i.T,
-                    i.D
-                FROM read_parquet('{_sql_path(strategies)}') AS s
-                INNER JOIN read_parquet('{_sql_path(dataset.interfaces_path)}') AS i
-                    USING (IP_ADDR)
-            )
-            SELECT
-                p.IP_ADDR,
-                p.NODE_ID,
-                p.T,
-                p.D,
-                TRUE AS ITDK_MATCH,
-                g.OS_GROUP,
-                TRUE AS OS_RESOLVED,
-                CASE
-                    WHEN p.T THEN '{TRANSIT_ROLE}'
-                    ELSE '{NO_TRANSIT_ROLE}'
-                END AS OBSERVED_ROLE
-            FROM population AS p
-            INNER JOIN read_parquet('{_sql_path(group_path)}') AS g USING (IP_ADDR)
-            """,
-            outputs.joined,
-        )
-        _write_query(
-            con,
-            f"""
-            WITH grouped AS (
+    with connect(config={"threads": threads} if threads else {}) as con:
+        try:
+            _write_query(
+                con,
+                f"""
+                WITH population AS (
+                    SELECT DISTINCT CAST(s.IP_ADDR AS VARCHAR) AS IP_ADDR,
+                        i.NODE_ID,
+                        i.T,
+                        i.D
+                    FROM read_parquet('{_sql_path(strategies)}') AS s
+                    INNER JOIN read_parquet('{_sql_path(dataset.interfaces_path)}') AS i
+                        USING (IP_ADDR)
+                )
                 SELECT
-                    OBSERVED_ROLE,
-                    OS_GROUP,
-                    count(*)::BIGINT AS COUNT
-                FROM read_parquet('{_sql_path(outputs.joined)}')
-                GROUP BY OBSERVED_ROLE, OS_GROUP
-            ),
-            role_totals AS (
-                SELECT
-                    OBSERVED_ROLE,
-                    sum(COUNT)::BIGINT AS ROLE_RESOLVED_TOTAL
-                FROM grouped
-                GROUP BY OBSERVED_ROLE
-            )
-            SELECT
-                g.OBSERVED_ROLE,
-                g.OS_GROUP,
-                g.COUNT,
-                t.ROLE_RESOLVED_TOTAL,
-                100.0 * g.COUNT / t.ROLE_RESOLVED_TOTAL AS PERCENTAGE
-            FROM grouped AS g
-            JOIN role_totals AS t USING (OBSERVED_ROLE)
-            ORDER BY g.OBSERVED_ROLE, g.OS_GROUP
-            """,
-            outputs.distribution,
-        )
-        rows = con.execute(
-            f"""
-            SELECT OBSERVED_ROLE, OS_GROUP, COUNT
-            FROM read_parquet('{_sql_path(outputs.distribution)}')
-            ORDER BY OBSERVED_ROLE, OS_GROUP
-            """
-        ).fetchall()
-        coverage = con.execute(
-            f"""
-            WITH population AS (
-                SELECT DISTINCT CAST(IP_ADDR AS VARCHAR) AS IP_ADDR
-                FROM read_parquet('{_sql_path(strategies)}')
-            ), itdk_matches AS (
-                SELECT p.IP_ADDR, i.T
-                FROM population AS p
-                INNER JOIN read_parquet('{_sql_path(dataset.interfaces_path)}') AS i
-                    USING (IP_ADDR)
-            ), os_matches AS (
-                SELECT p.IP_ADDR
+                    p.IP_ADDR,
+                    p.NODE_ID,
+                    p.T,
+                    p.D,
+                    TRUE AS ITDK_MATCH,
+                    g.OS_GROUP,
+                    TRUE AS OS_RESOLVED,
+                    CASE
+                        WHEN p.T THEN '{TRANSIT_ROLE}'
+                        ELSE '{NO_TRANSIT_ROLE}'
+                    END AS OBSERVED_ROLE
                 FROM population AS p
                 INNER JOIN read_parquet('{_sql_path(group_path)}') AS g USING (IP_ADDR)
-            ), resolved_roles AS (
-                SELECT T FROM read_parquet('{_sql_path(outputs.joined)}')
+                """,
+                outputs.joined,
             )
-            SELECT
-                (SELECT count(*)::BIGINT FROM population) AS total,
-                (SELECT count(*)::BIGINT FROM itdk_matches) AS itdk_matched,
-                (SELECT count(*)::BIGINT FROM os_matches) AS os_resolved,
-                (SELECT count(*)::BIGINT FROM resolved_roles) AS itdk_os_resolved,
-                (SELECT count(*) FILTER (WHERE T)::BIGINT FROM itdk_matches)
-                    AS transit_total,
-                (SELECT count(*) FILTER (WHERE T)::BIGINT FROM resolved_roles)
-                    AS transit_os_resolved,
-                (SELECT count(*) FILTER (WHERE NOT T)::BIGINT FROM itdk_matches)
-                    AS no_transit_total,
-                (SELECT count(*) FILTER (WHERE NOT T)::BIGINT FROM resolved_roles)
-                    AS no_transit_os_resolved
-            """
-        ).fetchone()
-    finally:
-        con.close()
+            _write_query(
+                con,
+                f"""
+                WITH grouped AS (
+                    SELECT
+                        OBSERVED_ROLE,
+                        OS_GROUP,
+                        count(*)::BIGINT AS COUNT
+                    FROM read_parquet('{_sql_path(outputs.joined)}')
+                    GROUP BY OBSERVED_ROLE, OS_GROUP
+                ),
+                role_totals AS (
+                    SELECT
+                        OBSERVED_ROLE,
+                        sum(COUNT)::BIGINT AS ROLE_RESOLVED_TOTAL
+                    FROM grouped
+                    GROUP BY OBSERVED_ROLE
+                )
+                SELECT
+                    g.OBSERVED_ROLE,
+                    g.OS_GROUP,
+                    g.COUNT,
+                    t.ROLE_RESOLVED_TOTAL,
+                    100.0 * g.COUNT / t.ROLE_RESOLVED_TOTAL AS PERCENTAGE
+                FROM grouped AS g
+                JOIN role_totals AS t USING (OBSERVED_ROLE)
+                ORDER BY g.OBSERVED_ROLE, g.OS_GROUP
+                """,
+                outputs.distribution,
+            )
+            rows = con.execute(
+                f"""
+                SELECT OBSERVED_ROLE, OS_GROUP, COUNT
+                FROM read_parquet('{_sql_path(outputs.distribution)}')
+                ORDER BY OBSERVED_ROLE, OS_GROUP
+                """
+            ).fetchall()
+            coverage = con.execute(
+                f"""
+                WITH population AS (
+                    SELECT DISTINCT CAST(IP_ADDR AS VARCHAR) AS IP_ADDR
+                    FROM read_parquet('{_sql_path(strategies)}')
+                ), itdk_matches AS (
+                    SELECT p.IP_ADDR, i.T
+                    FROM population AS p
+                    INNER JOIN read_parquet('{_sql_path(dataset.interfaces_path)}') AS i
+                        USING (IP_ADDR)
+                ), os_matches AS (
+                    SELECT p.IP_ADDR
+                    FROM population AS p
+                    INNER JOIN read_parquet('{_sql_path(group_path)}') AS g USING (IP_ADDR)
+                ), resolved_roles AS (
+                    SELECT T FROM read_parquet('{_sql_path(outputs.joined)}')
+                )
+                SELECT
+                    (SELECT count(*)::BIGINT FROM population) AS total,
+                    (SELECT count(*)::BIGINT FROM itdk_matches) AS itdk_matched,
+                    (SELECT count(*)::BIGINT FROM os_matches) AS os_resolved,
+                    (SELECT count(*)::BIGINT FROM resolved_roles) AS itdk_os_resolved,
+                    (SELECT count(*) FILTER (WHERE T)::BIGINT FROM itdk_matches)
+                        AS transit_total,
+                    (SELECT count(*) FILTER (WHERE T)::BIGINT FROM resolved_roles)
+                        AS transit_os_resolved,
+                    (SELECT count(*) FILTER (WHERE NOT T)::BIGINT FROM itdk_matches)
+                        AS no_transit_total,
+                    (SELECT count(*) FILTER (WHERE NOT T)::BIGINT FROM resolved_roles)
+                        AS no_transit_os_resolved
+                """
+            ).fetchone()
+        finally:
+            con.close()
 
-    if not rows:
-        raise ValueError(
-            f"{source.target}: no resolved OS address matched the measured ITDK population"
+        if not rows:
+            raise ValueError(
+                f"{source.target}: no resolved OS address matched the measured ITDK population"
+            )
+        data = _role_plot_data(
+            [(str(role), str(group), int(count)) for role, group, count in rows]
         )
-    data = _role_plot_data([(str(role), str(group), int(count)) for role, group, count in rows])
-    _plot_roles(data, outputs.role_pdf)
+        _plot_roles(data, outputs.role_pdf)
 
-    (
-        total,
-        itdk_matched,
-        os_resolved,
-        itdk_os_resolved,
-        transit_total,
-        transit_os_resolved,
-        no_transit_total,
-        no_transit_os_resolved,
-    ) = map(int, coverage)
-    itdk_unmatched = total - itdk_matched
-    report = {
-        **_source_metadata(source),
-        "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "itdk": {
-            "release": dataset.release,
-            "topology": dataset.topology,
-            "interfaces": str(dataset.interfaces_path),
-            "metadata": str(dataset.metadata_path),
-        },
-        "os": {
-            "measurement_id": os_measurement_id,
-            "source": str(os_path),
-            "groups": str(group_path),
-            "taxonomy": "canonical resolved OS_TAG mapped to OS_GROUP",
-            **group_stats,
-        },
-        "role_definition": {
-            TRANSIT_ROLE: "ITDK match with T=true; D arbitrary",
-            NO_TRANSIT_ROLE: "ITDK match with T=false; D arbitrary",
-        },
-        "methodology": {
-            "population": "measured IPs with an ITDK match and a resolved OS group",
-            "normalization": "each observed-role bar is normalized independently to 100%",
-            "legend_order": list(PAPER_OS_GROUP_ORDER),
-            "selection": (
-                "all groups when at most 10 are represented; otherwise the 9 groups with "
-                "the largest mean role-normalized share plus Other"
-            ),
-            "unresolved_os": "excluded from the bars and reported in coverage",
-        },
-        "coverage": {
-            "total_measured": total,
-            "itdk_matched": itdk_matched,
-            "itdk_unmatched": itdk_unmatched,
-            "os_resolved": os_resolved,
-            "itdk_os_resolved": itdk_os_resolved,
-            "transit_observed_total": transit_total,
-            "transit_observed_os_resolved": transit_os_resolved,
-            "transit_observed_os_coverage_percentage": (
-                100.0 * transit_os_resolved / transit_total if transit_total else 0.0
-            ),
-            "no_transit_evidence_total": no_transit_total,
-            "no_transit_evidence_os_resolved": no_transit_os_resolved,
-            "no_transit_evidence_os_coverage_percentage": (
-                100.0 * no_transit_os_resolved / no_transit_total if no_transit_total else 0.0
-            ),
-        },
-        "plot_groups": [
-            {
-                "group": group,
-                "label": _group_label(group),
-                "color": _group_color(group),
-            }
-            for group in data.groups
-        ],
-        "plot_percentages": data.percentages,
-        "plot_counts": data.counts,
-        "raw_distribution": [
-            {"role": str(role), "os_group": str(group), "count": int(count)}
-            for role, group, count in rows
-        ],
-        "outputs": {
-            "joined": str(outputs.joined),
-            "distribution": str(outputs.distribution),
-            "pdf": str(outputs.role_pdf),
-        },
-        "artifact_semantics": {
-            "joined": "matched ITDK addresses with a resolved OS group only",
-        },
-    }
-    _write_json(outputs.role_json, report)
-    return outputs
+        (
+            total,
+            itdk_matched,
+            os_resolved,
+            itdk_os_resolved,
+            transit_total,
+            transit_os_resolved,
+            no_transit_total,
+            no_transit_os_resolved,
+        ) = map(int, coverage)
+        itdk_unmatched = total - itdk_matched
+        report = {
+            **_source_metadata(source),
+            "analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "itdk": {
+                "release": dataset.release,
+                "topology": dataset.topology,
+                "interfaces": str(dataset.interfaces_path),
+                "metadata": str(dataset.metadata_path),
+            },
+            "os": {
+                "measurement_id": os_measurement_id,
+                "source": str(os_path),
+                "groups": str(group_path),
+                "taxonomy": "canonical resolved OS_TAG mapped to OS_GROUP",
+                **group_stats,
+            },
+            "role_definition": {
+                TRANSIT_ROLE: "ITDK match with T=true; D arbitrary",
+                NO_TRANSIT_ROLE: "ITDK match with T=false; D arbitrary",
+            },
+            "methodology": {
+                "population": "measured IPs with an ITDK match and a resolved OS group",
+                "normalization": "each observed-role bar is normalized independently to 100%",
+                "legend_order": list(PAPER_OS_GROUP_ORDER),
+                "selection": (
+                    "all groups when at most 10 are represented; otherwise the 9 groups with "
+                    "the largest mean role-normalized share plus Other"
+                ),
+                "unresolved_os": "excluded from the bars and reported in coverage",
+            },
+            "coverage": {
+                "total_measured": total,
+                "itdk_matched": itdk_matched,
+                "itdk_unmatched": itdk_unmatched,
+                "os_resolved": os_resolved,
+                "itdk_os_resolved": itdk_os_resolved,
+                "transit_observed_total": transit_total,
+                "transit_observed_os_resolved": transit_os_resolved,
+                "transit_observed_os_coverage_percentage": (
+                    100.0 * transit_os_resolved / transit_total if transit_total else 0.0
+                ),
+                "no_transit_evidence_total": no_transit_total,
+                "no_transit_evidence_os_resolved": no_transit_os_resolved,
+                "no_transit_evidence_os_coverage_percentage": (
+                    100.0 * no_transit_os_resolved / no_transit_total if no_transit_total else 0.0
+                ),
+            },
+            "plot_groups": [
+                {
+                    "group": group,
+                    "label": _group_label(group),
+                    "color": _group_color(group),
+                }
+                for group in data.groups
+            ],
+            "plot_percentages": data.percentages,
+            "plot_counts": data.counts,
+            "raw_distribution": [
+                {"role": str(role), "os_group": str(group), "count": int(count)}
+                for role, group, count in rows
+            ],
+            "outputs": {
+                "joined": str(outputs.joined),
+                "distribution": str(outputs.distribution),
+                "pdf": str(outputs.role_pdf),
+            },
+            "artifact_semantics": {
+                "joined": "matched ITDK addresses with a resolved OS group only",
+            },
+        }
+        _write_json(outputs.role_json, report)
+        record_cache_inputs(
+            outputs.role_json, (strategies, dataset.interfaces_path, os_path, group_path)
+        )
+        return outputs

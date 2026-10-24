@@ -23,6 +23,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import (
+    atomic_output,
+    local_log_handler,
+    publish_logs,
+    save_figure,
+    write_text,
+)
+from ipid_analysis.runtime import start_run
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -912,7 +921,7 @@ def _write_csv(rows: list[dict], path: Path) -> Path:
 
 def _write_json(value: dict, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    write_text(path, json.dumps(value, indent=2) + "\n", encoding="utf-8")
     return path
 
 
@@ -949,7 +958,7 @@ def _plot_metric_heatmap(details: list[dict], output_path: Path) -> Path:
     colorbar.set_label("Worst-condition False-RANDOM [%]")
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    save_figure(fig, output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     return output_path
 
@@ -979,7 +988,7 @@ def _plot_accuracy_tradeoff(rows: list[dict], frontier: list[dict], output_path:
     colorbar.set_label("Residual-like False-RANDOM [%]")
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    save_figure(fig, output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     return output_path
 
@@ -1021,7 +1030,7 @@ def _plot_step_sensitivity(step_rows: list[dict], output_path: Path) -> Path:
     axes[0, 0].legend(fontsize=7, loc="best")
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    save_figure(fig, output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     return output_path
 
@@ -1073,7 +1082,7 @@ def _write_recommendations(frontier: list[dict], target: float, output_path: Pat
             "",
         ]
     )
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    write_text(output_path, "\n".join(lines), encoding="utf-8")
     return output_path
 
 
@@ -1152,172 +1161,174 @@ def evaluate_random_classifier_metrics_v2(
     del calibration_conditions
 
     score_path = output_dir / "heldout-metric-scores.pq"
-    writer = pq.ParquetWriter(score_path, SCORE_SCHEMA, compression="zstd")
-    try:
-        selection_counts, selection_step_counts = _evaluate_dataset(
+    with atomic_output(score_path) as score_temporary:
+        writer = pq.ParquetWriter(score_temporary, SCORE_SCHEMA, compression="zstd")
+        try:
+            selection_counts, selection_step_counts = _evaluate_dataset(
+                "selection",
+                selection_samples_per_strategy,
+                batch_size,
+                seed + 4,
+                null_tables,
+                calibrated,
+                metric_weights,
+                None,
+            )
+            heldout_counts, heldout_step_counts = _evaluate_dataset(
+                "heldout",
+                test_samples_per_strategy,
+                batch_size,
+                seed + 5,
+                null_tables,
+                calibrated,
+                metric_weights,
+                writer,
+            )
+        finally:
+            writer.close()
+
+        standalone_timings = _benchmark_metrics(seed + 6, null_tables, benchmark_sample_count)
+        subset_timings = _benchmark_subsets(seed + 6, null_tables, benchmark_sample_count)
+        combiner_timings = _benchmark_combiners(
+            seed + 7,
+            metric_weights,
+            benchmark_sample_count,
+        )
+        selection_summaries, selection_details = _summarize_dataset(
             "selection",
-            selection_samples_per_strategy,
-            batch_size,
-            seed + 4,
-            null_tables,
             calibrated,
-            metric_weights,
-            None,
+            selection_counts,
+            subset_timings,
+            combiner_timings,
+            target_random_frr,
         )
-        heldout_counts, heldout_step_counts = _evaluate_dataset(
+        heldout_summaries, heldout_details = _summarize_dataset(
             "heldout",
-            test_samples_per_strategy,
-            batch_size,
-            seed + 5,
-            null_tables,
             calibrated,
-            metric_weights,
-            writer,
+            heldout_counts,
+            subset_timings,
+            combiner_timings,
+            target_random_frr,
         )
-    finally:
-        writer.close()
+        all_summaries = selection_summaries + heldout_summaries
+        all_details = selection_details + heldout_details
+        step_rows = _step_rows("selection", selection_step_counts) + _step_rows(
+            "heldout", heldout_step_counts
+        )
+        frontier = _accuracy_frontier(heldout_summaries)
 
-    standalone_timings = _benchmark_metrics(seed + 6, null_tables, benchmark_sample_count)
-    subset_timings = _benchmark_subsets(seed + 6, null_tables, benchmark_sample_count)
-    combiner_timings = _benchmark_combiners(
-        seed + 7,
-        metric_weights,
-        benchmark_sample_count,
-    )
-    selection_summaries, selection_details = _summarize_dataset(
-        "selection",
-        calibrated,
-        selection_counts,
-        subset_timings,
-        combiner_timings,
-        target_random_frr,
-    )
-    heldout_summaries, heldout_details = _summarize_dataset(
-        "heldout",
-        calibrated,
-        heldout_counts,
-        subset_timings,
-        combiner_timings,
-        target_random_frr,
-    )
-    all_summaries = selection_summaries + heldout_summaries
-    all_details = selection_details + heldout_details
-    step_rows = _step_rows("selection", selection_step_counts) + _step_rows(
-        "heldout", heldout_step_counts
-    )
-    frontier = _accuracy_frontier(heldout_summaries)
-
-    result_path = _write_csv(all_summaries, output_dir / "combination-results.csv")
-    detail_path = _write_csv(all_details, output_dir / "combination-by-scenario.csv")
-    step_path = _write_csv(step_rows, output_dir / "step-sensitivity.csv")
-    frontier_path = _write_csv(frontier, output_dir / "heldout-pareto-frontier.csv")
-    recommendation_path = _write_recommendations(
-        frontier,
-        target_random_frr,
-        output_dir / "recommendations.txt",
-    )
-    heatmap_path = _plot_metric_heatmap(
-        all_details,
-        figure_dir / "metric-false-random-heatmap.pdf",
-    )
-    tradeoff_path = _plot_accuracy_tradeoff(
-        heldout_summaries,
-        frontier,
-        figure_dir / "combination-accuracy-tradeoff.pdf",
-    )
-    step_plot_path = _plot_step_sensitivity(
-        step_rows,
-        figure_dir / "metric-step-sensitivity.pdf",
-    )
-    elapsed = time.perf_counter() - started
-    summary = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "experiment_version": EXPERIMENT_VERSION,
-        "production_classifier_changed": False,
-        "seed": seed,
-        "selection_samples_per_strategy_and_condition": selection_samples_per_strategy,
-        "heldout_samples_per_strategy_and_condition": test_samples_per_strategy,
-        "weight_training_samples_per_strategy_and_condition": (
-            weight_training_samples_per_strategy
-        ),
-        "calibration_samples_per_condition": calibration_samples_per_condition,
-        "null_table_samples": null_table_samples,
-        "target_random_false_rejection_rate": target_random_frr,
-        "null_table_pvalue_resolution": null_resolution,
-        "expected_calibration_tail_observations_per_condition": expected_tail,
-        "quality_warnings": quality_warnings,
-        "batch_size": batch_size,
-        "elapsed_seconds": elapsed,
-        "metric_order": list(METRIC_NAMES),
-        "metric_descriptions": METRIC_DESCRIPTIONS,
-        "combiner_order": list(COMBINER_NAMES),
-        "combiner_definitions": {
-            "minimum": "minimum component p-value (Tippett-style)",
-            "fisher": "sum(log(p)); lower values provide more evidence against RANDOM",
-            "cauchy": "negative mean tan((0.5-p)*pi); lower values provide more evidence",
-            "weighted_minimum": "minimum p_i/w_i with selection-set singleton-power weights",
-        },
-        "generator_threshold_independence": (
-            "v2 generators span the full 1..65535 step domain and do not import "
-            "classifier increment or clustering thresholds"
-        ),
-        "generator_profiles": {
-            "selection": "log-uniform base steps with moderate perturbations",
-            "heldout": "independent linear/log mixture with broader perturbations and imbalance",
-        },
-        "evaluation_generators": list(GENERATOR_NAMES),
-        "production_prefiltered_generators": sorted(PRODUCTION_PREFILTERED_GENERATORS),
-        "conditions": [condition.__dict__ for condition in CONDITIONS],
-        "step_result_bins": STEP_BIN_EDGES.tolist(),
-        "singleton_selection_detection_power": singleton_selection_power,
-        "weighted_minimum_metric_weights": {
-            name: float(weight) for name, weight in zip(METRIC_NAMES, metric_weights, strict=True)
-        },
-        "standalone_metric_runtime_ms_per_10000": standalone_timings,
-        "candidate_count_per_dataset": len(COMBINER_NAMES) * ((1 << len(METRIC_NAMES)) - 1),
-        "heldout_pareto_candidate_count": len(frontier),
-        "heldout_pareto_candidates": frontier,
-        "artifacts": {
-            "heldout_metric_scores": str(score_path),
-            "combination_results": str(result_path),
-            "combination_by_scenario": str(detail_path),
-            "step_sensitivity": str(step_path),
-            "heldout_pareto_frontier": str(frontier_path),
-            "recommendations": str(recommendation_path),
-            "metric_heatmap": str(heatmap_path),
-            "combination_tradeoff": str(tradeoff_path),
-            "step_sensitivity_plot": str(step_plot_path),
-        },
-    }
-    summary_path = _write_json(summary, output_dir / "summary.json")
-    bundle_path = _create_review_bundle(
-        [
-            summary_path,
-            result_path,
-            detail_path,
-            step_path,
-            frontier_path,
-            recommendation_path,
-            heatmap_path,
-            tradeoff_path,
-            step_plot_path,
-        ],
-        output_dir / "random-classifier-review-bundle-v2.zip",
-    )
-    LOGGER.info("Evaluation v2 completed in %.1f seconds", elapsed)
-    return {
-        "summary": summary_path,
-        "combination_results": result_path,
-        "combination_by_scenario": detail_path,
-        "step_sensitivity": step_path,
-        "heldout_pareto_frontier": frontier_path,
-        "recommendations": recommendation_path,
-        "heldout_metric_scores": score_path,
-        "metric_heatmap": heatmap_path,
-        "combination_tradeoff": tradeoff_path,
-        "step_sensitivity_plot": step_plot_path,
-        "review_bundle": bundle_path,
-    }
+        result_path = _write_csv(all_summaries, output_dir / "combination-results.csv")
+        detail_path = _write_csv(all_details, output_dir / "combination-by-scenario.csv")
+        step_path = _write_csv(step_rows, output_dir / "step-sensitivity.csv")
+        frontier_path = _write_csv(frontier, output_dir / "heldout-pareto-frontier.csv")
+        recommendation_path = _write_recommendations(
+            frontier,
+            target_random_frr,
+            output_dir / "recommendations.txt",
+        )
+        heatmap_path = _plot_metric_heatmap(
+            all_details,
+            figure_dir / "metric-false-random-heatmap.pdf",
+        )
+        tradeoff_path = _plot_accuracy_tradeoff(
+            heldout_summaries,
+            frontier,
+            figure_dir / "combination-accuracy-tradeoff.pdf",
+        )
+        step_plot_path = _plot_step_sensitivity(
+            step_rows,
+            figure_dir / "metric-step-sensitivity.pdf",
+        )
+        elapsed = time.perf_counter() - started
+        summary = {
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "experiment_version": EXPERIMENT_VERSION,
+            "production_classifier_changed": False,
+            "seed": seed,
+            "selection_samples_per_strategy_and_condition": selection_samples_per_strategy,
+            "heldout_samples_per_strategy_and_condition": test_samples_per_strategy,
+            "weight_training_samples_per_strategy_and_condition": (
+                weight_training_samples_per_strategy
+            ),
+            "calibration_samples_per_condition": calibration_samples_per_condition,
+            "null_table_samples": null_table_samples,
+            "target_random_false_rejection_rate": target_random_frr,
+            "null_table_pvalue_resolution": null_resolution,
+            "expected_calibration_tail_observations_per_condition": expected_tail,
+            "quality_warnings": quality_warnings,
+            "batch_size": batch_size,
+            "elapsed_seconds": elapsed,
+            "metric_order": list(METRIC_NAMES),
+            "metric_descriptions": METRIC_DESCRIPTIONS,
+            "combiner_order": list(COMBINER_NAMES),
+            "combiner_definitions": {
+                "minimum": "minimum component p-value (Tippett-style)",
+                "fisher": "sum(log(p)); lower values provide more evidence against RANDOM",
+                "cauchy": "negative mean tan((0.5-p)*pi); lower values provide more evidence",
+                "weighted_minimum": "minimum p_i/w_i with selection-set singleton-power weights",
+            },
+            "generator_threshold_independence": (
+                "v2 generators span the full 1..65535 step domain and do not import "
+                "classifier increment or clustering thresholds"
+            ),
+            "generator_profiles": {
+                "selection": "log-uniform base steps with moderate perturbations",
+                "heldout": "independent linear/log mixture with broader perturbations and imbalance",
+            },
+            "evaluation_generators": list(GENERATOR_NAMES),
+            "production_prefiltered_generators": sorted(PRODUCTION_PREFILTERED_GENERATORS),
+            "conditions": [condition.__dict__ for condition in CONDITIONS],
+            "step_result_bins": STEP_BIN_EDGES.tolist(),
+            "singleton_selection_detection_power": singleton_selection_power,
+            "weighted_minimum_metric_weights": {
+                name: float(weight)
+                for name, weight in zip(METRIC_NAMES, metric_weights, strict=True)
+            },
+            "standalone_metric_runtime_ms_per_10000": standalone_timings,
+            "candidate_count_per_dataset": len(COMBINER_NAMES) * ((1 << len(METRIC_NAMES)) - 1),
+            "heldout_pareto_candidate_count": len(frontier),
+            "heldout_pareto_candidates": frontier,
+            "artifacts": {
+                "heldout_metric_scores": str(score_path),
+                "combination_results": str(result_path),
+                "combination_by_scenario": str(detail_path),
+                "step_sensitivity": str(step_path),
+                "heldout_pareto_frontier": str(frontier_path),
+                "recommendations": str(recommendation_path),
+                "metric_heatmap": str(heatmap_path),
+                "combination_tradeoff": str(tradeoff_path),
+                "step_sensitivity_plot": str(step_plot_path),
+            },
+        }
+        summary_path = _write_json(summary, output_dir / "summary.json")
+        bundle_path = _create_review_bundle(
+            [
+                summary_path,
+                result_path,
+                detail_path,
+                step_path,
+                frontier_path,
+                recommendation_path,
+                heatmap_path,
+                tradeoff_path,
+                step_plot_path,
+            ],
+            output_dir / "random-classifier-review-bundle-v2.zip",
+        )
+        LOGGER.info("Evaluation v2 completed in %.1f seconds", elapsed)
+        return {
+            "summary": summary_path,
+            "combination_results": result_path,
+            "combination_by_scenario": detail_path,
+            "step_sensitivity": step_path,
+            "heldout_pareto_frontier": frontier_path,
+            "recommendations": recommendation_path,
+            "heldout_metric_scores": score_path,
+            "metric_heatmap": heatmap_path,
+            "combination_tradeoff": tradeoff_path,
+            "step_sensitivity_plot": step_plot_path,
+            "review_bundle": bundle_path,
+        }
 
 
 def _configure_logging(log_path: Path) -> None:
@@ -1325,7 +1336,7 @@ def _configure_logging(log_path: Path) -> None:
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
-    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler = local_log_handler(log_path)
     file_handler.setFormatter(formatter)
     logging.basicConfig(level=logging.INFO, handlers=[stream, file_handler], force=True)
 
@@ -1367,6 +1378,7 @@ def main(
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR),  # noqa: B008
     figure_dir: Path = typer.Option(DEFAULT_FIGURE_DIR),  # noqa: B008
 ) -> None:
+    start_run()
     log_path = output_dir / "run.log"
     _configure_logging(log_path)
     outputs = evaluate_random_classifier_metrics_v2(
@@ -1381,8 +1393,7 @@ def main(
         output_dir=output_dir,
         figure_dir=figure_dir,
     )
-    for handler in logging.getLogger().handlers:
-        handler.flush()
+    publish_logs()
     bundle_inputs = [
         path
         for name, path in outputs.items()

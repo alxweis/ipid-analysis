@@ -24,7 +24,7 @@ src = ["ipid_analysis"]
 include = ["pyproject.toml", "ipid_analysis/**/*.py"]
 
 [tool.ruff.lint]
-extend-select = ["I"]  # Add import sorting
+select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["ipid_analysis"]

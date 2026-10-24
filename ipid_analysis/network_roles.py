@@ -31,6 +31,7 @@ from ipid_analysis.ripe_atlas import (
     parse_datetime,
     prepare_ripe_atlas,
 )
+from ipid_analysis.runtime import start_run
 from ipid_analysis.strategy_merge import iter_strategy_merges
 
 app = typer.Typer()
@@ -63,6 +64,7 @@ def main(
     skip_ripe: bool = typer.Option(False, "--skip-ripe"),
 ) -> None:
     """Reuse strategies/OS data and regenerate only network-role outputs."""
+    start_run()
     manifest = load_manifest(manifest_path)
     itdk = None
     if not skip_itdk:

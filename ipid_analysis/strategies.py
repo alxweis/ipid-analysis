@@ -31,7 +31,6 @@ import re
 import shutil
 import time
 
-import duckdb
 from loguru import logger
 import numpy as np
 import pyarrow as pa
@@ -41,8 +40,18 @@ from tqdm import tqdm
 import typer
 import yaml
 
+from ipid_analysis.artifacts import (
+    adopt_existing,
+    assert_complete,
+    atomic_output,
+    completion_path,
+    fingerprints,
+    publish_file,
+    write_text,
+)
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
+from ipid_analysis.runtime import batch_budget, connect, start_run, temporary_path
 
 app = typer.Typer()
 
@@ -197,12 +206,23 @@ def load_config(snapshot_path: Path) -> MeasurementConfig:
     with snapshot_path.open() as fh:
         data = yaml.safe_load(fh)
     try:
-        return MeasurementConfig(
+        config = MeasurementConfig(
             connection_count=int(data["connection_count"]),
             requests_per_connection=int(data["requests_per_connection"]),
             request_ip_ids=np.asarray(data["request_ip_ids"], dtype=np.int64),
         )
-    except (KeyError, TypeError) as exc:
+        if not 2 <= config.connection_count <= 16 or config.connection_count % 2:
+            raise ValueError("connection_count must be even and in [2, 16]")
+        if config.requests_per_connection < 1 or config.sequence_length > 65535:
+            raise ValueError(
+                "requests_per_connection must be positive and total positions at most 65535"
+            )
+        if config.request_ip_ids.ndim != 1 or not config.request_ip_ids.size:
+            raise ValueError("request_ip_ids must be a nonempty one-dimensional array")
+        if np.any((config.request_ip_ids < 0) | (config.request_ip_ids >= MODULUS)):
+            raise ValueError("request_ip_ids must be 16-bit values")
+        return config
+    except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"{snapshot_path}: missing/invalid measurement fields ({exc})") from exc
 
 
@@ -288,6 +308,8 @@ def _batch_to_matrix(ipid_list: pa.ListArray, seq_len: int) -> tuple[np.ndarray,
 
     valid = lengths == seq_len
     flat = ipid_list.flatten().to_numpy(zero_copy_only=False)
+    if np.any((flat < 0) | (flat >= MODULUS)):
+        raise ValueError("numeric IP-ID outside [0, 65535]")
     starts = np.empty(len(lengths), dtype=np.int64)
     starts[0] = 0
     np.cumsum(lengths[:-1], out=starts[1:])
@@ -309,6 +331,9 @@ def _mass_padded(
     """
     list_lengths = ipid_list.value_lengths().to_numpy(zero_copy_only=False).astype(np.int64)
     n = len(list_lengths)
+    if not n:
+        width = sequence_length or 0
+        return np.zeros(0, np.int64), np.zeros((0, width), bool), np.empty((0, width), np.int64)
     maximum_list_length = int(list_lengths.max()) if n and list_lengths.max() > 0 else 0
     if sequence_length is not None and maximum_list_length > sequence_length:
         raise ValueError(
@@ -324,6 +349,8 @@ def _mass_padded(
         )
 
     flat = ipid_list.flatten().to_numpy(zero_copy_only=False).astype(np.int64)
+    if np.any((flat < -1) | (flat >= MODULUS)):
+        raise ValueError("numeric IP-ID outside [0, 65535] (or missing -1)")
     starts = np.empty(n, dtype=np.int64)
     starts[0] = 0
     np.cumsum(list_lengths[:-1], out=starts[1:])
@@ -704,34 +731,56 @@ def process(
     number of IPs written. ``mass`` selects the fixed-interval path that retains
     missing positions (READ_SQL_MASS); otherwise the fixed 4x4 path."""
     total = pq.ParquetFile(input_path).metadata.num_rows
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    read_sql = READ_SQL_MASS if mass else READ_SQL
-    reader_batch = min(batch_size, MASS_BATCH_CAP) if mass else batch_size
-    reader = con.execute(read_sql, {"input": str(input_path)}).to_arrow_reader(reader_batch)
-    writer = pq.ParquetWriter(output_path, OUTPUT_SCHEMA, compression=compression)
+    parameters = {
+        "validated_strategy_ips": True,
+        "classifier_version": CLASSIFIER_VERSION,
+        "mass": mass,
+        "skip_first": skip_first,
+        "connections": cfg.connection_count,
+        "requests": cfg.requests_per_connection,
+        "request_ip_ids": cfg.request_ip_ids.tolist(),
+    }
+    with (
+        connect(config={"threads": threads} if threads else {}) as con,
+        atomic_output(
+            output_path, inputs=[input_path], parameters=parameters, expected_rows=total
+        ) as temporary,
+    ):
+        count, distinct = con.execute(
+            "SELECT count(*), count(DISTINCT nullif(trim(CAST(IP_ADDR AS VARCHAR)), '')) FROM read_parquet(?)",
+            [str(input_path)],
+        ).fetchone()
+        if count != distinct:
+            raise ValueError(f"{input_path}: duplicate or null IP addresses")
+        read_sql = READ_SQL_MASS if mass else READ_SQL
+        reader_batch = batch_budget(
+            min(batch_size, MASS_BATCH_CAP) if mass else batch_size, width=cfg.sequence_length
+        )
+        reader = con.execute(read_sql, {"input": str(input_path)}).to_arrow_reader(reader_batch)
+        writer = pq.ParquetWriter(temporary, OUTPUT_SCHEMA, compression=compression)
 
-    processed = 0
-    try:
-        with tqdm(total=total, unit="IP", desc="classifying") as bar:
-            for batch in reader:
-                ip_addr = batch.column("IP_ADDR").cast(pa.string())
-                if mass:
-                    codes = classify_batch_mass(batch.column("ipid"), cfg)
-                else:
-                    valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
-                    codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
-                    if matrix.shape[0]:
-                        codes[valid] = classify_batch(matrix, cfg, skip_first)
+        processed = 0
+        try:
+            with tqdm(total=total, unit="IP", desc="classifying") as bar:
+                for batch in reader:
+                    ip_addr = batch.column("IP_ADDR").cast(pa.string())
+                    if mass:
+                        codes = classify_batch_mass(batch.column("ipid"), cfg)
+                    else:
+                        valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
+                        codes = np.full(len(valid), int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
+                        if matrix.shape[0]:
+                            codes[valid] = classify_batch(matrix, cfg, skip_first)
 
-                strategy = pa.DictionaryArray.from_arrays(pa.array(codes), STRATEGY_DICT)
-                writer.write_batch(pa.record_batch([ip_addr, strategy], schema=OUTPUT_SCHEMA))
+                    strategy = pa.DictionaryArray.from_arrays(pa.array(codes), STRATEGY_DICT)
+                    writer.write_batch(pa.record_batch([ip_addr, strategy], schema=OUTPUT_SCHEMA))
 
-                processed += len(codes)
-                bar.update(len(codes))
-    finally:
-        writer.close()
-        con.close()
-    return processed
+                    processed += len(codes)
+                    bar.update(len(codes))
+        finally:
+            writer.close()
+            con.close()
+        return processed
 
 
 def resolve_protocol(measurement: str, protocol: str) -> str:
@@ -750,22 +799,53 @@ def strategies_output_path(
     return m.artifact_path(processed_root, "strategies")
 
 
-def _publish_persisted_strategies(source_path: Path, output_path: Path) -> int:
+def _publish_persisted_strategies(source_path: Path, output_path: Path, expected_rows=None) -> int:
     """Atomically copy a persisted workflow classification into processed data."""
+    validate_strategies(source_path, expected_rows)
     parquet = pq.ParquetFile(source_path)
-    if parquet.schema_arrow.names != OUTPUT_SCHEMA.names:
-        raise ValueError(f"{source_path}: invalid strategies schema")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     try:
         shutil.copyfile(source_path, temporary)
-        temporary.replace(output_path)
+        publish_file(
+            temporary,
+            output_path,
+            inputs=[source_path],
+            parameters={"origin": "persisted", "validated_strategy_ips": True},
+        )
+        temporary.unlink(missing_ok=True)
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
     return parquet.metadata.num_rows
+
+
+def validate_strategies(path: Path, expected_rows: int | None = None) -> None:
+    """Validate imported/legacy labels once at the processing boundary."""
+    assert_complete(path)
+    parquet = pq.ParquetFile(path)
+    if parquet.schema_arrow.names != OUTPUT_SCHEMA.names:
+        raise ValueError(f"{path}: invalid strategies schema")
+    if expected_rows is not None and parquet.metadata.num_rows != expected_rows:
+        raise ValueError(f"{path}: strategies do not cover all {expected_rows} raw rows")
+    marker = completion_path(path)
+    if (
+        marker.is_file()
+        and json.loads(marker.read_text()).get("parameters", {}).get("validated_strategy_ips")
+        is True
+    ):
+        return
+    with connect() as con:
+        count, distinct, invalid = con.execute(
+            "SELECT count(*), count(DISTINCT nullif(trim(CAST(IP_ADDR AS VARCHAR)), '')), count(*) FILTER (WHERE "
+            "IPID_SELECTION_STRATEGY IS NULL OR CAST(IPID_SELECTION_STRATEGY AS VARCHAR) "
+            "NOT IN (SELECT unnest(?))) FROM read_parquet(?)",
+            [STRATEGY_NAMES, str(path)],
+        ).fetchone()
+    if count != distinct or invalid:
+        raise ValueError(f"{path}: duplicate/null IPs or unknown strategy labels")
 
 
 def classify_paths(
@@ -822,10 +902,12 @@ def classify_measurement(
     persisted_path = raw_dir / OUTPUT_NAME
     output_path = strategies_output_path(m, processed_root)
     publish_metadata_path = output_path.with_suffix(".published.json")
+    expected_rows = pq.ParquetFile(input_path).metadata.num_rows if input_path.is_file() else None
     if reclassify:
         publish_metadata_path.unlink(missing_ok=True)
 
     if persisted_path.is_file() and not reclassify:
+        assert_complete(persisted_path)
         persisted_stat = persisted_path.stat()
         try:
             publish_metadata = json.loads(publish_metadata_path.read_text(encoding="utf-8"))
@@ -836,13 +918,20 @@ def classify_measurement(
             "size": persisted_stat.st_size,
             "mtime_ns": persisted_stat.st_mtime_ns,
         }:
-            n = pq.ParquetFile(output_path).metadata.num_rows
-            logger.info(
-                f"[{m.target}] reusing {n:,} published workflow classifications -> {output_path}"
-            )
-            return output_path
-        n = _publish_persisted_strategies(persisted_path, output_path)
-        publish_metadata_path.write_text(
+            try:
+                validate_strategies(output_path, expected_rows)
+            except (OSError, ValueError):
+                logger.warning(
+                    f"[{m.target}] restoring incomplete processed copy from persisted labels"
+                )
+            else:
+                logger.info(
+                    f"[{m.target}] reusing published workflow classifications -> {output_path}"
+                )
+                return output_path
+        n = _publish_persisted_strategies(persisted_path, output_path, expected_rows)
+        write_text(
+            publish_metadata_path,
             json.dumps(
                 {
                     "source": str(persisted_path),
@@ -861,9 +950,31 @@ def classify_measurement(
         return output_path
 
     if output_path.is_file() and not reclassify:
-        n = pq.ParquetFile(output_path).metadata.num_rows
-        logger.info(f"[{m.target}] reusing {n:,} classified IPs -> {output_path}")
-        return output_path
+        try:
+            validate_strategies(output_path, expected_rows)
+        except (OSError, ValueError):
+            if not input_path.is_file() or not snapshot_path.is_file():
+                raise
+            logger.warning(f"[{m.target}] rebuilding incomplete classification from raw input")
+        else:
+            adopt_existing(
+                output_path,
+                inputs=[input_path] if input_path.is_file() else [],
+                parameters={"origin": "legacy", "validated_strategy_ips": True},
+            )
+            marker = completion_path(output_path)
+            if marker.is_file():
+                info = json.loads(marker.read_text())
+                if (
+                    info.get("parameters", {}).get("origin") != "persisted"
+                    and info.get("sources")
+                    and info["sources"] != fingerprints([input_path])
+                ):
+                    raise ValueError(
+                        f"{output_path}: raw input changed; use --reclassify explicitly"
+                    )
+            logger.info(f"[{m.target}] reusing classified IPs -> {output_path}")
+            return output_path
 
     mass = m.scale == "mass"
     cfg = load_config(snapshot_path)
@@ -912,6 +1023,7 @@ def main(
         help="ignore persisted strategies and classify the measurement again",
     ),
 ) -> None:
+    start_run()
     m = resolve(load_manifest(manifest), target)
     if m is None:
         logger.error(f"{target}: not present in {manifest}")

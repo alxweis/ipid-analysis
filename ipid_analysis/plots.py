@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import duckdb
 import matplotlib
 import numpy as np
+
+from ipid_analysis.artifacts import save_figure
+from ipid_analysis.runtime import connect
 
 matplotlib.use("Agg")  # headless: safe for CLI/servers
 
@@ -29,14 +31,14 @@ ACCENT = "#DD8452"
 # --------------------------------------------------------------------------
 def strategy_counts(strategies_path: Path) -> dict[str, int]:
     """Absolute count per strategy (canonical order, missing ones as 0)."""
-    con = duckdb.connect()
-    rows = con.execute(
-        "SELECT IPID_SELECTION_STRATEGY AS s, count(*) AS n FROM read_parquet($p) GROUP BY 1",
-        {"p": str(strategies_path)},
-    ).fetchall()
-    con.close()
-    counts = dict(rows)
-    return {name: int(counts.get(name, 0)) for name in STRATEGY_NAMES}
+    with connect() as con:
+        rows = con.execute(
+            "SELECT IPID_SELECTION_STRATEGY AS s, count(*) AS n FROM read_parquet($p) GROUP BY 1",
+            {"p": str(strategies_path)},
+        ).fetchall()
+        con.close()
+        counts = dict(rows)
+        return {name: int(counts.get(name, 0)) for name in STRATEGY_NAMES}
 
 
 def strategy_percentages(counts: dict[str, int], total: int) -> dict[str, float]:
@@ -69,7 +71,7 @@ def plot_strategy_distribution(
     ax.spines[["top", "right"]].set_visible(False)
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_pdf, bbox_inches="tight")
+    save_figure(fig, output_pdf, bbox_inches="tight")
     plt.close(fig)
     return output_pdf
 
@@ -83,50 +85,54 @@ def interval_stats(intervals_path: Path, n_bins: int = 50, clip_quantile: float 
     The histogram range is clipped at ``clip_quantile`` so a long tail of outliers
     (e.g. retransmits) doesn't squash the bulk. Everything is computed in DuckDB
     over the unnested list column -- no full materialization in Python."""
-    con = duckdb.connect()
-    unnest = "SELECT unnest(PROBING_INTERVALS) AS iv FROM read_parquet($p)"
-    n, lo, hi, mean, std, p50, p90, pc = con.execute(
-        f"SELECT count(*), min(iv), max(iv), avg(iv), stddev_pop(iv), "
-        f"approx_quantile(iv, 0.5), approx_quantile(iv, 0.9), approx_quantile(iv, {clip_quantile}) "
-        f"FROM ({unnest})",
-        {"p": str(intervals_path)},
-    ).fetchone()
+    with connect() as con:
+        unnest = "SELECT unnest(PROBING_INTERVALS) AS iv FROM read_parquet($p)"
+        n, lo, hi, mean, std, p50, p90, pc = con.execute(
+            f"SELECT count(*), min(iv), max(iv), avg(iv), stddev_pop(iv), "
+            f"approx_quantile(iv, 0.5), approx_quantile(iv, 0.9), approx_quantile(iv, {clip_quantile}) "
+            f"FROM ({unnest})",
+            {"p": str(intervals_path)},
+        ).fetchone()
 
-    if not n:
+        if not n:
+            con.close()
+            return {
+                "count": 0,
+                "unit": "microseconds",
+                "histogram": {"bin_edges": [], "counts": []},
+            }
+
+        hi_clip = pc if pc > lo else hi
+        bw = max((hi_clip - lo) / n_bins, 1)
+        rows = con.execute(
+            f"SELECT least(floor((iv - {lo}) / {bw}), {n_bins - 1})::INT AS b, count(*) AS c "
+            f"FROM ({unnest}) WHERE iv BETWEEN {lo} AND {hi_clip} GROUP BY b ORDER BY b",
+            {"p": str(intervals_path)},
+        ).fetchall()
         con.close()
-        return {"count": 0, "unit": "microseconds", "histogram": {"bin_edges": [], "counts": []}}
 
-    hi_clip = pc if pc > lo else hi
-    bw = max((hi_clip - lo) / n_bins, 1)
-    rows = con.execute(
-        f"SELECT least(floor((iv - {lo}) / {bw}), {n_bins - 1})::INT AS b, count(*) AS c "
-        f"FROM ({unnest}) WHERE iv BETWEEN {lo} AND {hi_clip} GROUP BY b ORDER BY b",
-        {"p": str(intervals_path)},
-    ).fetchall()
-    con.close()
+        counts = [0] * n_bins
+        for b, c in rows:
+            counts[int(b)] = int(c)
+        edges = [lo + i * bw for i in range(n_bins + 1)]
 
-    counts = [0] * n_bins
-    for b, c in rows:
-        counts[int(b)] = int(c)
-    edges = [lo + i * bw for i in range(n_bins + 1)]
-
-    return {
-        "count": int(n),
-        "unit": "microseconds",
-        "min": int(lo),
-        "max": int(hi),
-        "mean": float(mean),
-        "stddev": float(std),
-        "p50": int(p50),
-        "p90": int(p90),
-        f"p{int(clip_quantile * 100)}": int(pc),
-        "histogram": {
-            "bin_edges": edges,
-            "counts": counts,
-            "range": [int(lo), float(hi_clip)],
-            "clipped_beyond_range": int(n - sum(counts)),
-        },
-    }
+        return {
+            "count": int(n),
+            "unit": "microseconds",
+            "min": int(lo),
+            "max": int(hi),
+            "mean": float(mean),
+            "stddev": float(std),
+            "p50": int(p50),
+            "p90": int(p90),
+            f"p{int(clip_quantile * 100)}": int(pc),
+            "histogram": {
+                "bin_edges": edges,
+                "counts": counts,
+                "range": [int(lo), float(hi_clip)],
+                "clipped_beyond_range": int(n - sum(counts)),
+            },
+        }
 
 
 def plot_probing_intervals(stats: dict, output_pdf: Path, title: str | None = None) -> Path:
@@ -152,7 +158,7 @@ def plot_probing_intervals(stats: dict, output_pdf: Path, title: str | None = No
     ax.spines[["top", "right"]].set_visible(False)
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_pdf, bbox_inches="tight")
+    save_figure(fig, output_pdf, bbox_inches="tight")
     plt.close(fig)
     return output_pdf
 
@@ -167,26 +173,26 @@ def increment_cdf(increments_path: Path, n_points: int = 200) -> dict:
     output)."""
     probs = np.linspace(0.0, 1.0, n_points)
     probs_sql = "[" + ",".join(f"{p:.5f}" for p in probs) + "]"
-    con = duckdb.connect()
-    rows = con.execute(
-        f"SELECT CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS s, count(*) AS n, "
-        f"approx_quantile(iv, {probs_sql}) AS qs "
-        f"FROM (SELECT IPID_SELECTION_STRATEGY, unnest(INCREMENTS) AS iv "
-        f"      FROM read_parquet($p)) GROUP BY 1",
-        {"p": str(increments_path)},
-    ).fetchall()
-    con.close()
+    with connect() as con:
+        rows = con.execute(
+            f"SELECT CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS s, count(*) AS n, "
+            f"approx_quantile(iv, {probs_sql}) AS qs "
+            f"FROM (SELECT IPID_SELECTION_STRATEGY, unnest(INCREMENTS) AS iv "
+            f"      FROM read_parquet($p)) GROUP BY 1",
+            {"p": str(increments_path)},
+        ).fetchall()
+        con.close()
 
-    pct = [round(float(p) * 100.0, 3) for p in probs]
-    out = {}
-    for s, n, qs in rows:
-        if n:
-            out[s] = {
-                "count": int(n),
-                "increment": [int(x) for x in qs],
-                "cumulative_pct": pct,
-            }
-    return out
+        pct = [round(float(p) * 100.0, 3) for p in probs]
+        out = {}
+        for s, n, qs in rows:
+            if n:
+                out[s] = {
+                    "count": int(n),
+                    "increment": [int(x) for x in qs],
+                    "cumulative_pct": pct,
+                }
+        return out
 
 
 def plot_increment_cdf(cdf: dict, output_pdf: Path, title: str | None = None) -> Path:
@@ -218,6 +224,6 @@ def plot_increment_cdf(cdf: dict, output_pdf: Path, title: str | None = None) ->
         ax.legend(fontsize=10)
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_pdf, bbox_inches="tight")
+    save_figure(fig, output_pdf, bbox_inches="tight")
     plt.close(fig)
     return output_pdf
