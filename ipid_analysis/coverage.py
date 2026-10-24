@@ -3,10 +3,10 @@
 import json
 from pathlib import Path
 
-import duckdb
-
+from ipid_analysis.artifacts import publish_file
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import IpidMeasurement, resolve
+from ipid_analysis.runtime import connect, temporary_path
 
 FIXED_BASE_TARGET_NAME = "zmap-fixed-base-sample.pq"
 
@@ -50,7 +50,7 @@ def write_coverage(
         if not path.is_file():
             raise FileNotFoundError(path)
 
-    with duckdb.connect() as con:
+    with connect() as con:
         ipid_count, zmap_count, outside_target_count = con.execute(
             """
             SELECT
@@ -75,7 +75,7 @@ def write_coverage(
 
     output_path = m.artifact_path(processed_root, "coverage", "json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.write_text(
         json.dumps(
             {
@@ -87,5 +87,6 @@ def write_coverage(
         )
         + "\n"
     )
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path

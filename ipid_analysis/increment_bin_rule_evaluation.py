@@ -25,6 +25,14 @@ import matplotlib
 import numpy as np
 import typer
 
+from ipid_analysis.artifacts import (
+    local_log_handler,
+    publish_logs,
+    save_figure,
+    write_text,
+)
+from ipid_analysis.runtime import start_run
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -718,7 +726,7 @@ def _plot_heatmap(details: list[dict], output_path: Path) -> Path:
     axis.set_ylabel("Increment bin rule")
     figure.colorbar(image, ax=axis, label="False-RANDOM [%]")
     figure.tight_layout()
-    figure.savefig(output_path)
+    save_figure(figure, output_path)
     plt.close(figure)
     return output_path
 
@@ -754,7 +762,7 @@ def _plot_summary(summaries: list[dict], details: list[dict], output_path: Path)
     # Reference the paper summary so static analysis catches profile coverage.
     assert set(paper) == set(names)
     figure.tight_layout()
-    figure.savefig(output_path)
+    save_figure(figure, output_path)
     plt.close(figure)
     return output_path
 
@@ -811,7 +819,7 @@ def _write_recommendations(summaries: list[dict], details: list[dict], output_pa
             "",
         ]
     )
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    write_text(output_path, "\n".join(lines), encoding="utf-8")
     return output_path
 
 
@@ -947,7 +955,7 @@ def evaluate_increment_bin_rules(
         },
     }
     summary_path = output_dir / "summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_text(summary_path, json.dumps(summary, indent=2), encoding="utf-8")
     bundle_path = _create_review_bundle(
         [
             summary_path,
@@ -978,7 +986,7 @@ def _configure_logging(log_path: Path) -> None:
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
-    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler = local_log_handler(log_path)
     file_handler.setFormatter(formatter)
     logging.basicConfig(level=logging.INFO, handlers=[stream, file_handler], force=True)
 
@@ -1006,6 +1014,7 @@ def main(
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR),  # noqa: B008
     figure_dir: Path = typer.Option(DEFAULT_FIGURE_DIR),  # noqa: B008
 ) -> None:
+    start_run()
     log_path = output_dir / "run.log"
     _configure_logging(log_path)
     outputs = evaluate_increment_bin_rules(
@@ -1020,8 +1029,7 @@ def main(
         output_dir=output_dir,
         figure_dir=figure_dir,
     )
-    for handler in logging.getLogger().handlers:
-        handler.flush()
+    publish_logs()
     bundle_inputs = [path for name, path in outputs.items() if name != "review_bundle"]
     bundle_inputs.append(log_path)
     _create_review_bundle(bundle_inputs, outputs["review_bundle"])

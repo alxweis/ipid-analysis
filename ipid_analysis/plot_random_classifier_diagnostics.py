@@ -14,6 +14,15 @@ import matplotlib
 import numpy as np
 import typer
 
+from ipid_analysis.artifacts import (
+    atomic_output,
+    local_log_handler,
+    publish_logs,
+    save_figure,
+    write_text,
+)
+from ipid_analysis.runtime import start_run
+
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -242,7 +251,7 @@ def _plot_candidate_confusion(metrics: dict, output_path: Path) -> Path:
     fig.subplots_adjust(left=0.10, right=0.88, bottom=0.24, top=0.82, wspace=0.22)
     add_fixed_percentage_colorbar(fig, image, left=0.91, center_y=0.53)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    save_figure(fig, output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     return output_path
 
@@ -272,7 +281,7 @@ def _plot_method_confusion(metrics: dict, output_path: Path) -> Path:
     )
     add_fixed_percentage_colorbar(fig, image, left=0.91, center_y=0.50)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    save_figure(fig, output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     return output_path
 
@@ -333,7 +342,7 @@ def _plot_candidate_by_generator(rows: list[dict], output_path: Path) -> Path:
         label="Classified Random [%]",
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    save_figure(fig, output_path, format="pdf", bbox_inches="tight")
     plt.close(fig)
     return output_path
 
@@ -349,13 +358,17 @@ def _write_csv(rows: list[dict], output_path: Path) -> Path:
 
 def _write_json(value: dict, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_text(output_path, json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return output_path
 
 
 def _create_bundle(paths: list[Path], output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    publish_logs()
+    with (
+        atomic_output(output_path) as bundle_temporary,
+        zipfile.ZipFile(bundle_temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive,
+    ):
         for path in paths:
             archive.write(path, arcname=path.name)
     return output_path
@@ -448,7 +461,7 @@ def _configure_logging(log_path: Path) -> None:
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
-    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler = local_log_handler(log_path)
     file_handler.setFormatter(formatter)
     logging.basicConfig(level=logging.INFO, handlers=[stream, file_handler], force=True)
     logging.getLogger("fontTools").setLevel(logging.WARNING)
@@ -466,6 +479,7 @@ def main(
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR),  # noqa: B008
     figure_dir: Path = typer.Option(DEFAULT_FIGURE_DIR),  # noqa: B008
 ) -> None:
+    start_run()
     log_path = output_dir / "random-classifier-paper-diagnostics.log"
     _configure_logging(log_path)
     outputs = render(
@@ -479,8 +493,7 @@ def main(
         output_dir=output_dir,
         figure_dir=figure_dir,
     )
-    for handler in logging.getLogger().handlers:
-        handler.flush()
+    publish_logs()
     bundle_inputs = [path for name, path in outputs.items() if name != "review_bundle"]
     bundle_inputs.append(log_path)
     _create_bundle(bundle_inputs, outputs["review_bundle"])

@@ -10,17 +10,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import duckdb
 import matplotlib.pyplot as plt
 import numpy as np
 import typer
 
+from ipid_analysis.artifacts import save_figure
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import load_manifest, resolve
 from ipid_analysis.random_classifier_candidate import (
     candidate_random_score_components,
     production_candidate_null_tables,
 )
+from ipid_analysis.runtime import connect, start_run
 from ipid_analysis.strategies import (
     INPUT_NAME,
     MODULUS,
@@ -73,37 +74,39 @@ def sample_sequences(
         if not path.is_file():
             raise FileNotFoundError(path)
 
-    connection = duckdb.connect()
-    try:
-        total = connection.execute(
-            """
-            SELECT count(*)
-            FROM read_parquet($strategies)
-            WHERE CAST(IPID_SELECTION_STRATEGY AS VARCHAR) = $strategy
-            """,
-            {"strategies": str(strategies_path), "strategy": strategy},
-        ).fetchone()[0]
-        rows = connection.execute(
-            """
-            SELECT raw.IP_ADDR, raw.IPID_SEQUENCE
-            FROM read_parquet($raw) AS raw
-            INNER JOIN read_parquet($strategies) AS classified USING (IP_ADDR)
-            WHERE CAST(classified.IPID_SELECTION_STRATEGY AS VARCHAR) = $strategy
-            ORDER BY hash(raw.IP_ADDR || ':' || CAST($seed AS VARCHAR))
-            LIMIT $sample_count
-            """,
-            {
-                "raw": str(raw_path),
-                "strategies": str(strategies_path),
-                "strategy": strategy,
-                "seed": int(seed),
-                "sample_count": int(sample_count),
-            },
-        ).fetchall()
-    finally:
-        connection.close()
+    with connect() as connection:
+        try:
+            total = connection.execute(
+                """
+                SELECT count(*)
+                FROM read_parquet($strategies)
+                WHERE CAST(IPID_SELECTION_STRATEGY AS VARCHAR) = $strategy
+                """,
+                {"strategies": str(strategies_path), "strategy": strategy},
+            ).fetchone()[0]
+            rows = connection.execute(
+                """
+                SELECT raw.IP_ADDR, raw.IPID_SEQUENCE
+                FROM read_parquet($raw) AS raw
+                INNER JOIN read_parquet($strategies) AS classified USING (IP_ADDR)
+                WHERE CAST(classified.IPID_SELECTION_STRATEGY AS VARCHAR) = $strategy
+                ORDER BY hash(raw.IP_ADDR || ':' || CAST($seed AS VARCHAR))
+                LIMIT $sample_count
+                """,
+                {
+                    "raw": str(raw_path),
+                    "strategies": str(strategies_path),
+                    "strategy": strategy,
+                    "seed": int(seed),
+                    "sample_count": int(sample_count),
+                },
+            ).fetchall()
+        finally:
+            connection.close()
 
-    return int(total), [SequenceSample(str(ip_addr), str(sequence)) for ip_addr, sequence in rows]
+        return int(total), [
+            SequenceSample(str(ip_addr), str(sequence)) for ip_addr, sequence in rows
+        ]
 
 
 def parse_sequence(raw_sequence: str, sequence_length: int) -> np.ndarray:
@@ -322,6 +325,7 @@ def main(
     ),
 ) -> None:
     """Show sampled sequences; closing each window advances to the next one."""
+    start_run()
     strategy = strategy.upper().replace("-", "_")
     measurement = resolve(load_manifest(manifest), target)
     if measurement is None:
@@ -370,7 +374,7 @@ def main(
             )
             safe_ip = sample.ip_addr.replace(":", "_")
             output_path = save_dir / f"{index + 1:02d}-{safe_ip}.png"
-            figure.savefig(output_path, dpi=160)
+            save_figure(figure, output_path, dpi=160)
             plt.close(figure)
             typer.echo(output_path)
         return

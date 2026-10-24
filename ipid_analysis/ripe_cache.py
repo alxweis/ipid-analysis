@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,13 +11,12 @@ import tempfile
 
 import pyarrow.parquet as pq
 
+from ipid_analysis.artifacts import assert_complete, file_digest, publish_file
+from ipid_analysis.runtime import scratch_root
+
 
 def digest(path: Path) -> str:
-    value = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            value.update(block)
-    return value.hexdigest()
+    return file_digest(path)
 
 
 class RoleCache:
@@ -58,7 +56,7 @@ class RoleCache:
         if not self.prefix:
             return False
         parquet.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=parquet.parent, prefix=".ripe-cache-") as directory:
+        with tempfile.TemporaryDirectory(dir=scratch_root(), prefix=".ripe-cache-") as directory:
             root = Path(directory)
             manifest = root / "manifest.json"
             if not self._get(f"{self.prefix}/{key}/manifest.json", manifest):
@@ -77,13 +75,14 @@ class RoleCache:
             expected = ["IP_V4", "T", "D"] if version == "2" else ["IP_V4", "IP_ADDR", "T", "D"]
             if names != expected:
                 raise ValueError("RIPE S3 cache schema mismatch")
-            data.replace(parquet)
-            manifest.replace(metadata)
+            publish_file(data, parquet)
+            publish_file(manifest, metadata)
         return True
 
     def publish(self, key: str, parquet: Path, metadata: Path) -> None:
         if not self.prefix:
             return
+        assert_complete(parquet)
         info = json.loads(metadata.read_text(encoding="utf-8"))
         publication = f"{self.prefix}/{key}"
         if info.get("published_to") == publication:
@@ -91,10 +90,10 @@ class RoleCache:
         checksum = digest(parquet)
         info["parquet_sha256"] = checksum
         info["published_to"] = publication
-        with tempfile.TemporaryDirectory(dir=metadata.parent, prefix=".ripe-upload-") as directory:
+        with tempfile.TemporaryDirectory(dir=scratch_root(), prefix=".ripe-upload-") as directory:
             manifest = Path(directory) / "manifest.json"
             manifest.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
             self._put(parquet, f"{self.prefix}/objects/{checksum}.pq")
             # Content-addressed objects are immutable. The manifest is the commit marker.
             self._put(manifest, f"{self.prefix}/{key}/manifest.json")
-            manifest.replace(metadata)
+            publish_file(manifest, metadata)

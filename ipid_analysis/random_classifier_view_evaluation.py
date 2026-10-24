@@ -24,6 +24,15 @@ import pyarrow.parquet as pq
 from scipy.special import gammaincc
 import typer
 
+from ipid_analysis.artifacts import (
+    atomic_output,
+    local_log_handler,
+    publish_logs,
+    save_figure,
+    write_text,
+)
+from ipid_analysis.runtime import start_run
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -598,7 +607,10 @@ def _evaluate(
     operating_counts: dict[tuple[str, str, str, str, str], list[int]] = {}
     catches: dict[tuple[str, str, str, str, str], int] = {}
     schema = _score_schema(rules, include_gap_aggregate)
-    with pq.ParquetWriter(score_path, schema, compression="zstd") as writer:
+    with (
+        atomic_output(score_path) as score_temporary,
+        pq.ParquetWriter(score_temporary, schema, compression="zstd") as writer,
+    ):
         for profile_index, profile in enumerate(PROFILE_NAMES):
             sample_count = preset.paper_samples if profile == "paper" else preset.heldout_samples
             for offset in range(0, sample_count, preset.batch_size):
@@ -977,7 +989,7 @@ def _plot_accuracy(summary_rows: list[dict], path: Path) -> None:
     axis.set_xlabel("Structured sequences classified Random [%]")
     axis.grid(axis="x", color="0.88", linewidth=0.6)
     fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight")
+    save_figure(fig, path, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -1006,7 +1018,7 @@ def _plot_per_bucket(detail_rows: list[dict], summary_rows: list[dict], path: Pa
     axis.set_xlabel("Paper Per-Bucket classified Random under Lossy + Reordered [%]")
     axis.grid(axis="x", color="0.88", linewidth=0.6)
     fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight")
+    save_figure(fig, path, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -1060,7 +1072,7 @@ def _plot_final_tuning(operating_rows: list[dict], path: Path) -> None:
         axis.grid(color="0.88", linewidth=0.6)
     axes[0].legend(frameon=False)
     fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight")
+    save_figure(fig, path, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -1138,7 +1150,7 @@ def _recommendations(summary_rows: list[dict], path: Path, preset_name: str) -> 
             "  - No synthetic evaluation substitutes for a real-world ground-truth dataset.",
         ]
     )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_text(path, "\n".join(lines) + "\n", encoding="utf-8")
     return shortlist
 
 
@@ -1161,7 +1173,11 @@ def _review_bundle(output_dir: Path, figure_dir: Path) -> Path:
         "per-bucket-lossy-reordered.pdf",
         "final-tuning-tradeoff.pdf",
     )
-    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    publish_logs()
+    with (
+        atomic_output(path) as bundle_temporary,
+        zipfile.ZipFile(bundle_temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive,
+    ):
         for name in names:
             candidate = output_dir / name
             if candidate.exists():
@@ -1182,6 +1198,7 @@ def main(
     seed: int = typer.Option(CANDIDATE_NULL_TABLE_SEED),
 ) -> None:
     """Run the staged, production-independent view-evidence experiment."""
+    start_run()
     if preset not in PRESETS:
         raise typer.BadParameter(f"unknown preset {preset!r}; choose from {tuple(PRESETS)}")
     selected = ALL_CANDIDATES
@@ -1207,7 +1224,7 @@ def main(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         handlers=[
-            logging.FileHandler(log_path, mode="w", encoding="utf-8"),
+            local_log_handler(log_path),
             logging.StreamHandler(),
         ],
         force=True,
@@ -1303,7 +1320,8 @@ def main(
         "production_classifier_changed": False,
         "score_parquet": str(output_dir / "view-scores.pq"),
     }
-    (output_dir / "summary.json").write_text(
+    write_text(
+        output_dir / "summary.json",
         json.dumps(metadata, indent=2, sort_keys=True),
         encoding="utf-8",
     )

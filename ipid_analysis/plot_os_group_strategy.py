@@ -6,13 +6,15 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-import duckdb
 from loguru import logger
 import matplotlib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
+
+from ipid_analysis.artifacts import cache_current, publish_file, save_figure
+from ipid_analysis.runtime import connect, start_run, temporary_path
 
 matplotlib.use("Agg")
 
@@ -346,24 +348,27 @@ def _case_mapping(expression: str, mapping: dict[str, str], default: str) -> str
 
 def _write_table(table: pa.Table, output_path: Path, compression: str | None) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     pq.write_table(table, temporary, compression=compression)
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
 def _write_json(output_path: Path, value: dict) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
 def _save_figure(fig, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output_path,
         bbox_inches="tight",
         pad_inches=0.02,
@@ -387,7 +392,10 @@ def _validate_raw_schema(os_path: Path) -> None:
 
 def _group_file_is_current(os_path: Path, group_path: Path) -> bool:
     metadata_path = group_path.with_suffix(".meta.json")
-    if not group_path.is_file() or not metadata_path.is_file():
+    if (
+        not cache_current(group_path, [os_path], {"taxonomy_version": TAXONOMY_VERSION})
+        or not metadata_path.is_file()
+    ):
         return False
     try:
         metadata = json.loads(metadata_path.read_text())
@@ -420,73 +428,83 @@ def write_os_groups(
         }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     source = _sql_literal(str(os_path))
     destination = _sql_literal(str(temporary))
     group_expression = _case_mapping("OS_TAG", TAG_TO_GROUP, "NULL")
     parquet_compression = compression or "uncompressed"
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    try:
-        validation = con.execute(
-            f"""
-            SELECT count(*)::BIGINT,
-                   count(*) FILTER (WHERE IP_ADDR IS NULL OR trim(IP_ADDR) = '')::BIGINT,
-                   count(*) FILTER (
-                       WHERE OS_STATUS NOT IN ('resolved', 'ambiguous', 'unclassified')
-                          OR OS_STATUS IS NULL
-                   )::BIGINT,
-                   count(*) FILTER (
-                       WHERE (OS_STATUS = 'resolved' AND (OS_TAG IS NULL OR trim(OS_TAG) = ''))
-                          OR (OS_STATUS <> 'resolved' AND OS_TAG IS NOT NULL)
-                   )::BIGINT,
-                   list(DISTINCT lower(trim(OS_TAG))) FILTER (
-                       WHERE OS_STATUS = 'resolved' AND {group_expression} IS NULL
-                   )
-            FROM read_parquet({source})
-            """
-        ).fetchone()
-        evidence_rows, invalid_ips, invalid_statuses, invalid_decisions, unknown_tags = validation
-        if invalid_ips:
-            raise ValueError(f"{os_path}: {invalid_ips} empty IP_ADDR values")
-        if invalid_statuses:
-            raise ValueError(f"{os_path}: {invalid_statuses} invalid OS_STATUS values")
-        if invalid_decisions:
-            raise ValueError(f"{os_path}: {invalid_decisions} inconsistent OS_STATUS/OS_TAG rows")
-        if unknown_tags:
-            raise ValueError(f"{os_path}: unmapped OS_TAG values: {sorted(unknown_tags)}")
-
-        con.execute(
-            f"""
-            COPY (
-                SELECT CAST(IP_ADDR AS VARCHAR) AS IP_ADDR,
-                       {group_expression} AS OS_GROUP
+    with connect(config={"threads": threads} if threads else {}) as con:
+        try:
+            validation = con.execute(
+                f"""
+                SELECT count(*)::BIGINT,
+                       count(*) FILTER (WHERE IP_ADDR IS NULL OR trim(IP_ADDR) = '')::BIGINT,
+                       count(*) FILTER (
+                           WHERE OS_STATUS NOT IN ('resolved', 'ambiguous', 'unclassified')
+                              OR OS_STATUS IS NULL
+                       )::BIGINT,
+                       count(*) FILTER (
+                           WHERE (OS_STATUS = 'resolved' AND (OS_TAG IS NULL OR trim(OS_TAG) = ''))
+                              OR (OS_STATUS <> 'resolved' AND OS_TAG IS NOT NULL)
+                       )::BIGINT,
+                       list(DISTINCT lower(trim(OS_TAG))) FILTER (
+                           WHERE OS_STATUS = 'resolved' AND {group_expression} IS NULL
+                       )
                 FROM read_parquet({source})
-                WHERE OS_STATUS = 'resolved'
-            ) TO {destination}
-            (FORMAT PARQUET, COMPRESSION {_sql_literal(parquet_compression)})
-            """
-        )
-    finally:
-        con.close()
+                """
+            ).fetchone()
+            evidence_rows, invalid_ips, invalid_statuses, invalid_decisions, unknown_tags = (
+                validation
+            )
+            if invalid_ips:
+                raise ValueError(f"{os_path}: {invalid_ips} empty IP_ADDR values")
+            if invalid_statuses:
+                raise ValueError(f"{os_path}: {invalid_statuses} invalid OS_STATUS values")
+            if invalid_decisions:
+                raise ValueError(
+                    f"{os_path}: {invalid_decisions} inconsistent OS_STATUS/OS_TAG rows"
+                )
+            if unknown_tags:
+                raise ValueError(f"{os_path}: unmapped OS_TAG values: {sorted(unknown_tags)}")
 
-    if tuple(pq.read_schema(temporary).names) != tuple(GROUP_SCHEMA.names):
-        raise ValueError(f"{temporary}: unexpected processed OS-group schema")
-    temporary.replace(output_path)
-    source_stat = os_path.stat()
-    _write_json(
-        output_path.with_suffix(".meta.json"),
-        {
-            "source_mtime_ns": source_stat.st_mtime_ns,
-            "source_size": source_stat.st_size,
-            "taxonomy_version": TAXONOMY_VERSION,
-        },
-    )
-    return {
-        "os_evidence_ip_count": int(evidence_rows),
-        "grouped_ip_count": pq.ParquetFile(output_path).metadata.num_rows,
-        "reused_group_file": False,
-    }
+            con.execute(
+                f"""
+                COPY (
+                    SELECT CAST(IP_ADDR AS VARCHAR) AS IP_ADDR,
+                           {group_expression} AS OS_GROUP
+                    FROM read_parquet({source})
+                    WHERE OS_STATUS = 'resolved'
+                ) TO {destination}
+                (FORMAT PARQUET, COMPRESSION {_sql_literal(parquet_compression)})
+                """
+            )
+        finally:
+            con.close()
+
+        if tuple(pq.read_schema(temporary).names) != tuple(GROUP_SCHEMA.names):
+            raise ValueError(f"{temporary}: unexpected processed OS-group schema")
+        publish_file(
+            temporary,
+            output_path,
+            inputs=[os_path],
+            parameters={"taxonomy_version": TAXONOMY_VERSION},
+        )
+        temporary.unlink(missing_ok=True)
+        source_stat = os_path.stat()
+        _write_json(
+            output_path.with_suffix(".meta.json"),
+            {
+                "source_mtime_ns": source_stat.st_mtime_ns,
+                "source_size": source_stat.st_size,
+                "taxonomy_version": TAXONOMY_VERSION,
+            },
+        )
+        return {
+            "os_evidence_ip_count": int(evidence_rows),
+            "grouped_ip_count": pq.ParquetFile(output_path).metadata.num_rows,
+            "reused_group_file": False,
+        }
 
 
 def aggregate_os_groups(
@@ -503,90 +521,90 @@ def aggregate_os_groups(
             raise FileNotFoundError(path)
     strategy_file = _sql_literal(str(strategy_path))
     group_file = _sql_literal(str(group_path))
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    try:
-        strategy_rows, invalid_strategy_ips, strategy_values = con.execute(
-            f"""
-            SELECT count(*)::BIGINT,
-                   count(*) FILTER (
-                       WHERE IP_ADDR IS NULL OR trim(CAST(IP_ADDR AS VARCHAR)) = ''
-                   )::BIGINT,
-                   list(DISTINCT upper(trim(CAST(IPID_SELECTION_STRATEGY AS VARCHAR))))
-            FROM read_parquet({strategy_file})
-            """
-        ).fetchone()
-        counts = con.execute(
-            f"""
-            SELECT g.OS_GROUP,
-                   upper(trim(CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR))) AS STRATEGY,
-                   count(*)::BIGINT AS N
-            FROM read_parquet({group_file}) g
-            JOIN read_parquet({strategy_file}) s USING (IP_ADDR)
-            GROUP BY g.OS_GROUP, STRATEGY
-            """
-        ).fetchall()
-    finally:
-        con.close()
+    with connect(config={"threads": threads} if threads else {}) as con:
+        try:
+            strategy_rows, invalid_strategy_ips, strategy_values = con.execute(
+                f"""
+                SELECT count(*)::BIGINT,
+                       count(*) FILTER (
+                           WHERE IP_ADDR IS NULL OR trim(CAST(IP_ADDR AS VARCHAR)) = ''
+                       )::BIGINT,
+                       list(DISTINCT upper(trim(CAST(IPID_SELECTION_STRATEGY AS VARCHAR))))
+                FROM read_parquet({strategy_file})
+                """
+            ).fetchone()
+            counts = con.execute(
+                f"""
+                SELECT g.OS_GROUP,
+                       upper(trim(CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR))) AS STRATEGY,
+                       count(*)::BIGINT AS N
+                FROM read_parquet({group_file}) g
+                JOIN read_parquet({strategy_file}) s USING (IP_ADDR)
+                GROUP BY g.OS_GROUP, STRATEGY
+                """
+            ).fetchall()
+        finally:
+            con.close()
 
-    if strategy_rows == 0:
-        raise ValueError(f"{strategy_path}: strategy result is empty")
-    if invalid_strategy_ips:
-        raise ValueError(f"{strategy_path}: empty IP addresses in strategy result")
-    unknown_strategies = sorted(set(strategy_values or []) - set(STRATEGY_NAMES))
-    if unknown_strategies:
-        raise ValueError(f"{strategy_path}: unknown IP-ID strategies: {unknown_strategies}")
-    unknown_groups = sorted({str(row[0]) for row in counts} - set(GROUP_INFO))
-    if unknown_groups:
-        raise ValueError(f"{group_path}: unknown OS_GROUP values: {unknown_groups}")
-    if not counts:
-        raise ValueError(f"{group_path}: no OS groups match the strategy population")
+        if strategy_rows == 0:
+            raise ValueError(f"{strategy_path}: strategy result is empty")
+        if invalid_strategy_ips:
+            raise ValueError(f"{strategy_path}: empty IP addresses in strategy result")
+        unknown_strategies = sorted(set(strategy_values or []) - set(STRATEGY_NAMES))
+        if unknown_strategies:
+            raise ValueError(f"{strategy_path}: unknown IP-ID strategies: {unknown_strategies}")
+        unknown_groups = sorted({str(row[0]) for row in counts} - set(GROUP_INFO))
+        if unknown_groups:
+            raise ValueError(f"{group_path}: unknown OS_GROUP values: {unknown_groups}")
+        if not counts:
+            raise ValueError(f"{group_path}: no OS groups match the strategy population")
 
-    count_map = {(str(group), str(strategy)): int(count) for group, strategy, count in counts}
-    totals = {
-        group: sum(count_map.get((group, strategy), 0) for strategy in HEATMAP_STRATEGIES)
-        for group in {str(row[0]) for row in counts}
-    }
-    ordered_groups = sorted(
-        totals,
-        key=lambda group: (GROUP_INFO[group][0], -totals[group], GROUP_INFO[group][1]),
-    )
-    rows = []
-    for group in ordered_groups:
-        section, label = GROUP_INFO[group]
-        total = totals[group]
-        for strategy in HEATMAP_STRATEGIES:
-            count = count_map.get((group, strategy), 0)
-            rows.append(
-                {
-                    "OS_SECTION": section,
-                    "OS_GROUP": group,
-                    "OS_GROUP_LABEL": label,
-                    "IPID_SELECTION_STRATEGY": strategy,
-                    "COUNT": count,
-                    "OS_GROUP_TOTAL": total,
-                    "PERCENTAGE": 100.0 * count / total,
+        count_map = {(str(group), str(strategy)): int(count) for group, strategy, count in counts}
+        totals = {
+            group: sum(count_map.get((group, strategy), 0) for strategy in HEATMAP_STRATEGIES)
+            for group in {str(row[0]) for row in counts}
+        }
+        ordered_groups = sorted(
+            totals,
+            key=lambda group: (GROUP_INFO[group][0], -totals[group], GROUP_INFO[group][1]),
+        )
+        rows = []
+        for group in ordered_groups:
+            section, label = GROUP_INFO[group]
+            total = totals[group]
+            for strategy in HEATMAP_STRATEGIES:
+                count = count_map.get((group, strategy), 0)
+                rows.append(
+                    {
+                        "OS_SECTION": section,
+                        "OS_GROUP": group,
+                        "OS_GROUP_LABEL": label,
+                        "IPID_SELECTION_STRATEGY": strategy,
+                        "COUNT": count,
+                        "OS_GROUP_TOTAL": total,
+                        "PERCENTAGE": 100.0 * count / total,
+                    }
+                )
+        _write_table(pa.Table.from_pylist(rows, schema=AGGREGATE_SCHEMA), output_path, compression)
+        return {
+            "strategy_ip_count": int(strategy_rows),
+            "grouped_ip_count": pq.ParquetFile(group_path).metadata.num_rows,
+            "matched_grouped_ip_count": sum(totals.values()),
+            "unmatched_grouped_ip_count": pq.ParquetFile(group_path).metadata.num_rows
+            - sum(totals.values()),
+            "not_enough_samples_ip_count": sum(
+                count_map.get((group, "NOT_ENOUGH_SAMPLES"), 0) for group in totals
+            ),
+            "os_group_count": len(totals),
+            "groups": {
+                group: {
+                    "section": GROUP_INFO[group][0],
+                    "label": GROUP_INFO[group][1],
+                    "ip_count": totals[group],
                 }
-            )
-    _write_table(pa.Table.from_pylist(rows, schema=AGGREGATE_SCHEMA), output_path, compression)
-    return {
-        "strategy_ip_count": int(strategy_rows),
-        "grouped_ip_count": pq.ParquetFile(group_path).metadata.num_rows,
-        "matched_grouped_ip_count": sum(totals.values()),
-        "unmatched_grouped_ip_count": pq.ParquetFile(group_path).metadata.num_rows
-        - sum(totals.values()),
-        "not_enough_samples_ip_count": sum(
-            count_map.get((group, "NOT_ENOUGH_SAMPLES"), 0) for group in totals
-        ),
-        "os_group_count": len(totals),
-        "groups": {
-            group: {
-                "section": GROUP_INFO[group][0],
-                "label": GROUP_INFO[group][1],
-                "ip_count": totals[group],
-            }
-            for group in ordered_groups
-        },
-    }
+                for group in ordered_groups
+            },
+        }
 
 
 def _format_ip_count(value: int) -> str:
@@ -816,6 +834,7 @@ def main(
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, min=0, help="DuckDB threads; 0 uses all cores"),
 ) -> None:
+    start_run()
     try:
         manifest_data = load_manifest(manifest)
         if mass_target is None:

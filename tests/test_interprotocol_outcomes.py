@@ -201,7 +201,7 @@ class OutcomeTests(unittest.TestCase):
             def capture(fig, path, **kwargs):
                 figures[Path(path).stem] = fig
 
-            with patch.object(Figure, "savefig", capture):
+            with patch("ipid_analysis.interprotocol_outcomes.save_figure", capture):
                 path = classify_file(
                     root / "raw.pq",
                     root / "snapshot.yaml",
@@ -335,8 +335,15 @@ class OutcomeTests(unittest.TestCase):
                 pq.read_table(output / "interprotocol-campaign-outcomes.pq").num_rows, 2
             )
             figures = root / "figures" / "campaign" / "runs" / "run"
-            slugs = ("reflection", "constant", "single", "per-destination",
-                     "per-bucket", "multi", "random")
+            slugs = (
+                "reflection",
+                "constant",
+                "single",
+                "per-destination",
+                "per-bucket",
+                "multi",
+                "random",
+            )
             expected_pdfs = {f"interprotocol-campaign-{s}.pdf" for s in slugs}
             expected_pdfs |= {f"interprotocol-upset-{s}.pdf" for s in slugs}
             self.assertEqual({p.name for p in figures.glob("*.pdf")}, expected_pdfs)

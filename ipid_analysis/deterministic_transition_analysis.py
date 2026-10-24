@@ -12,13 +12,22 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
+from contextlib import ExitStack, closing
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-import duckdb
 import matplotlib
+
+from ipid_analysis.artifacts import (
+    atomic_output,
+    provenance,
+    save_figure,
+    write_text,
+)
+from ipid_analysis.manifest import campaign_scope
+from ipid_analysis.runtime import connect, start_run
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -36,6 +45,7 @@ from ipid_analysis.strategies import (
     MAX_INC,
     MODULUS,
     OUTPUT_NAME,
+    SNAPSHOT_NAME,
     MeasurementConfig,
     load_config,
 )
@@ -176,7 +186,7 @@ def _required_paths(
     ]
 
 
-def load_transitions(
+def iter_transitions(
     triplet: MeasurementTriplet,
     *,
     raw_root: Path = RAW_DATA_DIR,
@@ -213,9 +223,8 @@ def load_transitions(
             }
         )
 
-    connection = duckdb.connect()
-    try:
-        rows = connection.execute(
+    with connect() as connection:
+        reader = connection.execute(
             f"""
             SELECT
                 CAST(m_s.IP_ADDR AS VARCHAR) AS IP_ADDR,
@@ -236,24 +245,26 @@ def load_transitions(
             ORDER BY MASS_CLASS, IP_ADDR
             """,
             parameters,
-        ).fetchall()
-    finally:
-        connection.close()
+        ).to_arrow_reader(8192)
+        for batch in reader:
+            columns = [batch.column(index).to_pylist() for index in range(batch.num_columns)]
+            for row in zip(*columns, strict=True):
+                yield JoinedTransition(
+                    protocol=triplet.protocol,
+                    connection_mode=triplet.connection_mode,
+                    ip_addr=str(row[0]),
+                    rt_base_class=str(row[1]),
+                    mass_class=str(row[2]),
+                    fixed_base_class=None if row[5] is None else str(row[5]),
+                    rt_base_sequence=str(row[3]),
+                    mass_sequence=str(row[4]),
+                    fixed_base_sequence=None if row[6] is None else str(row[6]),
+                )
 
-    return [
-        JoinedTransition(
-            protocol=triplet.protocol,
-            connection_mode=triplet.connection_mode,
-            ip_addr=str(row[0]),
-            rt_base_class=str(row[1]),
-            fixed_base_class=None if row[5] is None else str(row[5]),
-            mass_class=str(row[2]),
-            rt_base_sequence=str(row[3]),
-            fixed_base_sequence=None if row[6] is None else str(row[6]),
-            mass_sequence=str(row[4]),
-        )
-        for row in rows
-    ]
+
+def load_transitions(triplet, *, raw_root=RAW_DATA_DIR, processed_root=PROCESSED_DATA_DIR):
+    """Compatibility list API; large analyses use iter_transitions instead."""
+    return list(iter_transitions(triplet, raw_root=raw_root, processed_root=processed_root))
 
 
 def _trimmed_sequence_and_pattern(
@@ -373,12 +384,16 @@ def _measurement_values(
     transition: JoinedTransition,
     triplet: MeasurementTriplet,
     raw_root: Path,
+    configs: dict | None = None,
 ) -> tuple[list[tuple[str, str | None, str | None, MeasurementConfig, bool]], dict[str, str]]:
-    rt_cfg = load_config(_snapshot_path(triplet.rt_base, raw_root))
-    mass_cfg = load_config(_snapshot_path(triplet.mass, raw_root))
+    def load(path):
+        return configs[path] if configs is not None else load_config(path)
+
+    rt_cfg = load(_snapshot_path(triplet.rt_base, raw_root))
+    mass_cfg = load(_snapshot_path(triplet.mass, raw_root))
     fixed_cfg = None
     if triplet.fixed_base is not None:
-        fixed_cfg = load_config(_snapshot_path(triplet.fixed_base, raw_root))
+        fixed_cfg = load(_snapshot_path(triplet.fixed_base, raw_root))
     values = [
         (
             "RT_BASE",
@@ -417,9 +432,10 @@ def transition_row(
     triplet: MeasurementTriplet,
     *,
     raw_root: Path = RAW_DATA_DIR,
+    configs: dict | None = None,
 ) -> tuple[dict[str, object], dict[str, tuple[np.ndarray | None, RuleDiagnostics | None]]]:
     """Create one flat artifact row and plotting payload."""
-    measurements, measurement_ids = _measurement_values(transition, triplet, raw_root)
+    measurements, measurement_ids = _measurement_values(transition, triplet, raw_root, configs)
     row: dict[str, object] = {
         "PROTOCOL": transition.protocol,
         "CONNECTION_MODE": transition.connection_mode,
@@ -521,15 +537,20 @@ def render_transition_plot(
     output_path: Path,
     *,
     raw_root: Path = RAW_DATA_DIR,
+    configs: dict | None = None,
 ) -> None:
     """Render RT-Base, FI-Base, and FI-Mass for one address."""
-    rt_cfg = load_config(_snapshot_path(triplet.rt_base, raw_root))
+
+    def load(path):
+        return configs[path] if configs is not None else load_config(path)
+
+    rt_cfg = load(_snapshot_path(triplet.rt_base, raw_root))
     fixed_cfg = (
         rt_cfg
         if triplet.fixed_base is None
-        else load_config(_snapshot_path(triplet.fixed_base, raw_root))
+        else load(_snapshot_path(triplet.fixed_base, raw_root))
     )
-    mass_cfg = load_config(_snapshot_path(triplet.mass, raw_root))
+    mass_cfg = load(_snapshot_path(triplet.mass, raw_root))
     definitions = (
         ("RT-based Base", "RT_BASE", transition.rt_base_class, rt_cfg),
         (
@@ -560,7 +581,7 @@ def render_transition_plot(
         )
     axes[-1].set_xlabel("Measurement index")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output_path, dpi=160)
+    save_figure(figure, output_path, dpi=160)
     plt.close(figure)
 
 
@@ -585,6 +606,7 @@ def analyze_deterministic_transitions(
     data_dir: Path = DEFAULT_DATA_DIR,
     figure_dir: Path = DEFAULT_FIGURE_DIR,
     render_plots: bool = True,
+    max_plots: int = 1000,
 ) -> dict[str, Path]:
     """Write per-transition data, metadata, and paired diagnostic plots."""
     manifest = load_manifest(manifest_path)
@@ -592,60 +614,115 @@ def analyze_deterministic_transitions(
     if not triplets:
         raise ValueError(f"{manifest_path}: no RT-Base/FI-Mass measurement pair")
 
-    rows: list[dict[str, object]] = []
-    plot_count = 0
-    measurement_metadata: list[dict[str, object]] = []
-    for triplet in triplets:
-        transitions = load_transitions(
-            triplet,
-            raw_root=raw_root,
-            processed_root=processed_root,
-        )
-        class_counts = Counter(transition.mass_class for transition in transitions)
-        measurement_metadata.append(
-            {
-                "protocol": triplet.protocol,
-                "connection_mode": triplet.connection_mode,
-                "rt_base_measurement_id": triplet.rt_base.measurement_id,
-                "fixed_base_measurement_id": (
-                    None if triplet.fixed_base is None else triplet.fixed_base.measurement_id
-                ),
-                "mass_measurement_id": triplet.mass.measurement_id,
-                "transition_count": len(transitions),
-                "mass_class_counts": dict(sorted(class_counts.items())),
-            }
-        )
-        for transition in transitions:
-            row, plotting = transition_row(transition, triplet, raw_root=raw_root)
-            rows.append(row)
-            if render_plots:
-                safe_ip = transition.ip_addr.replace(":", "_")
-                output_path = (
-                    figure_dir
-                    / "sequences"
-                    / transition.protocol
-                    / transition.mass_class.lower().replace("_", "-")
-                    / f"{safe_ip}.png"
-                )
-                render_transition_plot(
-                    transition,
-                    triplet,
-                    plotting,
-                    output_path,
-                    raw_root=raw_root,
-                )
-                plot_count += 1
-
-    data_dir.mkdir(parents=True, exist_ok=True)
-    figure_dir.mkdir(parents=True, exist_ok=True)
-    table = _arrow_table(rows)
+    if max_plots < -1:
+        raise ValueError("max_plots must be nonnegative or -1 for explicit unlimited plots")
+    scope = campaign_scope(manifest)
+    # Keep explicit output-directory overrides compatible; scope the defaults.
+    if data_dir == DEFAULT_DATA_DIR:
+        data_dir = data_dir / scope
+    if figure_dir == DEFAULT_FIGURE_DIR:
+        figure_dir = figure_dir / scope
     parquet_path = data_dir / f"{KIND}.pq"
     csv_path = figure_dir / f"{KIND}.csv"
     json_path = figure_dir / f"{KIND}.json"
-    pq.write_table(table, parquet_path)
-    pacsv.write_csv(table, csv_path)
+    plot_count, total_count = 0, 0
+    total_by_class = Counter()
+    measurement_metadata = []
+    with ExitStack() as stack:
+        parquet_temporary = stack.enter_context(
+            atomic_output(parquet_path, inputs=[manifest_path])
+        )
+        csv_temporary = stack.enter_context(atomic_output(csv_path, inputs=[manifest_path]))
+        writers = None
+        buffer = []
 
-    total_by_class = Counter(str(row["MASS_CLASS"]) for row in rows)
+        def flush():
+            nonlocal writers, buffer
+            if not buffer:
+                return
+            if writers is None:
+                # Fixed nullable types avoid batch-dependent null inference.
+                fields = []
+                for key, value in buffer[0].items():
+                    dtype = (
+                        pa.bool_()
+                        if key.endswith("EXACT_MATCH_TO_MASS_CLASS")
+                        else pa.int64()
+                        if key.endswith(("_COUNT", "_POSITIONS", "_CONSTRAINTS", "_VIOLATIONS"))
+                        else pa.string()
+                    )
+                    fields.append((key, dtype))
+                schema = pa.schema(fields)
+                parquet_writer = stack.enter_context(pq.ParquetWriter(parquet_temporary, schema))
+                csv_stream = stack.enter_context(csv_temporary.open("wb"))
+                writers = (
+                    parquet_writer,
+                    stack.enter_context(pacsv.CSVWriter(csv_stream, schema)),
+                )
+            table = pa.Table.from_pylist(buffer, schema=writers[0].schema)
+            writers[0].write_table(table)
+            writers[1].write_table(table)
+            buffer = []
+
+        for triplet in triplets:
+            class_counts = Counter()
+            configs = {
+                path: load_config(path)
+                for path in _required_paths(triplet, raw_root, processed_root)
+                if path.name == SNAPSHOT_NAME
+            }
+            with closing(
+                iter_transitions(triplet, raw_root=raw_root, processed_root=processed_root)
+            ) as transitions:
+                for transition in transitions:
+                    class_counts[transition.mass_class] += 1
+                    total_by_class[transition.mass_class] += 1
+                    total_count += 1
+                    row, plotting = transition_row(
+                        transition, triplet, raw_root=raw_root, configs=configs
+                    )
+                    buffer.append(row)
+                    if len(buffer) >= 2048:
+                        flush()
+                    if render_plots and (max_plots == -1 or plot_count < max_plots):
+                        safe_ip = transition.ip_addr.replace(":", "_")
+                        output_path = (
+                            figure_dir
+                            / "sequences"
+                            / scope
+                            / triplet.connection_mode
+                            / transition.protocol
+                            / transition.mass_class.lower().replace("_", "-")
+                            / f"{safe_ip}.png"
+                        )
+                        render_transition_plot(
+                            transition,
+                            triplet,
+                            plotting,
+                            output_path,
+                            raw_root=raw_root,
+                            configs=configs,
+                        )
+                        plot_count += 1
+            measurement_metadata.append(
+                {
+                    "protocol": triplet.protocol,
+                    "connection_mode": triplet.connection_mode,
+                    "rt_base_measurement_id": triplet.rt_base.measurement_id,
+                    "fixed_base_measurement_id": None
+                    if triplet.fixed_base is None
+                    else triplet.fixed_base.measurement_id,
+                    "mass_measurement_id": triplet.mass.measurement_id,
+                    "transition_count": sum(class_counts.values()),
+                    "mass_class_counts": dict(sorted(class_counts.items())),
+                }
+            )
+        flush()
+        if writers is None:
+            table = _arrow_table([])
+            pq.write_table(table, parquet_temporary)
+            pacsv.write_csv(table, csv_temporary)
+
     metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "manifest": str(manifest_path),
@@ -666,8 +743,11 @@ def analyze_deterministic_transitions(
                 "offset or value"
             ),
         },
-        "transition_count": len(rows),
+        "transition_count": total_count,
         "plot_count": plot_count,
+        "plot_limit": max_plots,
+        "plots_truncated": render_plots and plot_count < total_count,
+        **provenance(),
         "mass_class_counts": dict(sorted(total_by_class.items())),
         "measurements": measurement_metadata,
         "artifacts": {
@@ -676,7 +756,7 @@ def analyze_deterministic_transitions(
             "sequence_plot_directory": str(figure_dir / "sequences"),
         },
     }
-    json_path.write_text(json.dumps(metadata, indent=2) + "\n")
+    write_text(json_path, json.dumps(metadata, indent=2) + "\n")
     return {
         "aggregate": parquet_path,
         "csv": csv_path,
@@ -691,13 +771,16 @@ def main(
     data_dir: Path = DATA_DIR_OPTION,
     figure_dir: Path = FIGURE_DIR_OPTION,
     plots: bool = PLOTS_OPTION,
+    max_plots: int = typer.Option(1000, help="maximum diagnostic PNGs; -1 explicitly enables all"),
 ) -> None:
     """Analyze RT-Base UNCLASSIFIED -> deterministic Mass transitions."""
+    start_run()
     artifacts = analyze_deterministic_transitions(
         manifest,
         data_dir=data_dir,
         figure_dir=figure_dir,
         render_plots=plots,
+        max_plots=max_plots,
     )
     for name, path in artifacts.items():
         typer.echo(f"{name}: {path}")

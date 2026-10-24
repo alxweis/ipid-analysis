@@ -11,11 +11,19 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import yaml
 
+from ipid_analysis.artifacts import (
+    atomic_output,
+    publish_file,
+    save_figure,
+    validate_ip_population,
+    write_text,
+)
 from ipid_analysis.paper_figures import (
     COMPACT_PAPER_PDF_PADDING_INCHES,
     COMPACT_PAPER_STROKE_WIDTH,
     configure_compact_validation_style,
 )
+from ipid_analysis.runtime import temporary_path
 from ipid_analysis.strategies import (
     CLASSIFIER_VERSION,
     MULTI_MAX_CLUSTERS,
@@ -312,7 +320,7 @@ class Summary:
                 for g in groups
             },
         }
-        path.write_text(json.dumps(report, indent=2) + "\n")
+        write_text(path, json.dumps(report, indent=2) + "\n")
         for strategy in STRATEGIES:
             entries = []
             for (s, group, outcome, labels, states), count in sorted(self.transitions.items()):
@@ -336,7 +344,8 @@ class Summary:
                 + strategy.lower().replace("_", "-")
                 + "-alternatives.json"
             )
-            (path.parent / name).write_text(
+            write_text(
+                path.parent / name,
                 json.dumps(
                     {
                         "baseline_strategy": strategy,
@@ -346,7 +355,7 @@ class Summary:
                     },
                     indent=2,
                 )
-                + "\n"
+                + "\n",
             )
 
 
@@ -356,9 +365,10 @@ def classify_file(raw_path, snapshot_path, output_dir, *, figure_dir=None):
     cfg = load_interprotocol_config(snapshot_path)
     snapshot = yaml.safe_load(snapshot_path.read_text())
     prerequisites(cfg, snapshot)
+    validate_ip_population(raw_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "interprotocol-outcomes.pq"
-    temporary = path.with_suffix(".pq.part")
+    temporary = temporary_path(path)
     summary = Summary()
     with (
         pq.ParquetWriter(temporary, SCHEMA, compression="zstd") as writer,
@@ -370,7 +380,8 @@ def classify_file(raw_path, snapshot_path, output_dir, *, figure_dir=None):
             rows = classify_rows(batch.to_pylist(), cfg, snapshot)
             writer.write_table(pa.Table.from_pylist(rows, schema=SCHEMA))
             summary.add(rows)
-    temporary.replace(path)
+    publish_file(temporary, path)
+    temporary.unlink(missing_ok=True)
     summary.write(output_dir / "interprotocol-summary.json")
     if figure_dir is not None:
         plot_outcomes(summary, figure_dir)
@@ -400,7 +411,7 @@ def outcome_plot_style(strategy):
     else:
         categories = [("UNCHANGED", "0 Strategies Changed")]
     categories += [
-        ("STRATEGY_CHANGED", "≥1 Strategy Changed"),
+        ("STRATEGY_CHANGED", "Ã¢â€°Â¥1 Strategy Changed"),
         ("NOT_ENOUGH_SAMPLES", "Not Enough Samples"),
     ]
     color_names = (
@@ -464,7 +475,8 @@ def plot_outcomes(summary, figure_dir):
             handletextpad=0.45,
         )
         fig.subplots_adjust(left=0.095, right=0.995, bottom=0.28, top=0.73)
-        fig.savefig(
+        save_figure(
+            fig,
             figure_dir / ("interprotocol-campaign-" + strategy.lower().replace("_", "-") + ".pdf"),
             bbox_inches="tight",
             pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES,
@@ -482,7 +494,10 @@ def classify_campaign(run_manifest_path, *, raw_root, output_root, figures_root)
     combined = output / "interprotocol-campaign-outcomes.pq"
     summary = Summary()
     measurements = {}
-    with pq.ParquetWriter(combined.with_suffix(".pq.part"), SCHEMA, compression="zstd") as writer:
+    with (
+        atomic_output(combined) as combined_temporary,
+        pq.ParquetWriter(combined_temporary, SCHEMA, compression="zstd") as writer,
+    ):
         for group in GROUPS:
             if group not in manifest["groups"]:
                 continue
@@ -506,18 +521,21 @@ def classify_campaign(run_manifest_path, *, raw_root, output_root, figures_root)
                     for batch in parquet.iter_batches(batch_size=2048):
                         writer.write_batch(batch)
                         summary.add(batch.to_pylist())
-    combined.with_suffix(".pq.part").replace(combined)
     summary.write(output / "interprotocol-campaign-summary.json", measurements)
     # Parquet detail reports stay streamed; no campaign-sized Python dictionaries.
     with ExitStack() as stack:
         writers = {
             s: stack.enter_context(
                 pq.ParquetWriter(
-                    output
-                    / (
-                        "interprotocol-campaign-"
-                        + s.lower().replace("_", "-")
-                        + "-alternatives.pq"
+                    stack.enter_context(
+                        atomic_output(
+                            output
+                            / (
+                                "interprotocol-campaign-"
+                                + s.lower().replace("_", "-")
+                                + "-alternatives.pq"
+                            )
+                        )
                     ),
                     SCHEMA,
                     compression="zstd",
@@ -538,7 +556,8 @@ def classify_campaign(run_manifest_path, *, raw_root, output_root, figures_root)
     from ipid_analysis.plot_interprotocol_upset import plot_campaign_upset
 
     plot_campaign_upset(output / "interprotocol-campaign-summary.json", figures)
-    (output / "interprotocol-campaign-run.json").write_text(
+    write_text(
+        output / "interprotocol-campaign-run.json",
         json.dumps(
             {
                 "source_manifest": str(run_manifest_path),
@@ -547,6 +566,6 @@ def classify_campaign(run_manifest_path, *, raw_root, output_root, figures_root)
             },
             indent=2,
         )
-        + "\n"
+        + "\n",
     )
     return output

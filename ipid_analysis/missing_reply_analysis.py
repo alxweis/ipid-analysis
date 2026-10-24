@@ -25,7 +25,6 @@ import json
 import math
 from pathlib import Path
 
-import duckdb
 from loguru import logger
 import matplotlib
 import numpy as np
@@ -33,6 +32,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 import yaml
+
+from ipid_analysis.artifacts import publish_file, save_figure
+from ipid_analysis.manifest import campaign_scope
+from ipid_analysis.runtime import connect, start_run, temporary_path
 
 matplotlib.use("Agg")
 
@@ -84,18 +87,20 @@ OUTPUT_SCHEMA = pa.schema(
 
 def _write_table(table: pa.Table, output_path: Path, compression: str | None) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     pq.write_table(table, temporary, compression=compression)
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
 def _write_json(output_path: Path, value: dict) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
@@ -138,136 +143,138 @@ def _measurement_distribution(
     if sequence_length < 1:
         raise ValueError(f"{snapshot_path}: sequence length must be positive")
 
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    try:
-        rows = con.execute(
-            """
-            WITH parsed AS (
-                SELECT
-                    IP_ADDR,
-                    string_split(IPID_SEQUENCE, ',') AS values
-                FROM read_parquet($input)
-            ), counted AS (
-                SELECT
-                    IP_ADDR,
-                    len(values)::INTEGER AS sequence_length,
-                    len(list_filter(values, value -> TRY_CAST(value AS INTEGER) IS NULL))
-                        ::INTEGER AS missing_replies
-                FROM parsed
-            )
-            SELECT sequence_length, missing_replies, count(*)::BIGINT AS sequence_count
-            FROM counted
-            GROUP BY sequence_length, missing_replies
-            ORDER BY sequence_length, missing_replies
-            """,
-            {"input": str(input_path)},
-        ).fetchall()
-        total_rows, distinct_ips = map(
-            int,
-            con.execute(
+    with connect(config={"threads": threads} if threads else {}) as con:
+        try:
+            rows = con.execute(
                 """
-                SELECT count(*), count(DISTINCT IP_ADDR)
-                FROM read_parquet($input)
+                WITH parsed AS (
+                    SELECT
+                        IP_ADDR,
+                        string_split(IPID_SEQUENCE, ',') AS values
+                    FROM read_parquet($input)
+                ), counted AS (
+                    SELECT
+                        IP_ADDR,
+                        len(values)::INTEGER AS sequence_length,
+                        len(list_filter(values, value -> TRY_CAST(value AS INTEGER) IS NULL))
+                            ::INTEGER AS missing_replies
+                    FROM parsed
+                )
+                SELECT sequence_length, missing_replies, count(*)::BIGINT AS sequence_count
+                FROM counted
+                GROUP BY sequence_length, missing_replies
+                ORDER BY sequence_length, missing_replies
                 """,
                 {"input": str(input_path)},
-            ).fetchone(),
+            ).fetchall()
+            total_rows, distinct_ips = map(
+                int,
+                con.execute(
+                    """
+                    SELECT count(*), count(DISTINCT IP_ADDR)
+                    FROM read_parquet($input)
+                    """,
+                    {"input": str(input_path)},
+                ).fetchone(),
+            )
+        finally:
+            con.close()
+
+        if total_rows == 0:
+            raise ValueError(f"{input_path}: Mass measurement contains no persisted sequences")
+        if total_rows != distinct_ips:
+            raise ValueError(f"{input_path}: duplicate IP addresses in Mass measurement")
+
+        observed_lengths = sorted({int(length) for length, _, _ in rows})
+        if observed_lengths != [sequence_length]:
+            raise ValueError(
+                f"{input_path}: expected {sequence_length} fixed positions per sequence, "
+                f"observed lengths {observed_lengths}"
+            )
+
+        observed_counts = {int(missing): int(count) for _, missing, count in rows}
+        minimum_reply_rate = _minimum_reply_rate(snapshot_path)
+        configured_minimum_replies = (
+            math.ceil(minimum_reply_rate * sequence_length)
+            if minimum_reply_rate is not None
+            else None
         )
-    finally:
-        con.close()
-
-    if total_rows == 0:
-        raise ValueError(f"{input_path}: Mass measurement contains no persisted sequences")
-    if total_rows != distinct_ips:
-        raise ValueError(f"{input_path}: duplicate IP addresses in Mass measurement")
-
-    observed_lengths = sorted({int(length) for length, _, _ in rows})
-    if observed_lengths != [sequence_length]:
-        raise ValueError(
-            f"{input_path}: expected {sequence_length} fixed positions per sequence, "
-            f"observed lengths {observed_lengths}"
+        configured_maximum_missing = (
+            sequence_length - configured_minimum_replies
+            if configured_minimum_replies is not None
+            else None
         )
-
-    observed_counts = {int(missing): int(count) for _, missing, count in rows}
-    minimum_reply_rate = _minimum_reply_rate(snapshot_path)
-    configured_minimum_replies = (
-        math.ceil(minimum_reply_rate * sequence_length) if minimum_reply_rate is not None else None
-    )
-    configured_maximum_missing = (
-        sequence_length - configured_minimum_replies
-        if configured_minimum_replies is not None
-        else None
-    )
-    maximum_observed_missing = max(observed_counts)
-    maximum_reported_missing = max(
-        maximum_observed_missing,
-        configured_maximum_missing or 0,
-    )
-
-    output_rows: list[dict] = []
-    cumulative_count = 0
-    for missing_replies in range(maximum_reported_missing + 1):
-        count = observed_counts.get(missing_replies, 0)
-        cumulative_count += count
-        output_rows.append(
-            {
-                "TARGET": measurement.target,
-                "PROTOCOL": measurement.protocol,
-                "CONNECTION_MODE": measurement.connection_mode,
-                "MEASUREMENT_ID": measurement.measurement_id,
-                "SEQUENCE_LENGTH": sequence_length,
-                "MISSING_REPLY_COUNT": missing_replies,
-                "REPLY_COUNT": sequence_length - missing_replies,
-                "SEQUENCE_COUNT": count,
-                "TOTAL_SEQUENCE_COUNT": total_rows,
-                "PERCENTAGE": 100.0 * count / total_rows,
-                "CUMULATIVE_COUNT": cumulative_count,
-                "CUMULATIVE_PERCENTAGE": 100.0 * cumulative_count / total_rows,
-            }
+        maximum_observed_missing = max(observed_counts)
+        maximum_reported_missing = max(
+            maximum_observed_missing,
+            configured_maximum_missing or 0,
         )
 
-    complete_count = observed_counts.get(0, 0)
-    incomplete_count = total_rows - complete_count
-    weighted_missing = sum(missing * count for missing, count in observed_counts.items())
-    below_configured_minimum_count = (
-        sum(
-            count
-            for missing, count in observed_counts.items()
-            if missing > configured_maximum_missing
+        output_rows: list[dict] = []
+        cumulative_count = 0
+        for missing_replies in range(maximum_reported_missing + 1):
+            count = observed_counts.get(missing_replies, 0)
+            cumulative_count += count
+            output_rows.append(
+                {
+                    "TARGET": measurement.target,
+                    "PROTOCOL": measurement.protocol,
+                    "CONNECTION_MODE": measurement.connection_mode,
+                    "MEASUREMENT_ID": measurement.measurement_id,
+                    "SEQUENCE_LENGTH": sequence_length,
+                    "MISSING_REPLY_COUNT": missing_replies,
+                    "REPLY_COUNT": sequence_length - missing_replies,
+                    "SEQUENCE_COUNT": count,
+                    "TOTAL_SEQUENCE_COUNT": total_rows,
+                    "PERCENTAGE": 100.0 * count / total_rows,
+                    "CUMULATIVE_COUNT": cumulative_count,
+                    "CUMULATIVE_PERCENTAGE": 100.0 * cumulative_count / total_rows,
+                }
+            )
+
+        complete_count = observed_counts.get(0, 0)
+        incomplete_count = total_rows - complete_count
+        weighted_missing = sum(missing * count for missing, count in observed_counts.items())
+        below_configured_minimum_count = (
+            sum(
+                count
+                for missing, count in observed_counts.items()
+                if missing > configured_maximum_missing
+            )
+            if configured_maximum_missing is not None
+            else None
         )
-        if configured_maximum_missing is not None
-        else None
-    )
-    metadata = {
-        "target": measurement.target,
-        "protocol": measurement.protocol,
-        "connection_mode": measurement.connection_mode,
-        "measurement_id": measurement.measurement_id,
-        "input": str(input_path),
-        "snapshot": str(snapshot_path),
-        "connection_count": config.connection_count,
-        "requests_per_connection": config.requests_per_connection,
-        "sequence_length": sequence_length,
-        "configured_minimum_reply_rate": minimum_reply_rate,
-        "configured_minimum_replies": configured_minimum_replies,
-        "configured_maximum_missing_replies": configured_maximum_missing,
-        "persisted_sequence_count": total_rows,
-        "complete_sequence_count": complete_count,
-        "complete_sequence_percentage": 100.0 * complete_count / total_rows,
-        "incomplete_sequence_count": incomplete_count,
-        "incomplete_sequence_percentage": 100.0 * incomplete_count / total_rows,
-        "mean_missing_replies": weighted_missing / total_rows,
-        "maximum_observed_missing_replies": maximum_observed_missing,
-        "sequences_below_configured_minimum_count": below_configured_minimum_count,
-        "distribution": {
-            str(row["MISSING_REPLY_COUNT"]): {
-                "sequence_count": row["SEQUENCE_COUNT"],
-                "percentage": row["PERCENTAGE"],
-                "cumulative_percentage": row["CUMULATIVE_PERCENTAGE"],
-            }
-            for row in output_rows
-        },
-    }
-    return output_rows, metadata
+        metadata = {
+            "target": measurement.target,
+            "protocol": measurement.protocol,
+            "connection_mode": measurement.connection_mode,
+            "measurement_id": measurement.measurement_id,
+            "input": str(input_path),
+            "snapshot": str(snapshot_path),
+            "connection_count": config.connection_count,
+            "requests_per_connection": config.requests_per_connection,
+            "sequence_length": sequence_length,
+            "configured_minimum_reply_rate": minimum_reply_rate,
+            "configured_minimum_replies": configured_minimum_replies,
+            "configured_maximum_missing_replies": configured_maximum_missing,
+            "persisted_sequence_count": total_rows,
+            "complete_sequence_count": complete_count,
+            "complete_sequence_percentage": 100.0 * complete_count / total_rows,
+            "incomplete_sequence_count": incomplete_count,
+            "incomplete_sequence_percentage": 100.0 * incomplete_count / total_rows,
+            "mean_missing_replies": weighted_missing / total_rows,
+            "maximum_observed_missing_replies": maximum_observed_missing,
+            "sequences_below_configured_minimum_count": below_configured_minimum_count,
+            "distribution": {
+                str(row["MISSING_REPLY_COUNT"]): {
+                    "sequence_count": row["SEQUENCE_COUNT"],
+                    "percentage": row["PERCENTAGE"],
+                    "cumulative_percentage": row["CUMULATIVE_PERCENTAGE"],
+                }
+                for row in output_rows
+            },
+        }
+        return output_rows, metadata
 
 
 def _measurement_label(metadata: dict) -> str:
@@ -349,7 +356,8 @@ def render_missing_reply_figure(
     figure.subplots_adjust(left=0.075, right=0.995, bottom=0.23, top=0.84, wspace=0.27)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(
+    save_figure(
+        figure,
         output_path,
         bbox_inches="tight",
         pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES,
@@ -439,9 +447,10 @@ def analyze_missing_replies(
         outputs[f"{key}_pdf"] = measurement_pdf
 
     table = pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA)
-    aggregate_path = processed_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.pq"
-    json_path = figures_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.json"
-    pdf_path = figures_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.pdf"
+    scope = campaign_scope(manifest)
+    aggregate_path = processed_root / OUTPUT_DIRECTORY / scope / f"{OUTPUT_STEM}.pq"
+    json_path = figures_root / OUTPUT_DIRECTORY / scope / f"{OUTPUT_STEM}.json"
+    pdf_path = figures_root / OUTPUT_DIRECTORY / scope / f"{OUTPUT_STEM}.pdf"
     _write_table(table, aggregate_path, compression)
 
     metadata = {
@@ -467,6 +476,13 @@ def analyze_missing_replies(
     }
     _write_json(json_path, metadata)
     render_missing_reply_figure(table, metadata, pdf_path)
+    # Retain the public global paths as explicit latest-run aliases.
+    for source, destination in (
+        (aggregate_path, processed_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.pq"),
+        (json_path, figures_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.json"),
+        (pdf_path, figures_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.pdf"),
+    ):
+        publish_file(source, destination, parameters={"alias": "latest", "campaign_scope": scope})
     return {
         **outputs,
         "aggregate": aggregate_path,
@@ -481,6 +497,7 @@ def main(
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
 ) -> None:
+    start_run()
     outputs = analyze_missing_replies(
         manifest_path,
         compression=None if compression == "none" else compression,

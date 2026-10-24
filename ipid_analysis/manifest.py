@@ -22,8 +22,10 @@ For example, ``no-connection/fixed-interval-mass/n-fi-m_strategies.pdf``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
+import re
 
 CONNECTION_MODES = ("no-connection", "connection")
 INTERVALS = ("rt-based", "fixed-interval")
@@ -33,6 +35,14 @@ CONNECTION_ABBREVIATIONS = {"no-connection": "n", "connection": "c"}
 INTERVAL_ABBREVIATIONS = {"rt-based": "rt", "fixed-interval": "fi"}
 SCALE_ABBREVIATIONS = {"base": "b", "mass": "m"}
 RANDOM_REPRODUCIBILITY_REPEAT_COUNT = 5
+
+
+def campaign_scope(manifest: dict) -> str:
+    """Stable, safe scope for manifest-wide reports from independent VM jobs."""
+    return (
+        "campaign-"
+        + hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()[:16]
+    )
 
 
 @dataclass(frozen=True)
@@ -56,6 +66,14 @@ class IpidMeasurement:
     scale: str  # base | mass
     measurement_id: str  # e.g. tcp-80_2026-07-14_02-16-24
     zmap_id: str | None  # the protocol's zmap run (output dir + coverage)
+
+    def __post_init__(self):
+        for value in (self.measurement_id, self.zmap_id):
+            if value is not None and (
+                not isinstance(value, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value)
+            ):
+                raise ValueError(f"invalid measurement directory id: {value!r}")
 
     @property
     def target(self) -> str:
@@ -95,7 +113,10 @@ class IpidMeasurement:
 
 
 def load_manifest(path: Path) -> dict:
-    return json.loads(Path(path).read_text())
+    manifest = json.loads(Path(path).read_text())
+    if not isinstance(manifest, dict):
+        raise ValueError("measurement manifest must be a JSON object")
+    return manifest
 
 
 def resolve(manifest: dict, target: str) -> IpidMeasurement | None:

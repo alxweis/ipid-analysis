@@ -14,10 +14,12 @@ from pathlib import Path
 from loguru import logger
 import typer
 
+from ipid_analysis.artifacts import write_text
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.plots import interval_stats, plot_probing_intervals
 from ipid_analysis.probing_intervals import KIND
+from ipid_analysis.runtime import start_run
 from ipid_analysis.strategies import DEFAULT_MANIFEST
 
 app = typer.Typer()
@@ -52,7 +54,7 @@ def render(m: IpidMeasurement, bins: int = 50, clip_quantile: float = 0.99) -> t
         **stats,
     }
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(info, indent=2) + "\n")
+    write_text(json_path, json.dumps(info, indent=2) + "\n")
 
     plot_probing_intervals(stats, pdf_path, title=f"Probing intervals — {m.stem}")
     return pdf_path, json_path
@@ -67,6 +69,7 @@ def main(
     bins: int = typer.Option(50, help="histogram bins"),
     clip_quantile: float = typer.Option(0.99, help="clip the histogram range at this quantile"),
 ) -> None:
+    start_run()
     m = resolve(load_manifest(manifest), target)
     if m is None:
         logger.error(f"{target}: not present in {manifest}")

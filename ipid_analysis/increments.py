@@ -20,15 +20,17 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-import duckdb
 from loguru import logger
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import assert_complete, cache_current, publish_file
 from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
+from ipid_analysis.runtime import batch_budget, connect, start_run, temporary_path
 from ipid_analysis.strategies import (
     DEFAULT_MANIFEST,
     INPUT_NAME,
@@ -40,10 +42,10 @@ from ipid_analysis.strategies import (
     IPIDStrategy,
     _batch_to_matrix,
     _mass_padded,
-    classify_batch,
-    classify_batch_mass,
+    classify_measurement,
     increment_views,
     load_config,
+    validate_strategies,
 )
 
 app = typer.Typer()
@@ -170,63 +172,94 @@ def extract_increments(
     skip_first = (m.protocol == "tcp") and not mass
     output_path = increments_output_path(m)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    newest_input = max(input_path.stat().st_mtime_ns, snapshot_path.stat().st_mtime_ns)
-    if output_path.is_file() and output_path.stat().st_mtime_ns >= newest_input:
+    strategy_path = m.artifact_path(PROCESSED_DATA_DIR, "strategies")
+    if not strategy_path.is_file():
+        classify_measurement(
+            m,
+            batch_size=batch_size,
+            compression=compression,
+            threads=threads,
+            raw_root=RAW_DATA_DIR,
+            processed_root=PROCESSED_DATA_DIR,
+        )
+    assert_complete(strategy_path)
+    inputs = [input_path, snapshot_path, strategy_path]
+    parameters = {"algorithm": "authoritative-strategy-increments-v1", "compression": compression}
+    if cache_current(output_path, inputs, parameters):
         logger.info(f"[{m.target}] reusing increments -> {output_path}")
         return output_path
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
 
     read_sql = READ_SQL_MASS if mass else READ_SQL
-    reader_batch = min(batch_size, MASS_BATCH_CAP) if mass else batch_size
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    reader = con.execute(read_sql, {"input": str(input_path)}).to_arrow_reader(reader_batch)
-    writer = pq.ParquetWriter(temporary, OUTPUT_SCHEMA, compression=compression)
-
-    logger.info(
-        f"[{m.target}] {m.measurement_id}: extracting increments ({'mass' if mass else 'base'})"
+    reader_batch = batch_budget(
+        min(batch_size, MASS_BATCH_CAP) if mass else batch_size, width=cfg.sequence_length
     )
-    start = time.monotonic()
-    try:
-        for batch in reader:
-            ip_addr = batch.column("IP_ADDR").cast(pa.string())
-            n = len(ip_addr)
+    with connect(config={"threads": threads} if threads else {}) as con:
+        validate_strategies(strategy_path, pq.ParquetFile(input_path).metadata.num_rows)
+        reader = con.execute(
+            "SELECT raw.*, CAST(s.IPID_SELECTION_STRATEGY AS VARCHAR) AS strategy "
+            f"FROM ({read_sql}) AS raw LEFT JOIN read_parquet($strategies) AS s USING (IP_ADDR)",
+            {"input": str(input_path), "strategies": str(strategy_path)},
+        ).to_arrow_reader(reader_batch)
+        writer = pq.ParquetWriter(temporary, OUTPUT_SCHEMA, compression=compression)
 
-            if mass:
-                codes = classify_batch_mass(batch.column("ipid"), cfg)
-                offsets, values = mass_increments(batch.column("ipid"), cfg, codes)
-            else:
-                valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
-                codes = np.full(n, int(IPIDStrategy.UNCLASSIFIED), dtype=np.int8)
-                full_offsets = np.zeros(n + 1, dtype=np.int64)
-                values = np.empty(0, dtype=np.int32)
-                if matrix.shape[0]:
-                    codes[valid] = classify_batch(matrix, cfg, skip_first)
-                    voff, values = base_increments(matrix, cfg, skip_first, codes[valid])
-                    widths = np.zeros(n, dtype=np.int64)
-                    widths[valid] = np.diff(voff)
-                    np.cumsum(widths, out=full_offsets[1:])
-                offsets = full_offsets
+        logger.info(
+            f"[{m.target}] {m.measurement_id}: extracting increments ({'mass' if mass else 'base'})"
+        )
+        start = time.monotonic()
+        try:
+            for batch in reader:
+                ip_addr = batch.column("IP_ADDR").cast(pa.string())
+                n = len(ip_addr)
+                label_codes = pc.index_in(batch.column("strategy"), value_set=STRATEGY_DICT)
+                if pc.any(pc.is_null(label_codes)).as_py():
+                    raise ValueError(
+                        "raw/strategy IP populations differ or contain invalid labels"
+                    )
+                codes = label_codes.to_numpy(zero_copy_only=False).astype(np.int8)
 
-            increments = pa.ListArray.from_arrays(
-                pa.array(offsets, type=pa.int32()), pa.array(values, type=pa.int32())
+                if mass:
+                    offsets, values = mass_increments(batch.column("ipid"), cfg, codes)
+                else:
+                    valid, matrix = _batch_to_matrix(batch.column("ipid"), cfg.sequence_length)
+                    full_offsets = np.zeros(n + 1, dtype=np.int64)
+                    values = np.empty(0, dtype=np.int32)
+                    if matrix.shape[0]:
+                        voff, values = base_increments(matrix, cfg, skip_first, codes[valid])
+                        widths = np.zeros(n, dtype=np.int64)
+                        widths[valid] = np.diff(voff)
+                        np.cumsum(widths, out=full_offsets[1:])
+                    offsets = full_offsets
+
+                increments = pa.ListArray.from_arrays(
+                    pa.array(offsets, type=pa.int32()), pa.array(values, type=pa.int32())
+                )
+                strategy = pa.DictionaryArray.from_arrays(pa.array(codes), STRATEGY_DICT)
+                writer.write_batch(
+                    pa.record_batch([ip_addr, strategy, increments], schema=OUTPUT_SCHEMA)
+                )
+        except Exception:
+            writer.close()
+            temporary.unlink(missing_ok=True)
+            con.close()
+            raise
+        else:
+            writer.close()
+            con.close()
+            publish_file(
+                temporary,
+                output_path,
+                inputs=inputs,
+                parameters=parameters,
+                expected_rows=pq.ParquetFile(input_path).metadata.num_rows,
             )
-            strategy = pa.DictionaryArray.from_arrays(pa.array(codes), STRATEGY_DICT)
-            writer.write_batch(
-                pa.record_batch([ip_addr, strategy, increments], schema=OUTPUT_SCHEMA)
-            )
-    except Exception:
-        writer.close()
-        temporary.unlink(missing_ok=True)
-        con.close()
-        raise
-    else:
-        writer.close()
-        con.close()
-        temporary.replace(output_path)
+            temporary.unlink(missing_ok=True)
 
-    logger.success(f"[{m.target}] increments in {time.monotonic() - start:.1f}s -> {output_path}")
-    return output_path
+        logger.success(
+            f"[{m.target}] increments in {time.monotonic() - start:.1f}s -> {output_path}"
+        )
+        return output_path
 
 
 @app.command()
@@ -239,6 +272,7 @@ def main(
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, help="DuckDB threads (0 = all cores)"),
 ) -> None:
+    start_run()
     m = resolve(load_manifest(manifest), target)
     if m is None:
         logger.error(f"{target}: not present in {manifest}")

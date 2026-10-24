@@ -18,6 +18,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
+from ipid_analysis.artifacts import publish_file, save_figure
+from ipid_analysis.runtime import start_run, temporary_path
+
 matplotlib.use("Agg")
 
 from matplotlib.lines import Line2D
@@ -123,10 +126,11 @@ def calculate_scores(
 
 def _write_json(value: dict, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
@@ -410,7 +414,8 @@ def plot_score_cdf(
         top=CDF_GRID_TOP,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output_path,
         format="pdf",
         bbox_inches="tight",
@@ -433,7 +438,7 @@ def _write_scores(
     output_path: Path,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     with pq.ParquetWriter(temporary, SCORE_SCHEMA, compression="zstd") as writer:
         for dataset, strategy_scores in datasets.items():
@@ -452,7 +457,8 @@ def _write_scores(
                         schema=SCORE_SCHEMA,
                     )
                 )
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
@@ -673,6 +679,7 @@ def main(
     ),
     seed: int = typer.Option(DEFAULT_SEED, help="deterministic random seed"),
 ) -> None:
+    start_run()
     outputs = render(
         samples_per_strategy=samples_per_strategy,
         null_table_samples=null_table_samples,

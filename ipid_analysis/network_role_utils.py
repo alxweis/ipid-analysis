@@ -8,6 +8,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from ipid_analysis.artifacts import assert_complete, bind_dependencies, cache_current
+
 NETWORK_ROLE_ANALYSIS_VERSION = "3"
 
 
@@ -35,9 +37,18 @@ def output_cache_is_current(
         return False
     if metadata.get("analysis_cache_version") != version:
         return False
-    newest_input = max(path.stat().st_mtime_ns for path in input_paths)
-    oldest_output = min(path.stat().st_mtime_ns for path in output_paths)
-    return oldest_output >= newest_input
+    try:
+        for path in output_paths:
+            assert_complete(path)
+    except (OSError, ValueError):
+        return False
+    return cache_current(metadata_path, input_paths, {"analysis_cache_version": version})
+
+
+def record_cache_inputs(metadata_path: Path, inputs) -> None:
+    bind_dependencies(
+        metadata_path, inputs, {"analysis_cache_version": NETWORK_ROLE_ANALYSIS_VERSION}
+    )
 
 
 def log_cache_reuse(target: str, metadata_path: Path) -> None:

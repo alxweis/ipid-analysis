@@ -14,6 +14,7 @@ from matplotlib.ticker import MultipleLocator
 from matplotlib.transforms import blended_transform_factory
 import numpy as np
 
+from ipid_analysis.artifacts import save_figure
 from ipid_analysis.interprotocol import GROUPS
 from ipid_analysis.interprotocol_outcomes import STRATEGIES, outcome_plot_style
 from ipid_analysis.paper_figures import (
@@ -43,21 +44,31 @@ def plot_campaign_upset(summary_path: Path, output_dir: Path):
     outputs = []
     for strategy in STRATEGIES:
         categories, colors = outcome_plot_style(strategy)
-        values = np.array([
-            [summary["groups"].get(g, {}).get("counts", {}).get(f"{strategy}:{o}", 0)
-             for g in groups]
-            for o, _ in categories
-        ])
+        values = np.array(
+            [
+                [
+                    summary["groups"].get(g, {}).get("counts", {}).get(f"{strategy}:{o}", 0)
+                    for g in groups
+                ]
+                for o, _ in categories
+            ]
+        )
         totals = values.sum(axis=0)
         sizes = membership @ totals
         percentages = np.divide(
-            100.0 * values, totals, out=np.zeros_like(values, dtype=float),
+            100.0 * values,
+            totals,
+            out=np.zeros_like(values, dtype=float),
             where=totals > 0,
         )
         fig = plt.figure(figsize=(5.0, 2.9))
         grid = fig.add_gridspec(
-            2, 1, height_ratios=(2.1, 0.85),
-            left=0.34, right=0.88, bottom=0.16,
+            2,
+            1,
+            height_ratios=(2.1, 0.85),
+            left=0.34,
+            right=0.88,
+            bottom=0.16,
             top=0.83 if len(categories) > 3 else 0.89,
             hspace=0.27,
         )
@@ -66,26 +77,38 @@ def plot_campaign_upset(summary_path: Path, output_dir: Path):
         x = np.arange(len(groups)) * 0.66
         bottom = np.zeros(len(groups))
         for (_, label), heights, color in zip(categories, percentages, colors, strict=True):
-            bars.bar(x, heights, bottom=bottom, width=0.46, color=color,
-                     edgecolor="white", linewidth=COMPACT_PAPER_STROKE_WIDTH,
-                     label=label)
+            bars.bar(
+                x,
+                heights,
+                bottom=bottom,
+                width=0.46,
+                color=color,
+                edgecolor="white",
+                linewidth=COMPACT_PAPER_STROKE_WIDTH,
+                label=label,
+            )
             bottom += heights
         size_y = (bars.get_position().y0 + matrix.get_position().y1) / 2
         size_transform = blended_transform_factory(bars.transData, fig.transFigure)
         for i, n in enumerate(totals):
-            fig.text(x[i], size_y, f"({format_size(n)})", transform=size_transform,
-                     ha="center", va="center")
+            fig.text(
+                x[i],
+                size_y,
+                f"({format_size(n)})",
+                transform=size_transform,
+                ha="center",
+                va="center",
+            )
         bars.set_ylim(0, 100)
         bars.set_ylabel("Percentage [%]")
         bars.set_yticks(np.arange(0, 101, 20))
         bars.yaxis.set_minor_locator(MultipleLocator(10))
-        bars.tick_params(axis="y", which="major", length=5,
-                         width=COMPACT_PAPER_STROKE_WIDTH)
-        bars.tick_params(axis="y", which="minor", length=2.8,
-                         width=COMPACT_PAPER_STROKE_WIDTH)
+        bars.tick_params(axis="y", which="major", length=5, width=COMPACT_PAPER_STROKE_WIDTH)
+        bars.tick_params(axis="y", which="minor", length=2.8, width=COMPACT_PAPER_STROKE_WIDTH)
         bars.set_axisbelow(True)
-        bars.grid(axis="y", which="major", color="#BDBDBD", linestyle="--",
-                  linewidth=0.5, alpha=0.7)
+        bars.grid(
+            axis="y", which="major", color="#BDBDBD", linestyle="--", linewidth=0.5, alpha=0.7
+        )
         bars.tick_params(axis="x", bottom=False, labelbottom=False)
         for spine in bars.spines.values():
             spine.set_visible(True)
@@ -98,14 +121,19 @@ def plot_campaign_upset(summary_path: Path, output_dir: Path):
             matrix.scatter(x, np.full(len(x), row), color="#B8B8B8", s=19, zorder=2)
         for col, position in enumerate(x):
             active = np.flatnonzero(membership[:, col])
-            matrix.plot([position, position], [active.min(), active.max()],
-                        color="#333333", linewidth=1.1, zorder=3)
-            matrix.scatter(np.full(len(active), position), active,
-                           color="#333333", s=23, zorder=4)
+            matrix.plot(
+                [position, position],
+                [active.min(), active.max()],
+                color="#333333",
+                linewidth=1.1,
+                zorder=3,
+            )
+            matrix.scatter(np.full(len(active), position), active, color="#333333", s=23, zorder=4)
         matrix.set_xlim(x[0] - 0.30, x[-1] + 0.30)
         matrix.set_ylim(2.6, -0.6)
-        matrix.set_yticks(range(3), [f"{p.upper()} ({format_size(n)})"
-                                   for p, n in zip(protocols, sizes)])
+        matrix.set_yticks(
+            range(3), [f"{p.upper()} ({format_size(n)})" for p, n in zip(protocols, sizes)]
+        )
         matrix.set_ylabel("Protocol\n(#IP Addr.)")
         matrix.tick_params(axis="both", length=0)
         matrix.tick_params(axis="x", labelbottom=False)
@@ -114,15 +142,30 @@ def plot_campaign_upset(summary_path: Path, output_dir: Path):
             spine.set_visible(False)
 
         handles, labels = bars.get_legend_handles_labels()
-        fig.legend(handles, labels, frameon=False, loc="upper center",
-                   bbox_to_anchor=(0.5, 0.99), ncol=min(3, len(categories)),
-                   columnspacing=0.65, handlelength=1.0, handletextpad=0.3,
-                   borderaxespad=0, borderpad=0, labelspacing=0.3)
+        fig.legend(
+            handles,
+            labels,
+            frameon=False,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.99),
+            ncol=min(3, len(categories)),
+            columnspacing=0.65,
+            handlelength=1.0,
+            handletextpad=0.3,
+            borderaxespad=0,
+            borderpad=0,
+            labelspacing=0.3,
+        )
         stem = "interprotocol-upset-" + strategy.lower().replace("_", "-")
         pdf = output_dir / f"{stem}.pdf"
-        fig.savefig(pdf, bbox_inches="tight", pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
-        fig.savefig(output_dir / f"{stem}.png", dpi=220, bbox_inches="tight",
-                    pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
+        save_figure(fig, pdf, bbox_inches="tight", pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
+        save_figure(
+            fig,
+            output_dir / f"{stem}.png",
+            dpi=220,
+            bbox_inches="tight",
+            pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES,
+        )
         plt.close(fig)
         outputs.append(pdf)
     return outputs

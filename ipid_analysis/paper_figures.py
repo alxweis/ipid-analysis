@@ -20,13 +20,15 @@ import json
 import os
 from pathlib import Path
 
-import duckdb
 from loguru import logger
 import matplotlib
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
+
+from ipid_analysis.artifacts import publish_file, save_figure
+from ipid_analysis.runtime import connect, start_run, temporary_path
 
 matplotlib.use("Agg")
 
@@ -391,18 +393,20 @@ class MaxMindContinentLookup:
 
 def _write_table(table: pa.Table, output_path: Path, compression: str | None) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     pq.write_table(table, temporary, compression=compression)
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
 def _write_json(output_path: Path, value: dict) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(output_path)
+    publish_file(temporary, output_path)
+    temporary.unlink(missing_ok=True)
     return output_path
 
 
@@ -429,7 +433,8 @@ def _common_metadata(comparison: BaseComparison, sources: dict[str, Path]) -> di
 
 def _save_figure(fig, output_path: Path, *, title: str, subject: str) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
+    save_figure(
+        fig,
         output_path,
         bbox_inches="tight",
         pad_inches=0.02,
@@ -451,53 +456,54 @@ def build_continent_map(
     """Map the union of both measurements' IPs to MaxMind continents."""
     _require_files(*input_paths)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary = temporary_path(output_path)
     temporary.unlink(missing_ok=True)
     schema = pa.schema(
         [("IP_ADDR", pa.string()), ("CONTINENT_CODE", pa.string()), ("CONTINENT", pa.string())]
     )
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    reader = con.execute(
-        "SELECT DISTINCT IP_ADDR FROM ("
-        "SELECT IP_ADDR FROM read_parquet($rt) UNION ALL "
-        "SELECT IP_ADDR FROM read_parquet($fixed))",
-        {"rt": str(input_paths[0]), "fixed": str(input_paths[1])},
-    ).to_arrow_reader(batch_size)
-    writer = pq.ParquetWriter(temporary, schema, compression=compression)
-    mapped = 0
-    unmapped = 0
-    try:
-        for batch in reader:
-            addresses = batch.column("IP_ADDR").to_pylist()
-            codes = []
-            names = []
-            for address in addresses:
-                result = lookup(address)
-                if result is None:
-                    codes.append("ZZ")
-                    names.append("Unknown")
-                    unmapped += 1
-                else:
-                    code, name = result
-                    codes.append(code)
-                    names.append(name)
-                    mapped += 1
-            writer.write_table(
-                pa.table(
-                    {"IP_ADDR": addresses, "CONTINENT_CODE": codes, "CONTINENT": names},
-                    schema=schema,
+    with connect(config={"threads": threads} if threads else {}) as con:
+        reader = con.execute(
+            "SELECT DISTINCT IP_ADDR FROM ("
+            "SELECT IP_ADDR FROM read_parquet($rt) UNION ALL "
+            "SELECT IP_ADDR FROM read_parquet($fixed))",
+            {"rt": str(input_paths[0]), "fixed": str(input_paths[1])},
+        ).to_arrow_reader(batch_size)
+        writer = pq.ParquetWriter(temporary, schema, compression=compression)
+        mapped = 0
+        unmapped = 0
+        try:
+            for batch in reader:
+                addresses = batch.column("IP_ADDR").to_pylist()
+                codes = []
+                names = []
+                for address in addresses:
+                    result = lookup(address)
+                    if result is None:
+                        codes.append("ZZ")
+                        names.append("Unknown")
+                        unmapped += 1
+                    else:
+                        code, name = result
+                        codes.append(code)
+                        names.append(name)
+                        mapped += 1
+                writer.write_table(
+                    pa.table(
+                        {"IP_ADDR": addresses, "CONTINENT_CODE": codes, "CONTINENT": names},
+                        schema=schema,
+                    )
                 )
-            )
-    except Exception:
-        writer.close()
-        temporary.unlink(missing_ok=True)
-        raise
-    else:
-        writer.close()
-        temporary.replace(output_path)
-    finally:
-        con.close()
-    return {"mapped_ip_count": mapped, "unmapped_ip_count": unmapped}
+        except Exception:
+            writer.close()
+            temporary.unlink(missing_ok=True)
+            raise
+        else:
+            writer.close()
+            publish_file(temporary, output_path)
+            temporary.unlink(missing_ok=True)
+        finally:
+            con.close()
+        return {"mapped_ip_count": mapped, "unmapped_ip_count": unmapped}
 
 
 def aggregate_probing_intervals(
@@ -514,47 +520,49 @@ def aggregate_probing_intervals(
     _require_files(rt_path, fixed_path, continent_map_path)
     probabilities = np.linspace(0.0, 0.995, quantile_points)
     probabilities_sql = "[" + ",".join(f"{p:.8f}" for p in probabilities) + "]"
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    table = con.execute(
-        f"""
-        WITH per_ip AS (
-            SELECT '{RT_MODE}' AS MODE, IP_ADDR,
-                   list_aggregate(PROBING_INTERVALS, 'median') / 1000.0 AS INTERVAL_MS
-            FROM read_parquet($rt)
-            UNION ALL
-            SELECT '{FIXED_MODE}' AS MODE, IP_ADDR,
-                   list_aggregate(PROBING_INTERVALS, 'median') / 1000.0 AS INTERVAL_MS
-            FROM read_parquet($fixed)
-        ),
-        located AS (
-            SELECT g.CONTINENT_CODE, g.CONTINENT, p.MODE, p.INTERVAL_MS
-            FROM per_ip p JOIN read_parquet($geo) g USING (IP_ADDR)
-            WHERE g.CONTINENT_CODE <> 'ZZ' AND p.INTERVAL_MS IS NOT NULL AND p.INTERVAL_MS >= 0
-        ),
-        union_counts AS (
-            SELECT CONTINENT_CODE, count(*)::BIGINT AS IP_COUNT_UNION
-            FROM read_parquet($geo) WHERE CONTINENT_CODE <> 'ZZ' GROUP BY 1
-        )
-        SELECT l.CONTINENT_CODE, any_value(l.CONTINENT) AS CONTINENT, l.MODE,
-               count(*)::BIGINT AS IP_COUNT_MODE, u.IP_COUNT_UNION,
-               approx_quantile(l.INTERVAL_MS, 0.995)::DOUBLE AS P99_5_MS,
-               approx_quantile(l.INTERVAL_MS, {probabilities_sql})::DOUBLE[] AS QUANTILES_MS
-        FROM located l JOIN union_counts u USING (CONTINENT_CODE)
-        GROUP BY l.CONTINENT_CODE, l.MODE, u.IP_COUNT_UNION
-        ORDER BY l.CONTINENT_CODE, l.MODE
-        """,
-        {"rt": str(rt_path), "fixed": str(fixed_path), "geo": str(continent_map_path)},
-    ).to_arrow_table()
-    con.close()
-    table = table.cast(INTERVAL_SCHEMA)
-    _write_table(table, output_path, compression)
-    return {
-        "located_ip_count_union": sum(
-            {row["CONTINENT_CODE"]: row["IP_COUNT_UNION"] for row in table.to_pylist()}.values()
-        ),
-        "groups": table.num_rows,
-        "quantile_points": quantile_points,
-    }
+    with connect(config={"threads": threads} if threads else {}) as con:
+        table = con.execute(
+            f"""
+            WITH per_ip AS (
+                SELECT '{RT_MODE}' AS MODE, IP_ADDR,
+                       list_aggregate(PROBING_INTERVALS, 'median') / 1000.0 AS INTERVAL_MS
+                FROM read_parquet($rt)
+                UNION ALL
+                SELECT '{FIXED_MODE}' AS MODE, IP_ADDR,
+                       list_aggregate(PROBING_INTERVALS, 'median') / 1000.0 AS INTERVAL_MS
+                FROM read_parquet($fixed)
+            ),
+            located AS (
+                SELECT g.CONTINENT_CODE, g.CONTINENT, p.MODE, p.INTERVAL_MS
+                FROM per_ip p JOIN read_parquet($geo) g USING (IP_ADDR)
+                WHERE g.CONTINENT_CODE <> 'ZZ' AND p.INTERVAL_MS IS NOT NULL AND p.INTERVAL_MS >= 0
+            ),
+            union_counts AS (
+                SELECT CONTINENT_CODE, count(*)::BIGINT AS IP_COUNT_UNION
+                FROM read_parquet($geo) WHERE CONTINENT_CODE <> 'ZZ' GROUP BY 1
+            )
+            SELECT l.CONTINENT_CODE, any_value(l.CONTINENT) AS CONTINENT, l.MODE,
+                   count(*)::BIGINT AS IP_COUNT_MODE, u.IP_COUNT_UNION,
+                   approx_quantile(l.INTERVAL_MS, 0.995)::DOUBLE AS P99_5_MS,
+                   approx_quantile(l.INTERVAL_MS, {probabilities_sql})::DOUBLE[] AS QUANTILES_MS
+            FROM located l JOIN union_counts u USING (CONTINENT_CODE)
+            GROUP BY l.CONTINENT_CODE, l.MODE, u.IP_COUNT_UNION
+            ORDER BY l.CONTINENT_CODE, l.MODE
+            """,
+            {"rt": str(rt_path), "fixed": str(fixed_path), "geo": str(continent_map_path)},
+        ).to_arrow_table()
+        con.close()
+        table = table.cast(INTERVAL_SCHEMA)
+        _write_table(table, output_path, compression)
+        return {
+            "located_ip_count_union": sum(
+                {
+                    row["CONTINENT_CODE"]: row["IP_COUNT_UNION"] for row in table.to_pylist()
+                }.values()
+            ),
+            "groups": table.num_rows,
+            "quantile_points": quantile_points,
+        }
 
 
 def _abbreviate_count(value: int) -> str:
@@ -649,76 +657,76 @@ def aggregate_increment_distributions(
     """Build exact increment histograms, clipped and renormalized at p99.9."""
     _require_files(rt_path, fixed_path)
     allowed = ",".join(f"'{strategy}'" for strategy in INCREMENT_STRATEGIES)
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    rows = con.execute(
-        f"""
-        SELECT MODE, STRATEGY, INCREMENT, count(*)::BIGINT AS N
-        FROM (
-            SELECT '{RT_MODE}' AS MODE,
-                   CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY,
-                   unnest(INCREMENTS)::INTEGER AS INCREMENT
-            FROM read_parquet($rt)
-            UNION ALL
-            SELECT '{FIXED_MODE}' AS MODE,
-                   CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY,
-                   unnest(INCREMENTS)::INTEGER AS INCREMENT
-            FROM read_parquet($fixed)
-        )
-        WHERE STRATEGY IN ({allowed}) AND INCREMENT > 0
-        GROUP BY MODE, STRATEGY, INCREMENT
-        ORDER BY MODE, STRATEGY, INCREMENT
-        """,
-        {"rt": str(rt_path), "fixed": str(fixed_path)},
-    ).fetchall()
-    con.close()
+    with connect(config={"threads": threads} if threads else {}) as con:
+        rows = con.execute(
+            f"""
+            SELECT MODE, STRATEGY, INCREMENT, count(*)::BIGINT AS N
+            FROM (
+                SELECT '{RT_MODE}' AS MODE,
+                       CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY,
+                       unnest(INCREMENTS)::INTEGER AS INCREMENT
+                FROM read_parquet($rt)
+                UNION ALL
+                SELECT '{FIXED_MODE}' AS MODE,
+                       CAST(IPID_SELECTION_STRATEGY AS VARCHAR) AS STRATEGY,
+                       unnest(INCREMENTS)::INTEGER AS INCREMENT
+                FROM read_parquet($fixed)
+            )
+            WHERE STRATEGY IN ({allowed}) AND INCREMENT > 0
+            GROUP BY MODE, STRATEGY, INCREMENT
+            ORDER BY MODE, STRATEGY, INCREMENT
+            """,
+            {"rt": str(rt_path), "fixed": str(fixed_path)},
+        ).fetchall()
+        con.close()
 
-    grouped: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
-    for mode, strategy, increment, count in rows:
-        grouped[(mode, strategy)].append((int(increment), int(count)))
+        grouped: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+        for mode, strategy, increment, count in rows:
+            grouped[(mode, strategy)].append((int(increment), int(count)))
 
-    output_rows = []
-    summaries = {}
-    for mode in MODES:
-        for strategy in INCREMENT_STRATEGIES:
-            histogram = grouped.get((mode, strategy), [])
-            if not histogram:
-                continue
-            total = sum(count for _, count in histogram)
-            threshold = percentile * total
-            cumulative = 0
-            cutoff_index = len(histogram) - 1
-            for index, (_, count) in enumerate(histogram):
-                cumulative += count
-                if cumulative >= threshold:
-                    cutoff_index = index
-                    break
-            retained = sum(count for _, count in histogram[: cutoff_index + 1])
-            clipped = total - retained
-            cumulative = 0
-            for increment, count in histogram[: cutoff_index + 1]:
-                cumulative += count
-                output_rows.append(
-                    {
-                        "MODE": mode,
-                        "IPID_SELECTION_STRATEGY": strategy,
-                        "INCREMENT": increment,
-                        "COUNT": count,
-                        "CUMULATIVE_COUNT": cumulative,
-                        "CUMULATIVE_PERCENTAGE": 100.0 * cumulative / retained,
-                        "TOTAL_COUNT": total,
-                        "RETAINED_COUNT": retained,
-                        "CLIPPED_COUNT": clipped,
-                    }
-                )
-            summaries[f"{mode}:{strategy}"] = {
-                "total_count": total,
-                "retained_count": retained,
-                "clipped_count": clipped,
-                "cutoff_increment": histogram[cutoff_index][0],
-            }
-    table = pa.Table.from_pylist(output_rows, schema=INCREMENT_SCHEMA)
-    _write_table(table, output_path, compression)
-    return {"percentile": percentile, "series": summaries}
+        output_rows = []
+        summaries = {}
+        for mode in MODES:
+            for strategy in INCREMENT_STRATEGIES:
+                histogram = grouped.get((mode, strategy), [])
+                if not histogram:
+                    continue
+                total = sum(count for _, count in histogram)
+                threshold = percentile * total
+                cumulative = 0
+                cutoff_index = len(histogram) - 1
+                for index, (_, count) in enumerate(histogram):
+                    cumulative += count
+                    if cumulative >= threshold:
+                        cutoff_index = index
+                        break
+                retained = sum(count for _, count in histogram[: cutoff_index + 1])
+                clipped = total - retained
+                cumulative = 0
+                for increment, count in histogram[: cutoff_index + 1]:
+                    cumulative += count
+                    output_rows.append(
+                        {
+                            "MODE": mode,
+                            "IPID_SELECTION_STRATEGY": strategy,
+                            "INCREMENT": increment,
+                            "COUNT": count,
+                            "CUMULATIVE_COUNT": cumulative,
+                            "CUMULATIVE_PERCENTAGE": 100.0 * cumulative / retained,
+                            "TOTAL_COUNT": total,
+                            "RETAINED_COUNT": retained,
+                            "CLIPPED_COUNT": clipped,
+                        }
+                    )
+                summaries[f"{mode}:{strategy}"] = {
+                    "total_count": total,
+                    "retained_count": retained,
+                    "clipped_count": clipped,
+                    "cutoff_increment": histogram[cutoff_index][0],
+                }
+        table = pa.Table.from_pylist(output_rows, schema=INCREMENT_SCHEMA)
+        _write_table(table, output_path, compression)
+        return {"percentile": percentile, "series": summaries}
 
 
 def plot_increment_distributions(aggregate_path: Path, output_path: Path) -> Path:
@@ -809,56 +817,56 @@ def aggregate_strategy_intersection(
     """Count and row-normalize strategies for IPs present in both measurements."""
     _require_files(rt_path, fixed_path)
     allowed = ",".join(f"'{strategy}'" for strategy in INTERSECTION_STRATEGIES)
-    con = duckdb.connect(config={"threads": threads} if threads else {})
-    total_intersection = int(
-        con.execute(
-            "SELECT count(*) FROM read_parquet($rt) r INNER JOIN read_parquet($fixed) f "
-            "USING (IP_ADDR)",
+    with connect(config={"threads": threads} if threads else {}) as con:
+        total_intersection = int(
+            con.execute(
+                "SELECT count(*) FROM read_parquet($rt) r INNER JOIN read_parquet($fixed) f "
+                "USING (IP_ADDR)",
+                {"rt": str(rt_path), "fixed": str(fixed_path)},
+            ).fetchone()[0]
+        )
+        rows = con.execute(
+            f"""
+            SELECT CAST(r.IPID_SELECTION_STRATEGY AS VARCHAR) AS RT_STRATEGY,
+                   CAST(f.IPID_SELECTION_STRATEGY AS VARCHAR) AS FIXED_STRATEGY,
+                   count(*)::BIGINT AS N
+            FROM read_parquet($rt) r INNER JOIN read_parquet($fixed) f USING (IP_ADDR)
+            WHERE CAST(r.IPID_SELECTION_STRATEGY AS VARCHAR) IN ({allowed})
+              AND CAST(f.IPID_SELECTION_STRATEGY AS VARCHAR) IN ({allowed})
+            GROUP BY 1, 2
+            """,
             {"rt": str(rt_path), "fixed": str(fixed_path)},
-        ).fetchone()[0]
-    )
-    rows = con.execute(
-        f"""
-        SELECT CAST(r.IPID_SELECTION_STRATEGY AS VARCHAR) AS RT_STRATEGY,
-               CAST(f.IPID_SELECTION_STRATEGY AS VARCHAR) AS FIXED_STRATEGY,
-               count(*)::BIGINT AS N
-        FROM read_parquet($rt) r INNER JOIN read_parquet($fixed) f USING (IP_ADDR)
-        WHERE CAST(r.IPID_SELECTION_STRATEGY AS VARCHAR) IN ({allowed})
-          AND CAST(f.IPID_SELECTION_STRATEGY AS VARCHAR) IN ({allowed})
-        GROUP BY 1, 2
-        """,
-        {"rt": str(rt_path), "fixed": str(fixed_path)},
-    ).fetchall()
-    con.close()
+        ).fetchall()
+        con.close()
 
-    counts = {(rt, fixed): int(count) for rt, fixed, count in rows}
-    row_totals = {
-        rt: sum(counts.get((rt, fixed), 0) for fixed in INTERSECTION_STRATEGIES)
-        for rt in INTERSECTION_STRATEGIES
-    }
-    output_rows = []
-    for rt in INTERSECTION_STRATEGIES:
-        for fixed in INTERSECTION_STRATEGIES:
-            count = counts.get((rt, fixed), 0)
-            total = row_totals[rt]
-            output_rows.append(
-                {
-                    "RT_BASED_STRATEGY": rt,
-                    "FIXED_INTERVAL_STRATEGY": fixed,
-                    "COUNT": count,
-                    "RT_BASED_TOTAL": total,
-                    "PERCENTAGE": 100.0 * count / total if total else 0.0,
-                }
-            )
-    table = pa.Table.from_pylist(output_rows, schema=INTERSECTION_SCHEMA)
-    _write_table(table, output_path, compression)
-    included = sum(row_totals.values())
-    return {
-        "intersection_ip_count": total_intersection,
-        "included_ip_count": included,
-        "excluded_strategy_ip_count": total_intersection - included,
-        "normalization": "row-wise by RT-based strategy",
-    }
+        counts = {(rt, fixed): int(count) for rt, fixed, count in rows}
+        row_totals = {
+            rt: sum(counts.get((rt, fixed), 0) for fixed in INTERSECTION_STRATEGIES)
+            for rt in INTERSECTION_STRATEGIES
+        }
+        output_rows = []
+        for rt in INTERSECTION_STRATEGIES:
+            for fixed in INTERSECTION_STRATEGIES:
+                count = counts.get((rt, fixed), 0)
+                total = row_totals[rt]
+                output_rows.append(
+                    {
+                        "RT_BASED_STRATEGY": rt,
+                        "FIXED_INTERVAL_STRATEGY": fixed,
+                        "COUNT": count,
+                        "RT_BASED_TOTAL": total,
+                        "PERCENTAGE": 100.0 * count / total if total else 0.0,
+                    }
+                )
+        table = pa.Table.from_pylist(output_rows, schema=INTERSECTION_SCHEMA)
+        _write_table(table, output_path, compression)
+        included = sum(row_totals.values())
+        return {
+            "intersection_ip_count": total_intersection,
+            "included_ip_count": included,
+            "excluded_strategy_ip_count": total_intersection - included,
+            "normalization": "row-wise by RT-based strategy",
+        }
 
 
 def plot_strategy_intersection(aggregate_path: Path, output_path: Path) -> Path:
@@ -1075,6 +1083,7 @@ def main(
     compression: str = typer.Option("zstd", help="zstd|snappy|gzip|lz4|none"),
     threads: int = typer.Option(0, min=0, help="DuckDB threads; 0 uses all cores"),
 ) -> None:
+    start_run()
     try:
         comparison = resolve_base_comparison(load_manifest(manifest), rt_target, fixed_target)
         comp = None if compression == "none" else compression
