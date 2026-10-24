@@ -1,5 +1,10 @@
 # ipid-analysis
 
+Deployment, scratch storage, completion/recovery rules, compatibility changes,
+and the outstanding benchmark matrix are documented in
+[docs/storage-runtime.md](docs/storage-runtime.md). The worker now defaults to
+`mounted-s3`; configure the explicit URI mapping before starting it.
+
 ## Inter-protocol measurement outcomes
 
 New campaigns use the v2 manifest produced by `ipid-measure`. Update the analysis
@@ -154,14 +159,17 @@ credentials:
 
 ```bash
 export IPID_ANALYSIS_S3_PREFIX=s3://bucket/ipid-analysis-workflow/
+export IPID_ANALYSIS_S3_ROOTS='{"raw":"s3://bucket/prefix/raw","processed":"s3://bucket/prefix/processed","reports":"s3://bucket/prefix/reports"}'
 make workflow-worker
 ```
 
 For every `jobs/<measurement-id>/request.json`, the worker:
 
-1. downloads `ipid.pq` and `ipid.snapshot.yaml` from the completed measurement upload,
+1. reuses mapped `ipid.pq` and `ipid.snapshot.yaml` through the raw mount
+   (explicit local compatibility mode downloads them),
 2. runs the normal IPID selection-strategy classifier,
-3. persists `strategies.pq` beside the RT measurement's `ipid.pq`,
+3. persists `strategies.pq` and additive `classification-provenance.json`
+   beside the RT measurement's `ipid.pq`,
 4. writes `zmap_unclassified.pq` with the ZMap-compatible columns `IP_ADDR` and
    `REPLY_TYPE`, containing only `UNCLASSIFIED` addresses,
 5. uploads that parquet beside the RT measurement's `ipid.pq`, and then
@@ -179,9 +187,10 @@ been downloaded and verified.
 The same worker also starts the complete postprocessing automatically after a
 successful `make run-all-*` sweep. It polls
 `analysis-jobs/<zmap-id>/request.json`, downloads the manifest and its referenced
-ZMap, OS, and IP-ID outputs into `data/raw`, then runs the same processing as
-`make analyse <manifest>`. The persistent job files and log are kept under
-`data/analysis-jobs/<zmap-id>/`; S3 receives `postprocess.log` followed by either
+ZMap, OS, and IP-ID references through the configured raw mount, then runs strict
+manifest postprocessing. Worker control files use local `tmp/workflow/analysis/<zmap-id>/`;
+successful work directories are removed after durable completion. S3 receives
+`postprocess.log` followed by either
 `done.json` or `failed.json`. A single worker processes the three protocol VMs'
 jobs sequentially, so no additional scheduler or locking service is required.
 
@@ -311,7 +320,7 @@ the textual `IP_ADDR` column for existing plot joins. DuckDB merges flags with
 internally compressed, not wrapped in another compressed stream.
 
 New raw hourly downloads use a local scratch directory, defaulting to
-`data/processed/ripe-atlas/work`. Set `IPID_ANALYSIS_RIPE_WORK_DIR` to a sufficiently
+`tmp/ripe-downloads`. Set `IPID_ANALYSIS_RIPE_WORK_DIR` to a sufficiently
 large local SSD directory (not the small root filesystem or an S3 FUSE mount).
 Completed scratch files are removed after their processed part is persisted;
 failed/incomplete files remain resumable. Existing raw files below the following
