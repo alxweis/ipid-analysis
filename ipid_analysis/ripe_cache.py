@@ -38,7 +38,14 @@ class RoleCache:
             timeout=1800,
         )
         if result.returncode:
-            if "NoSuchKey" in result.stderr or "404" in result.stderr:
+            # s3cmd can report a missing key as a parameter error. Match only
+            # the exact requested object, not arbitrary parameter failures.
+            if (
+                "NoSuchKey" in result.stderr
+                or "404" in result.stderr
+                or result.stderr.strip()
+                == f"ERROR: Parameter problem: Source object '{uri}' does not exist."
+            ):
                 return False
             raise RuntimeError(f"RIPE cache download failed: {result.stderr.strip()}")
         return True
