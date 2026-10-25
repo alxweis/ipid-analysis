@@ -78,8 +78,18 @@ def native_put(source: Path, destination: Path) -> None:
     with _mount(destination) as (command, remote, descriptor):
         error = None
         try:
+            # Existing buckets may allow object uploads without bucket-level
+            # checks (e.g. ZIH S3). Keep this override local to publication.
             subprocess.run(
-                [*command, "copyto", "--ignore-times", "--no-traverse", str(source), remote],
+                [
+                    *command,
+                    "copyto",
+                    "--ignore-times",
+                    "--no-traverse",
+                    "--s3-no-check-bucket",
+                    str(source),
+                    remote,
+                ],
                 check=True,
                 capture_output=True,
                 text=True,

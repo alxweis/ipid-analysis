@@ -259,6 +259,30 @@ with atomic_output(Path(sys.argv[1])) as partial:
             transport.native_put(source, destination)
         refresh.assert_called_once_with(123, 1)
 
+    def test_transport_skips_bucket_check_without_environment_override(self):
+        source, destination = self.root / "source", self.root / "destination"
+        source.write_bytes(b"complete object")
+
+        def copy(command, **kwargs):
+            self.assertNotIn("RCLONE_S3_NO_CHECK_BUCKET", os.environ)
+            self.assertIn("--s3-no-check-bucket", command)
+            shutil.copy2(source, destination)
+
+        with (
+            patch.dict(os.environ),
+            patch.object(
+                transport,
+                "_mount",
+                return_value=nullcontext((["rclone"], "remote:bucket/object", 123)),
+            ),
+            patch.object(transport.subprocess, "run", side_effect=copy) as upload,
+            patch.object(transport.signal, "SIGHUP", 1, create=True),
+            patch.object(transport.signal, "pidfd_send_signal", create=True),
+        ):
+            os.environ.pop("RCLONE_S3_NO_CHECK_BUCKET", None)
+            transport.native_put(source, destination)
+        upload.assert_called_once()
+
     def test_transport_never_treats_ambiguous_failure_as_success(self):
         source = self.root / "source"
         source.write_bytes(b"new")
