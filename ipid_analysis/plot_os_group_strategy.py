@@ -726,6 +726,7 @@ def render(
     os_measurement_id: str,
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
+    strategy_root: Path | None = None,
     raw_root: Path = RAW_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
     compression: str | None = "zstd",
@@ -741,7 +742,7 @@ def render(
     if not os_measurement_id.strip():
         raise ValueError("OS measurement id must not be empty")
 
-    strategy_path = merge.artifact_path(processed_root, "strategies")
+    strategy_path = merge.artifact_path(strategy_root or processed_root, "strategies")
     os_path = os_source_path(raw_root, os_measurement_id, OS_INPUT_NAME)
     group_path = _group_path(processed_root, os_measurement_id)
     aggregate_path = merge.artifact_path(processed_root, KIND)
@@ -780,6 +781,7 @@ def render_measurement(
     os_measurement_id: str,
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
+    strategy_root: Path | None = None,
     raw_root: Path = RAW_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
     compression: str | None = "zstd",
@@ -795,7 +797,7 @@ def render_measurement(
     if not os_measurement_id.strip():
         raise ValueError("OS measurement id must not be empty")
 
-    strategy_path = measurement.artifact_path(processed_root, "strategies")
+    strategy_path = measurement.artifact_path(strategy_root or processed_root, "strategies")
     os_path = os_source_path(raw_root, os_measurement_id, OS_INPUT_NAME)
     group_path = _group_path(processed_root, os_measurement_id)
     aggregate_path = measurement.artifact_path(processed_root, KIND)
