@@ -23,7 +23,7 @@ class RoleCache:
     def __init__(self):
         prefix = os.environ.get("IPID_ANALYSIS_RIPE_CACHE_S3")
         if prefix is None:
-            workflow = os.environ.get("IPID_ANALYSIS_S3_PREFIX", "")
+            workflow = os.environ.get("IPID_ANALYSIS_WORKFLOW_ROOT", os.environ.get("IPID_ANALYSIS_S3_PREFIX", ""))
             prefix = workflow.rstrip("/") + "/ripe-atlas-cache" if workflow else ""
         if prefix and not prefix.startswith("s3://"):
             raise ValueError("IPID_ANALYSIS_RIPE_CACHE_S3 must be an s3:// URI")

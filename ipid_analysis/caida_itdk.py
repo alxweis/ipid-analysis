@@ -25,7 +25,7 @@ import pyarrow.parquet as pq
 import typer
 
 from ipid_analysis.artifacts import assert_complete, file_digest, publish_file
-from ipid_analysis.config import RAW_DATA_DIR
+from ipid_analysis.config import RAW_STORAGE_DIR as RAW_DATA_DIR
 from ipid_analysis.downloads import download as download_http
 from ipid_analysis.runtime import connect, exclusive_lock, start_run, temporary_path, work_path
 

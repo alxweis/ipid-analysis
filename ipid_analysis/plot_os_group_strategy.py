@@ -14,6 +14,7 @@ import pyarrow.parquet as pq
 import typer
 
 from ipid_analysis.artifacts import cache_current, publish_file, save_figure
+from ipid_analysis.config import os_source_path
 from ipid_analysis.runtime import connect, start_run, temporary_path
 
 matplotlib.use("Agg")
@@ -737,7 +738,7 @@ def render(
         raise ValueError("OS measurement id must not be empty")
 
     strategy_path = merge.artifact_path(processed_root, "strategies")
-    os_path = raw_root / "os" / os_measurement_id / OS_INPUT_NAME
+    os_path = os_source_path(raw_root, os_measurement_id, OS_INPUT_NAME)
     group_path = _group_path(processed_root, os_measurement_id)
     aggregate_path = merge.artifact_path(processed_root, KIND)
     pdf_path = merge.artifact_path(figures_root, KIND, "pdf")
@@ -791,7 +792,7 @@ def render_measurement(
         raise ValueError("OS measurement id must not be empty")
 
     strategy_path = measurement.artifact_path(processed_root, "strategies")
-    os_path = raw_root / "os" / os_measurement_id / OS_INPUT_NAME
+    os_path = os_source_path(raw_root, os_measurement_id, OS_INPUT_NAME)
     group_path = _group_path(processed_root, os_measurement_id)
     aggregate_path = measurement.artifact_path(processed_root, KIND)
     pdf_path = measurement.artifact_path(figures_root, KIND, "pdf")

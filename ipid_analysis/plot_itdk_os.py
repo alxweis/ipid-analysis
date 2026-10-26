@@ -11,6 +11,7 @@ import duckdb
 import matplotlib
 
 from ipid_analysis.artifacts import publish_file, save_figure
+from ipid_analysis.config import os_source_path
 from ipid_analysis.network_role_utils import record_cache_inputs
 from ipid_analysis.runtime import connect, temporary_path
 
@@ -314,7 +315,7 @@ def render_itdk_os_analysis(
 ) -> ITDKOSOutputs:
     """Join one measured population to ITDK and resolved protocol OS groups."""
     strategies = source.artifact_path(processed_root, "strategies")
-    os_path = raw_root / "os" / os_measurement_id / OS_INPUT_NAME
+    os_path = os_source_path(raw_root, os_measurement_id, OS_INPUT_NAME)
     group_path = processed_root / "os" / os_measurement_id / OS_GROUP_INPUT_NAME
     for path in (strategies, dataset.interfaces_path, os_path):
         if not path.is_file():

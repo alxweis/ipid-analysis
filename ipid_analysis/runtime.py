@@ -15,7 +15,16 @@ import time
 
 import duckdb
 
-from ipid_analysis.config import PROCESSED_DATA_DIR, PROJ_ROOT, RAW_DATA_DIR, REPORTS_DIR
+from ipid_analysis.config import (
+    PROCESSED_DATA_DIR,
+    PROCESSED_STORAGE_DIR,
+    PROJ_ROOT,
+    RAW_DATA_DIR,
+    RAW_STORAGE_DIR,
+    REPORTS_DIR,
+    REPORTS_STORAGE_DIR,
+    SCOPE,
+)
 
 
 def mounted_storage() -> bool:
@@ -26,7 +35,7 @@ def mounted_storage() -> bool:
 
 
 def persistent_roots() -> tuple[Path, ...]:
-    return (RAW_DATA_DIR, PROCESSED_DATA_DIR, REPORTS_DIR)
+    return (RAW_STORAGE_DIR, PROCESSED_STORAGE_DIR, REPORTS_STORAGE_DIR) if SCOPE else (RAW_DATA_DIR, PROCESSED_DATA_DIR, REPORTS_DIR)
 
 
 def validate_storage() -> None:
@@ -160,7 +169,7 @@ def available_memory() -> int:
         used = _cgroup_root() / "memory.current"
         if limit.is_file() and used.is_file() and limit.read_text().strip() != "max":
             available = min(available, max(1, int(limit.read_text()) - int(used.read_text())))
-    return available
+    return min(available, int(os.environ.get("IPID_ANALYSIS_JOB_MEMORY_BYTES", available)))
 
 
 def _cgroup_root() -> Path:
@@ -219,7 +228,8 @@ def connect(*, config: dict | None = None):
         reserve = int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 1 << 30))
         if free <= reserve:
             raise OSError("insufficient local scratch space")
-        options.setdefault("max_temp_directory_size", f"{max(1, (free - reserve) // (1 << 20))}MB")
+        spill = min(free - reserve, int(os.environ.get("IPID_ANALYSIS_JOB_SCRATCH_BYTES", free - reserve)))
+        options["max_temp_directory_size"] = f"{max(1, spill // (1 << 20))}MB"
         connection = duckdb.connect(config=options)
         try:
             yield connection
@@ -230,10 +240,16 @@ def connect(*, config: dict | None = None):
 @contextmanager
 def exclusive_lock(identity: str, timeout_seconds: float = 3600):
     """Kernel-owned local lock; crashes release ownership without stale PID files."""
-    path = work_path(identity, category="locks") / "owner.lock"
+    lock_root = os.environ.get("IPID_ANALYSIS_LOCK_DIR")
+    if lock_root:
+        directory = Path(lock_root) / hashlib.sha256(identity.encode()).hexdigest()
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "owner.lock"
+    else:
+        path = work_path(identity, category="locks") / "owner.lock"
     with path.open("a+b") as stream:
         stream.seek(0)
-        if not stream.read(1):
+        if os.fstat(stream.fileno()).st_size == 0:
             stream.write(b"0")
             stream.flush()
         deadline = time.monotonic() + timeout_seconds
