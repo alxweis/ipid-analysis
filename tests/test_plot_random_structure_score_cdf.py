@@ -41,8 +41,8 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
-    CANDIDATE_RANDOM_SELECTION,
     CANDIDATE_RANDOM_SCORE_VERSION,
+    CANDIDATE_RANDOM_SELECTION,
     create_candidate_null_tables,
 )
 from ipid_analysis.synthetic_mass_sequences import (
@@ -97,6 +97,17 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             _subminimum_only_strategies(scores),
             ["CONSTANT", "PER_CONNECTION"],
         )
+
+    def test_minor_tick_membership_is_independent_of_power_rounding(self):
+        original_power = np.power
+        with patch(
+            "ipid_analysis.plot_random_structure_score_cdf.np.power",
+            side_effect=lambda *args: np.nextafter(original_power(*args), np.inf),
+        ):
+            _, major, minor = _log_axis_parameters()
+        self.assertEqual(len(minor), 48)
+        for tick in major:
+            self.assertFalse(np.any(np.isclose(minor, tick)))
 
     def test_positive_panel_retains_subminimum_mass(self):
         x_values, percentages = _positive_ecdf_coordinates(np.array([0.0, 0.0, 1e-10, 1e-4]))

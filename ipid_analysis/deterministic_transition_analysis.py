@@ -37,7 +37,7 @@ import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 import typer
 
-from ipid_analysis.config import PROCESSED_DATA_DIR, PROJ_ROOT, RAW_DATA_DIR
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
 from ipid_analysis.inspect_sequences import parse_sequence
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.strategies import (
@@ -62,7 +62,7 @@ DETERMINISTIC_STRATEGIES = (
 )
 KIND = "base-unclassified-to-mass-deterministic"
 DEFAULT_DATA_DIR = PROCESSED_DATA_DIR / "deterministic-transitions"
-DEFAULT_FIGURE_DIR = PROJ_ROOT / "reports" / "figures" / "deterministic-transitions"
+DEFAULT_FIGURE_DIR = FIGURES_DIR / "deterministic-transitions"
 MANIFEST_ARGUMENT = typer.Argument(..., help="measurement manifest JSON")
 DATA_DIR_OPTION = typer.Option(DEFAULT_DATA_DIR, help="Parquet output directory")
 FIGURE_DIR_OPTION = typer.Option(

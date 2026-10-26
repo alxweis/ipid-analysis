@@ -146,7 +146,9 @@ def _log_axis_parameters(
             multiplier * 10.0**exponent
             for exponent in range(axis_minimum_exponent, 0)
             for multiplier in range(1, 10)
-            if multiplier * 10.0**exponent not in major_ticks
+            # Decide membership before float evaluation: scalar exponentiation
+            # and NumPy power can differ by one ULP across CPU platforms.
+            if multiplier != 1 or exponent % X_MAJOR_EXPONENT_STEP != 0
         ],
         dtype=float,
     )

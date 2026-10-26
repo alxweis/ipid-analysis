@@ -8,8 +8,8 @@ target parquet beside the measurement's ``ipid.pq``, and only then publishes
 done marker as an atomic readiness signal.
 
 After a full protocol sweep, ``analysis-jobs/<zmap-id>/request.json`` starts the
-normal manifest-driven postprocessing. These jobs are handled sequentially by
-the same worker and retain their manifest, log, and terminal marker.
+normal manifest-driven postprocessing. The supervisor reserves critical handoff
+capacity while background children retain their manifest, log and terminal marker.
 """
 
 from __future__ import annotations
@@ -39,9 +39,15 @@ from ipid_analysis.artifacts import (
     publish_file,
 )
 from ipid_analysis.config import (
+    FIGURES_DIR,
     PROCESSED_DATA_DIR,
+    PROCESSED_STORAGE_DIR,
     PROJ_ROOT,
     RAW_DATA_DIR,
+    RAW_STORAGE_DIR,
+    REPORTS_STORAGE_DIR,
+    SCOPE,
+    os_source_path,
 )
 from ipid_analysis.interprotocol import (
     INTERPROTOCOL_FIGURES_DIR,
@@ -148,6 +154,9 @@ class Request:
         if not request.ipid_uri.startswith("s3://") or not request.ipid_uri.endswith("/ipid.pq"):
             raise ValueError("invalid ipid_uri")
         measurement_prefix = request.ipid_uri.rsplit("/", 1)[0]
+        raw = json.loads(os.environ.get("IPID_ANALYSIS_S3_ROOTS", "{}")).get("raw")
+        if SCOPE and raw and measurement_prefix != join_s3(raw,SCOPE,"ipid",request.measurement_id):
+            raise ValueError("handoff crosses campaign/site boundaries")
         expected_snapshot_uri = join_s3(measurement_prefix, "ipid.snapshot.yaml")
         if request.snapshot_uri != expected_snapshot_uri:
             raise ValueError("snapshot_uri does not match the IPID measurement prefix")
@@ -283,6 +292,9 @@ class InterprotocolRequest:
             raise ValueError("invalid inter-protocol campaign_id")
         if not request.ipid_prefix.startswith("s3://"):
             raise ValueError("invalid inter-protocol ipid_prefix")
+        raw = json.loads(os.environ.get("IPID_ANALYSIS_S3_ROOTS", "{}")).get("raw")
+        if SCOPE and raw and request.ipid_prefix.rstrip("/") != join_s3(raw,SCOPE,"ipid"):
+            raise ValueError("interprotocol request crosses campaign/site boundaries")
         job_prefix = join_s3(s3_prefix, "interprotocol-jobs", request.job_id)
         expected = {
             "manifest_uri": join_s3(job_prefix, "manifest.json"),
@@ -332,6 +344,8 @@ class InterprotocolTargetRequest:
         if set(request.manifests) != {"icmp", "tcp", "udp"}:
             raise ValueError("inter-protocol target request requires icmp, tcp, and udp manifests")
         for protocol, uri in request.manifests.items():
+            if SCOPE and not uri.startswith(join_s3(s3_prefix,"analysis-jobs")+"/"):
+                raise ValueError("target request crosses campaign/site boundaries")
             parts = uri.rstrip("/").split("/")
             if (
                 not uri.startswith("s3://")
@@ -364,8 +378,9 @@ class InterprotocolTargetDone:
 
 
 class S3Client:
-    def __init__(self, run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run):
+    def __init__(self, run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run, *, timeout: int | None = None):
         self._run = run
+        self._timeout = timeout
 
     def _command(self, *args: str) -> str:
         for attempt in range(3):
@@ -375,7 +390,7 @@ class S3Client:
                     check=True,
                     text=True,
                     capture_output=True,
-                    timeout=int(os.environ.get("IPID_ANALYSIS_S3_TIMEOUT", "3600")),
+                    timeout=self._timeout or int(os.environ.get("IPID_ANALYSIS_S3_TIMEOUT", "3600")),
                 )
                 return result.stdout
             except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
@@ -401,9 +416,9 @@ class S3Client:
         """Explicit URI-to-mount identity; never infer a provider's bucket syntax."""
         roots = json.loads(os.environ.get("IPID_ANALYSIS_S3_ROOTS", "{}"))
         for name, root in (
-            ("raw", RAW_DATA_DIR),
-            ("processed", PROCESSED_DATA_DIR),
-            ("reports", PROJ_ROOT / "reports"),
+            ("raw", RAW_STORAGE_DIR),
+            ("processed", PROCESSED_STORAGE_DIR),
+            ("reports", REPORTS_STORAGE_DIR),
         ):
             prefix = roots.get(name, "").rstrip("/")
             if prefix and uri.startswith(prefix + "/"):
@@ -452,7 +467,7 @@ class S3Client:
             cached.write_text(uri, encoding="utf-8")
         return found
 
-    def _requests(self, prefix: str):
+    def objects(self, prefix: str):
         # Spool listings locally rather than retaining all historical object names.
         import tempfile
 
@@ -463,13 +478,16 @@ class S3Client:
                 text=True,
                 stdout=listing,
                 stderr=subprocess.PIPE,
-                timeout=int(os.environ.get("IPID_ANALYSIS_S3_TIMEOUT", "3600")),
+                timeout=int(os.environ.get("IPID_ANALYSIS_LIST_TIMEOUT", "30")),
             )
             listing.seek(0)
             for line in listing:
                 fields = line.split()
-                if fields and fields[-1].endswith("/request.json"):
+                if fields and fields[-1].startswith("s3://"):
                     yield fields[-1]
+
+    def _requests(self, prefix: str):
+        return (uri for uri in self.objects(prefix) if uri.endswith("/request.json"))
 
     def list_requests(self, s3_prefix: str):
         return self._requests(join_s3(s3_prefix, "jobs"))
@@ -753,6 +771,8 @@ def validate_analysis_manifest(manifest: dict, request: AnalysisRequest) -> None
     for measurement_id in [os_id, *(m.measurement_id for m in measurements)]:
         if not JOB_ID_RE.fullmatch(measurement_id):
             raise ValueError(f"invalid measurement id {measurement_id!r}")
+        if measurement_id == "shared-os" and SCOPE:
+            continue
         if measurement_protocol(measurement_id) != request.protocol:
             raise ValueError(f"measurement id {measurement_id!r} has the wrong protocol")
     for specification in iter_random_reproducibility(manifest):
@@ -800,14 +820,14 @@ def download_analysis_inputs(
             ),
             raw_root / "zmap" / zmap_id / FIXED_BASE_TARGET_METADATA_NAME,
         )
-    client.download(
-        join_s3(request.os_prefix, os_id, "os.pq"),
-        raw_root / "os" / os_id / "os.pq",
-    )
-    client.download(
-        join_s3(request.os_prefix, os_id, "os-coverage.json"),
-        raw_root / "os" / os_id / "os-coverage.json",
-    )
+    if os_id == "shared-os" and SCOPE:
+        for name in ("os.pq", "os-coverage.json"):
+            path = os_source_path(raw_root, os_id, name)
+            if not path.is_file():
+                raise FileNotFoundError(path)
+    else:
+        for name in ("os.pq", "os-coverage.json"):
+            client.download(join_s3(request.os_prefix, os_id, name), raw_root / "os" / os_id / name)
 
     measurements = iter_ipid_measurements(manifest)
     for measurement in measurements:
@@ -900,7 +920,7 @@ def process_analysis_request(
     postprocess: Callable[[Path, Path, int, int], None] = run_postprocess,
     raw_root: Path = RAW_DATA_DIR,
     processed_root: Path = PROCESSED_DATA_DIR,
-    figures_root: Path = PROJ_ROOT / "reports" / "figures",
+    figures_root: Path = FIGURES_DIR,
 ) -> bool:
     job_id = request_uri.rstrip("/").split("/")[-2]
     if not JOB_ID_RE.fullmatch(job_id):
@@ -1052,6 +1072,9 @@ def process_interprotocol_target_request(
         for protocol, uri in request.manifests.items():
             path = work_dir / "manifests" / f"{protocol}.json"
             client.download(uri, path)
+            if SCOPE:
+                from ipid_analysis.continental import validate_strategy_ready
+                validate_strategy_ready(client,uri,json.loads(path.read_text()),processed_root,work_dir)
             manifests[protocol] = str(path)
         campaign_path = work_dir / "campaign.json"
         write_json(
@@ -1280,6 +1303,28 @@ def run_interprotocol_pending(
 
 def retry_failed_request(client: S3Client, request_uri: str, s3_prefix: str) -> None:
     """Explicit recovery only: archive the terminal failure before removing it."""
+    from ipid_analysis.continental import campaign_parts
+    continental = campaign_parts(request_uri, s3_prefix)
+    if continental is not None:
+        campaign, site, remainder = continental
+        campaign_prefix = join_s3(s3_prefix,"continental",campaign)
+        if site is not None and remainder[:1] != ["final"]:
+            return retry_failed_request(client, request_uri, join_s3(campaign_prefix,"sites",site))
+        if (site is None and remainder in (["os","request.json"],["union","request.json"])) or (site is not None and remainder == ["final","request.json"]):
+            from ipid_analysis.continental import descriptor, read_json
+            root = work_path(request_uri, category="retry")
+            descriptor(client, campaign_prefix, root)
+            job = request_uri.rsplit("/",1)[0]
+            if client.exists(job+"/done.json") or not client.exists(job+"/failed.json"):
+                raise ValueError("retry requires a terminal failure without success")
+            if remainder != ["union","request.json"]:
+                read_json(client, request_uri, root)
+            failure = root/"failed.json"
+            client.download(job+"/failed.json", failure)
+            client.upload(failure, job+"/attempts/"+str(time.time_ns())+"/failed.json")
+            client.delete_failure(job+"/failed.json")
+            cleanup_work(root)
+            return
     prefix = s3_prefix.rstrip("/") + "/"
     if not request_uri.startswith(prefix):
         raise ValueError("retry request is outside workflow prefix")
@@ -1287,6 +1332,7 @@ def retry_failed_request(client: S3Client, request_uri: str, s3_prefix: str) -> 
     parsers = {
         "jobs": Request,
         "analysis-jobs": AnalysisRequest,
+        "strategy-jobs": AnalysisRequest,
         "interprotocol-jobs": InterprotocolRequest,
         "interprotocol-target-jobs": InterprotocolTargetRequest,
     }
@@ -1331,6 +1377,7 @@ def main(
     retry_request_uri: str | None = typer.Option(
         None, help="archive and requeue this failed request URI"
     ),
+    scheduling: str = typer.Option("scheduled", help="scheduled (reserved critical/background lanes) or legacy sequential"),
     storage_mode: str = typer.Option(
         "mounted-s3",
         envvar="IPID_ANALYSIS_STORAGE_MODE",
@@ -1357,6 +1404,12 @@ def main(
     with exclusive_lock("workflow-worker", timeout_seconds=0):
         if retry_request_uri is not None:
             retry_failed_request(client, retry_request_uri, s3_prefix)
+        if scheduling == "scheduled":
+            from ipid_analysis.scheduler import Scheduler
+            Scheduler(client, s3_prefix, work_root, batch_size=batch_size, threads=threads).run(poll_interval=poll_interval, once=once)
+            return
+        if scheduling != "sequential":
+            raise ValueError("scheduling must be scheduled or sequential")
         while True:
             listing_errors = []
             for handler, category, options in (

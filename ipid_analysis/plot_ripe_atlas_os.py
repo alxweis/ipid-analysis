@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, os_source_path
 from ipid_analysis.manifest import IpidMeasurement
 from ipid_analysis.network_role_utils import (
     NETWORK_ROLE_ANALYSIS_VERSION,
@@ -75,7 +75,7 @@ def render_ripe_atlas_os_analysis(
 ) -> RipeAtlasOSOutputs:
     """Render OS distributions over the same matched-only RIPE role population."""
     strategies = source.artifact_path(processed_root, "strategies")
-    os_path = raw_root / "os" / os_measurement_id / OS_INPUT_NAME
+    os_path = os_source_path(raw_root, os_measurement_id, OS_INPUT_NAME)
     group_path = processed_root / "os" / os_measurement_id / OS_GROUP_INPUT_NAME
     for path in (strategies, dataset.roles_path, os_path):
         if not path.is_file():

@@ -1392,3 +1392,8 @@ changes the production classifier.
 --------
 
 
+
+### Six-site campaigns
+
+The additive continental workflow and the worker's reserved critical/background
+scheduling are described in [docs/continental-workflow.md](docs/continental-workflow.md).

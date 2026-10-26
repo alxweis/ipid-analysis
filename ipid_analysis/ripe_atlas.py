@@ -58,7 +58,8 @@ try:
 except ImportError:  # pragma: no cover - compatibility for existing environments
     orjson = None
 
-from ipid_analysis.config import PROCESSED_DATA_DIR, RAW_DATA_DIR
+from ipid_analysis.config import PROCESSED_STORAGE_DIR as PROCESSED_DATA_DIR
+from ipid_analysis.config import RAW_STORAGE_DIR as RAW_DATA_DIR
 from ipid_analysis.ripe_bitmaps import ROLE_SCHEMA, RoleBitmaps, trace_roles
 from ipid_analysis.ripe_cache import RoleCache
 
