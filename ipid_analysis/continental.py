@@ -118,11 +118,14 @@ def source_measurement(client, prefix, measurement_id, filename, work):
     return verified_input(client, uri, evidence, work), evidence
 
 
-def union_discovery(client, campaign_prefix, work):
+def union_discovery(client, campaign_prefix, work, *, enrichment=False):
     """UNION DISTINCT all 18 immutable discoveries; OS request is published last."""
     binding = descriptor(client, campaign_prefix, work)
-    if os_disabled(binding):
+    if os_disabled(binding) and not enrichment:
         raise ValueError("OS not requested; discovery union/OS dispatch is disabled")
+    if enrichment and not os_disabled(binding):
+        raise ValueError("late enrichment requires disabled core OS policy")
+    job = campaign_prefix + ("/enrichments/os/scan" if enrichment else "/os")
     campaign = binding["campaign_id"]
     members, inputs = [], []
     reference = None
@@ -158,12 +161,12 @@ def union_discovery(client, campaign_prefix, work):
             )
             if site == "eu" and protocol == "tcp":
                 reference = measurement_id
-    if client.exists(campaign_prefix + "/os/request.json"):
-        previous = read_json(client, campaign_prefix + "/os/request.json", work)
+    if client.exists(job + "/request.json"):
+        previous = read_json(client, job + "/request.json", work)
         if (
             previous.get("campaign_id") != campaign
             or previous.get("members") != members
-            or previous.get("raw_root") != binding["raw_root"]
+            or previous.get("raw_root") != (campaign_prefix + "/enrichments/os/raw" if enrichment else binding["raw_root"])
         ):
             raise ValueError("existing OS request has different sources")
         verified_input(
@@ -191,7 +194,7 @@ def union_discovery(client, campaign_prefix, work):
     if rows == 0:
         raise ValueError("empty discovery union; OS scan not started")
     target = dict(
-        uri=campaign_prefix + "/os/targets.pq",
+        uri=job + "/targets.pq",
         size_bytes=output.stat().st_size,
         sha256=file_digest(output),
         rows=rows,
@@ -201,11 +204,11 @@ def union_discovery(client, campaign_prefix, work):
         version=1,
         campaign_id=campaign,
         target=target,
-        raw_root=binding["raw_root"],
+        raw_root=(campaign_prefix + "/enrichments/os/raw" if enrichment else binding["raw_root"]),
         reference_zmap=reference,
         members=members,
     )
-    publish_json(client, campaign_prefix + "/os/request.json", request, work)
+    publish_json(client, job + "/request.json", request, work)
 
 
 def protocol_request(client, uri, site_prefix, work):
@@ -609,6 +612,8 @@ def failure_uri(task):
 
 def success_uri(task):
     job = task.uri.rsplit("/", 1)[0]
+    if task.kind == "os-enrichment-prepare":
+        return job + "/scan/request.json"
     if task.kind == "union":
         return task.uri.rsplit("/union/", 1)[0] + "/os/request.json"
     if task.kind == "submit":

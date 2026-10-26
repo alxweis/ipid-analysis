@@ -308,13 +308,14 @@ def render_itdk_os_analysis(
     os_measurement_id: str,
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
+    strategy_root: Path | None = None,
     raw_root: Path = RAW_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> ITDKOSOutputs:
     """Join one measured population to ITDK and resolved protocol OS groups."""
-    strategies = source.artifact_path(processed_root, "strategies")
+    strategies = source.artifact_path(strategy_root or processed_root, "strategies")
     os_path = os_source_path(raw_root, os_measurement_id, OS_INPUT_NAME)
     group_path = processed_root / "os" / os_measurement_id / OS_GROUP_INPUT_NAME
     for path in (strategies, dataset.interfaces_path, os_path):

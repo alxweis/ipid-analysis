@@ -94,6 +94,14 @@ def execute(spec):
             process_analysis_request(client, task.uri, task.prefix, work, *options)
         elif task.kind == "interprotocol":
             process_interprotocol_request(client, task.uri, task.prefix, work)
+        elif task.kind in {"os-enrichment-prepare", "os-enrichment-analysis"}:
+            from ipid_analysis.os_enrichment import prepare, analyze
+
+            root = task.uri.rsplit("/", 1)[0]
+            if task.kind == "os-enrichment-prepare":
+                prepare(client, root, task.prefix, work)
+            else:
+                analyze(client, root, task.prefix, work, options[1])
         elif task.kind == "union":
             union_discovery(client, task.uri.rsplit("/union/", 1)[0], work)
         elif task.kind == "submit":

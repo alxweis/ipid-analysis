@@ -504,7 +504,13 @@ class S3Client:
                     yield fields[-1]
 
     def _requests(self, prefix: str):
-        return (uri for uri in self.objects(prefix) if uri.endswith("/request.json"))
+        # Flat core queues must never consume nested enrichment requests.
+        base = prefix.rstrip("/") + "/"
+        return (
+            uri for uri in self.objects(prefix)
+            if uri.startswith(base) and len(uri[len(base):].split("/")) == 2
+            and uri.endswith("/request.json")
+        )
 
     def list_requests(self, s3_prefix: str):
         return self._requests(join_s3(s3_prefix, "jobs"))
@@ -1348,6 +1354,14 @@ def run_interprotocol_pending(
 
 def retry_failed_request(client: S3Client, request_uri: str, s3_prefix: str) -> None:
     """Explicit recovery only: archive the terminal failure before removing it."""
+    from ipid_analysis.os_enrichment import retry as retry_enrichment
+
+    if "/enrichments/os/" in request_uri:
+        root = work_path(request_uri, category="retry")
+        if retry_enrichment(client, request_uri, s3_prefix, root):
+            cleanup_work(root)
+            return
+        raise ValueError("retry needs a canonical enrichment request URI")
     from ipid_analysis.continental import campaign_parts
     continental = campaign_parts(request_uri, s3_prefix)
     if continental is not None:

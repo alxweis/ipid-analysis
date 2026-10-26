@@ -216,3 +216,8 @@ export PRINT_HELP_PYSCRIPT
 
 help:
 	@$(PYTHON_INTERPRETER) -c "${PRINT_HELP_PYSCRIPT}" < $(MAKEFILE_LIST)
+
+## Read late OS lifecycle status without changing core status
+.PHONY: os-enrichment-status
+os-enrichment-status:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.os_enrichment $(ARGS)

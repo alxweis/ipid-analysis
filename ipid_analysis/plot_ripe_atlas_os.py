@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ipid_analysis.artifacts import assert_complete
 from ipid_analysis.config import FIGURES_DIR, PROCESSED_DATA_DIR, RAW_DATA_DIR, os_source_path
 from ipid_analysis.manifest import IpidMeasurement
 from ipid_analysis.network_role_utils import (
@@ -68,13 +69,15 @@ def render_ripe_atlas_os_analysis(
     os_measurement_id: str,
     *,
     processed_root: Path = PROCESSED_DATA_DIR,
+    strategy_root: Path | None = None,
+    role_matches_path: Path | None = None,
     raw_root: Path = RAW_DATA_DIR,
     figures_root: Path = FIGURES_DIR,
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> RipeAtlasOSOutputs:
     """Render OS distributions over the same matched-only RIPE role population."""
-    strategies = source.artifact_path(processed_root, "strategies")
+    strategies = source.artifact_path(strategy_root or processed_root, "strategies")
     os_path = os_source_path(raw_root, os_measurement_id, OS_INPUT_NAME)
     group_path = processed_root / "os" / os_measurement_id / OS_GROUP_INPUT_NAME
     for path in (strategies, dataset.roles_path, os_path):
@@ -89,14 +92,16 @@ def render_ripe_atlas_os_analysis(
     )
     # This is cache-aware and guarantees that the shared role table has the
     # current matched-only schema even for direct calls outside postprocess.py.
-    role_outputs = render_ripe_atlas_analysis(
-        source,
-        dataset,
-        processed_root=processed_root,
-        figures_root=figures_root,
-        threads=threads,
-    )
-    role_matches = role_outputs.joined
+    if role_matches_path is None:
+        role_outputs = render_ripe_atlas_analysis(
+            source, dataset, processed_root=processed_root,
+            figures_root=figures_root, threads=threads,
+        )
+        role_matches = role_outputs.joined
+    else:
+        # Late enrichment reuses the original matched-only role population.
+        role_matches = role_matches_path
+        assert_complete(role_matches)
     outputs = _artifact_paths(source, processed_root=processed_root, figures_root=figures_root)
     if output_cache_is_current(
         metadata_path=outputs.role_json,

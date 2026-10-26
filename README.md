@@ -1401,3 +1401,5 @@ scheduling are described in [docs/continental-workflow.md](docs/continental-work
 Both protocol-only and continental workflows support the producer's explicit
 `SKIP_OS=1` mode, with persistent intent and non-OS completion. See
 [docs/continental-workflow.md](docs/continental-workflow.md#explicit-no-os-mode-in-both-workflows).
+
+See [Late OS enrichment](docs/LATE_OS_ENRICHMENT.md) to add OS results to an immutable completed No-OS core.

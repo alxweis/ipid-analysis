@@ -69,6 +69,21 @@ class SchedulerTests(unittest.TestCase):
                 getattr(self.scheduler.total, field),
             )
 
+    def test_late_os_uses_reserved_admission_without_blocking_handoffs(self):
+        root = "s3://bucket/workflow/continental/round/enrichments/os"
+        background = s.Task("os-enrichment-analysis", root + "/request.json", self.scheduler.prefix, priority=10)
+        prepare = s.Task("os-enrichment-prepare", root + "/request.json", self.scheduler.prefix, priority=2)
+        handoff = s.Task("handoff", "s3://bucket/workflow/jobs/critical/request.json", self.scheduler.prefix)
+        self.scheduler.active[background.key] = self.active(background)
+        self.assertTrue(self.scheduler.admitted(prepare))
+        self.scheduler.active[prepare.key] = self.active(prepare)
+        self.assertTrue(self.scheduler.admitted(handoff))
+        self.assertFalse(self.scheduler.admitted(s.Task("analysis", "other", self.scheduler.prefix, priority=10)))
+        self.scheduler.active[handoff.key] = self.active(handoff)
+        for field in ("cpus", "memory", "scratch"):
+            self.assertLessEqual(sum(getattr(a.cost, field) for a in self.scheduler.active.values()),
+                                 getattr(self.scheduler.total, field))
+
     def test_dispatch_prioritizes_handoffs_without_blocking_background(self):
         background = s.Task(
             "analysis", "s3://bucket/analysis/request.json", "s3://bucket", priority=10

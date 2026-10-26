@@ -166,6 +166,9 @@ def tasks_from_objects(objects: set[str], prefix: str) -> list[Task]:
             tasks.append(
                 Task("campaign-done", campaign_prefix + "/campaign.json", prefix, priority=10)
             )
+    from ipid_analysis.os_enrichment import tasks as enrichment_tasks
+
+    tasks.extend(enrichment_tasks(objects, prefix))
     return tasks
 
 
