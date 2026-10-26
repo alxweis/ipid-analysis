@@ -112,10 +112,25 @@ class IpidMeasurement:
         return root / self.zmap_id / self.artifact_directory / self.artifact_name(kind, ext)
 
 
+def os_scan_requested(section: dict) -> bool:
+    """Only an explicit not_requested state disables OS; absence is legacy enabled."""
+    status = section.get("os_status")
+    if status not in (None, "requested", "not_requested"):
+        raise ValueError("invalid manifest OS intent")
+    if status == "not_requested":
+        if section.get("os") is not None:
+            raise ValueError("not_requested OS intent cannot contain an OS measurement ID")
+        return False
+    return True
+
+
 def load_manifest(path: Path) -> dict:
     manifest = json.loads(Path(path).read_text())
     if not isinstance(manifest, dict):
         raise ValueError("measurement manifest must be a JSON object")
+    for protocol, section in manifest.items():
+        if protocol in {"icmp", "tcp", "udp", "udp-dns"} and isinstance(section, dict):
+            os_scan_requested(section)
     return manifest
 
 

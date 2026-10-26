@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import hashlib
 import json
 import os
@@ -54,6 +53,23 @@ def publish_json(client, uri, value, work, *, immutable=True):
     client.upload(path, uri)
 
 
+def os_disabled(binding):
+    mode = binding.get("os_mode", "enabled")
+    if mode not in ("", "enabled", "disabled"):
+        raise ValueError("invalid campaign OS policy")
+    return mode == "disabled"
+
+
+def not_requested_status(client, campaign_prefix, binding, work):
+    if not os_disabled(binding):
+        raise ValueError("campaign has not disabled OS")
+    value = read_json(client, campaign_prefix + "/os/not-requested.json", work)
+    expected = dict(version=1, campaign_id=binding["campaign_id"], status="not_requested")
+    if value != expected:
+        raise ValueError("invalid not-requested OS status binding")
+    return value
+
+
 def descriptor(client, campaign_prefix, work):
     value = read_json(client, campaign_prefix + "/campaign.json", work)
     campaign = campaign_prefix.rsplit("/", 1)[-1]
@@ -69,6 +85,7 @@ def descriptor(client, campaign_prefix, work):
         or (roots.get("raw") and raw.rstrip("/") != roots["raw"].rstrip("/"))
     ):
         raise ValueError("invalid campaign descriptor or raw-root binding")
+    os_disabled(value)
     return value
 
 
@@ -104,6 +121,8 @@ def source_measurement(client, prefix, measurement_id, filename, work):
 def union_discovery(client, campaign_prefix, work):
     """UNION DISTINCT all 18 immutable discoveries; OS request is published last."""
     binding = descriptor(client, campaign_prefix, work)
+    if os_disabled(binding):
+        raise ValueError("OS not requested; discovery union/OS dispatch is disabled")
     campaign = binding["campaign_id"]
     members, inputs = [], []
     reference = None
@@ -203,12 +222,14 @@ def protocol_request(client, uri, site_prefix, work):
     if (
         request.zmap_prefix.rstrip("/") != f"{raw}/{site}/zmap"
         or request.ipid_prefix.rstrip("/") != f"{raw}/{site}/ipid"
-        or request.os_prefix.rstrip("/") != raw + "/os"
+        or request.os_prefix.rstrip("/") != ("" if os_disabled(binding) else raw + "/os")
     ):
         raise ValueError("protocol event crosses campaign/site boundaries")
     manifest = read_json(client, request.manifest_uri, work)
     validate_analysis_manifest(manifest, request)
-    if manifest[request.protocol]["os"] != "shared-os":
+    if os_disabled(binding) != (request.os_status == "not_requested"):
+        raise ValueError("campaign/protocol OS intent mismatch")
+    if not os_disabled(binding) and manifest[request.protocol].get("os") != "shared-os":
         raise ValueError("continental manifests require shared-os")
     return request, manifest
 
@@ -283,6 +304,8 @@ def validate_strategy_ready(client, manifest_uri, manifest, processed_root, work
 
 def verify_shared_os(client, campaign_prefix, work):
     binding = descriptor(client, campaign_prefix, work)
+    if os_disabled(binding):
+        raise ValueError("OS was not requested; there is no shared OS dataset to verify")
     request = read_json(client, campaign_prefix + "/os/request.json", work)
     done = read_json(client, campaign_prefix + "/os/done.json", work)
     expected = {"os.pq", "os-observations.pq", "os-coverage.json", "os.snapshot.yaml"}
@@ -463,7 +486,22 @@ def submit_site(client, site_prefix, work):
         interprotocol_job="interprotocol",
     ):
         raise ValueError("invalid final site completion event")
-    shared, done = verify_shared_os(client, campaign_prefix, work)
+    binding = descriptor(client, campaign_prefix, work)
+    disabled = os_disabled(binding)
+    if disabled:
+        not_requested_status(client, campaign_prefix, binding, work)
+        shared = done = None
+        discovery = read_json(client, site_prefix + "/discovery.json", work)
+        if (
+            discovery.get("version") != 1
+            or discovery.get("campaign_id") != binding["campaign_id"]
+            or discovery.get("site") != site_prefix.rsplit("/", 1)[-1]
+            or set(discovery.get("zmap", {})) != set(PROTOCOLS)
+        ):
+            raise ValueError("invalid site discovery binding")
+    else:
+        shared, done = verify_shared_os(client, campaign_prefix, work)
+
     events = [
         u for u in client.objects(site_prefix + "/strategy-jobs") if u.endswith("/request.json")
     ]
@@ -471,50 +509,56 @@ def submit_site(client, site_prefix, work):
     if len(requests) != 3 or {r.protocol for r in requests} != set(PROTOCOLS):
         raise ValueError("site is missing completed protocol workflows")
     for request in requests:
-        members = [
-            m
-            for m in done["members"]
-            if m["site"] == site_prefix.rsplit("/", 1)[-1]
-            and m["protocol"] == request.protocol
-            and m["measurement_id"] == request.job_id
-        ]
-        if len(members) != 1:
-            raise ValueError("protocol discovery is not a shared OS source")
-        zmap, evidence = source_measurement(
-            client, request.zmap_prefix, request.job_id, "zmap.pq", work / request.job_id
-        )
-        if evidence["sha256"] != members[0]["sha256"]:
-            raise ValueError("protocol discovery differs from shared OS source")
-        provenance = dict(
-            campaign_id=done["campaign_id"],
-            site=site_prefix.rsplit("/", 1)[-1],
-            protocol=request.protocol,
-            os_vantage=done["vantage"],
-            os_measurement_id=done["measurement_id"],
-            union=done["target"],
-        )
-        coverage = regional_coverage(
-            zmap,
-            shared / "os-observations.pq",
-            PROCESSED_DATA_DIR / request.job_id / "shared-os-coverage.json",
-            provenance=provenance,
-        )
-        if coverage["detail"]["targets"]["total"] < 1:
-            raise ValueError("empty site/protocol discovery")
+        if disabled:
+            if discovery["zmap"].get(request.protocol) != request.job_id or discovery.get(
+                "raw_prefix", ""
+            ).rstrip("/") != request.zmap_prefix.rstrip("/"):
+                raise ValueError("protocol does not match site discovery")
+            source_measurement(
+                client, request.zmap_prefix, request.job_id, "zmap.pq", work / request.job_id
+            )
+        else:
+            members = [
+                m
+                for m in done["members"]
+                if m["site"] == site_prefix.rsplit("/", 1)[-1]
+                and m["protocol"] == request.protocol
+                and m["measurement_id"] == request.job_id
+            ]
+            if len(members) != 1:
+                raise ValueError("protocol discovery is not a shared OS source")
+            zmap, evidence = source_measurement(
+                client, request.zmap_prefix, request.job_id, "zmap.pq", work / request.job_id
+            )
+            if evidence["sha256"] != members[0]["sha256"]:
+                raise ValueError("protocol discovery differs from shared OS source")
+            provenance = dict(
+                campaign_id=done["campaign_id"],
+                site=site_prefix.rsplit("/", 1)[-1],
+                protocol=request.protocol,
+                os_vantage=done["vantage"],
+                os_measurement_id=done["measurement_id"],
+                union=done["target"],
+            )
+            coverage = regional_coverage(
+                zmap,
+                shared / "os-observations.pq",
+                PROCESSED_DATA_DIR / request.job_id / "shared-os-coverage.json",
+                provenance=provenance,
+            )
+            if coverage["detail"]["targets"]["total"] < 1:
+                raise ValueError("empty site/protocol discovery")
         publish_json(
-            client, request.done_uri.rsplit("/", 1)[0] + "/request.json", asdict(request), work
+            client, request.done_uri.rsplit("/", 1)[0] + "/request.json", request.payload(), work
         )
-    publish_json(
-        client,
-        site_prefix + "/final/submitted.json",
-        dict(
-            version=1,
-            campaign_id=done["campaign_id"],
-            requests=[asdict(r) for r in requests],
-            shared_os=done,
-        ),
-        work,
+    submitted = dict(
+        version=1, campaign_id=binding["campaign_id"], requests=[r.payload() for r in requests]
     )
+    if disabled:
+        submitted["os_status"] = "not_requested"
+    else:
+        submitted["shared_os"] = done
+    publish_json(client, site_prefix + "/final/submitted.json", submitted, work)
 
 
 def finish_site(client, site_prefix, work):
@@ -523,10 +567,26 @@ def finish_site(client, site_prefix, work):
         r["protocol"] for r in submitted["requests"]
     } != set(PROTOCOLS):
         raise ValueError("invalid submitted site analysis inventory")
+    binding = descriptor(client, site_prefix.rsplit("/sites/", 1)[0], work)
+    disabled = os_disabled(binding)
+    if disabled:
+        not_requested_status(client, site_prefix.rsplit("/sites/", 1)[0], binding, work)
+        if submitted.get("os_status") != "not_requested" or "shared_os" in submitted:
+            raise ValueError("site completion OS policy mismatch")
+    elif submitted.get("os_status") == "not_requested" or "shared_os" not in submitted:
+        raise ValueError("site completion lost requested OS dependency")
     for request in submitted["requests"]:
         if not client.exists(request["done_uri"]):
             raise ValueError("site analysis dependency is incomplete")
         done = read_json(client, request["done_uri"], work)
+        if not disabled and (
+            request.get("os_status") == "not_requested" or done.get("os_status") == "not_requested"
+        ):
+            raise ValueError("site analysis OS intent mismatch")
+        if disabled and (
+            request.get("os_status") != "not_requested" or done.get("os_status") != "not_requested"
+        ):
+            raise ValueError("site analysis lost not-requested OS state")
         if (
             done.get("job_id") != request["job_id"]
             or done.get("manifest_uri") != request["manifest_uri"]
