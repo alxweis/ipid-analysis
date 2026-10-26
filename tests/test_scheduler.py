@@ -222,7 +222,8 @@ class SchedulerTests(unittest.TestCase):
         def live():
             try:
                 return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
+                # /proc can disappear after open, while reading the stat file.
                 return False
 
         while live() and time.monotonic() < deadline:
@@ -278,7 +279,8 @@ class SchedulerTests(unittest.TestCase):
         def live(pid):
             try:
                 return (Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]) != "Z"
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
+                # /proc can disappear after open, while reading the stat file.
                 return False
 
         deadline = time.monotonic() + 5
