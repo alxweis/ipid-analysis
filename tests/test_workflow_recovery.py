@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import yaml
 from typer.testing import CliRunner
+import yaml
 
 from ipid_analysis import (
     coverage,
@@ -20,8 +20,10 @@ from ipid_analysis import (
     plot_increments,
     plot_probing_intervals,
     plot_strategies,
+    postprocess,
+    probing_intervals,
+    strategies,
 )
-from ipid_analysis import postprocess, probing_intervals, strategies
 from ipid_analysis.artifacts import fingerprints
 from ipid_analysis.s3_workflow import (
     ANALYSIS_JOB_VERSION,
@@ -305,6 +307,178 @@ class WorkflowRecoveryTest(unittest.TestCase):
         self.assertEqual(len(status["artifacts"]), 10)
         self.assertTrue(all(Path(path).is_file() for path in status["artifacts"]))
         self.assertEqual(status["stages"][0]["status"], "completed")
+
+    def test_no_os_real_pipeline_and_worker_retry_finish_without_os_inputs(self):
+        manifest_path = self.pipeline_fixture()
+        manifest = json.loads(manifest_path.read_text())
+        manifest["icmp"]["os_status"] = "not_requested"
+        prefix, remote, request, client = self.analysis_job()
+        request.update(os_status="not_requested", os_prefix="")
+        client.objects[remote + "/request.json"] = json.dumps(request).encode()
+        client.objects[request["manifest_uri"]] = json.dumps(manifest).encode()
+        client.objects[remote + "/os-policy.json"] = json.dumps(
+            dict(version=1, job_id=request["job_id"], os_status="not_requested")
+        ).encode()
+        for uri in list(client.objects):
+            if "/raw/os/" in uri:
+                del client.objects[uri]
+            elif "/raw/" in uri and not uri.endswith("zmap_unclassified.pq"):
+                relative = uri.split("/raw/", 1)[1]
+                client.objects[uri] = (self.root / "raw" / relative).read_bytes()
+        original_download = client.download
+
+        def download(uri, path):
+            self.assertNotIn("/raw/os/", uri)
+            original_download(uri, path)
+
+        client.download = download
+
+        def failure(*args):
+            raise RuntimeError("temporary non-OS failure")
+
+        options = dict(
+            raw_root=self.root / "raw",
+            processed_root=self.root / "processed",
+            figures_root=self.root / "figures",
+        )
+        with self.assertRaisesRegex(RuntimeError, "temporary"):
+            process_analysis_request(
+                client,
+                remote + "/request.json",
+                prefix,
+                self.root / "jobs",
+                10,
+                1,
+                postprocess=failure,
+                **options,
+            )
+        self.assertNotIn(request["done_uri"], client.objects)
+        retry_failed_request(client, remote + "/request.json", prefix)
+
+        def actual_pipeline(path, log, *args):
+            result = CliRunner().invoke(
+                postprocess.app,
+                [
+                    str(path),
+                    "--strict",
+                    "--status-file",
+                    str(log.with_name("postprocess-status.json")),
+                    "--skip-itdk",
+                    "--skip-ripe",
+                    "--threads",
+                    "1",
+                ],
+            )
+            self.assertEqual(result.exit_code, 0, f"{result.exception}\n{result.output}")
+
+        with patch.object(
+            postprocess, "render_os_strategy_plot", side_effect=AssertionError("OS plot called")
+        ):
+            self.assertTrue(
+                process_analysis_request(
+                    client,
+                    remote + "/request.json",
+                    prefix,
+                    self.root / "jobs",
+                    10,
+                    1,
+                    postprocess=actual_pipeline,
+                    **options,
+                )
+            )
+        done = json.loads(client.objects[request["done_uri"]])
+        status = json.loads(client.objects[remote + "/postprocess-status.json"])
+        self.assertEqual(done["os_status"], "not_requested")
+        self.assertEqual(status["optional"]["os"], {"icmp": "not_requested"})
+        self.assertTrue(status["required_complete"])
+        self.assertEqual(len(status["artifacts"]), 10)
+        self.assertFalse((self.root / "raw/os").exists())
+        self.assertFalse(
+            process_analysis_request(
+                client,
+                remote + "/request.json",
+                prefix,
+                self.root / "jobs",
+                10,
+                1,
+                postprocess=failure,
+                **options,
+            )
+        )
+
+    def test_no_os_request_manifest_and_policy_must_agree(self):
+        from ipid_analysis.s3_workflow import (
+            AnalysisRequest,
+            load_analysis_request,
+            validate_analysis_manifest,
+        )
+
+        prefix, remote, request, client = self.analysis_job()
+        old = AnalysisRequest.parse(request, prefix)
+        self.assertNotIn("os_status", old.payload())
+        bad = dict(request, os_prefix="")
+        with self.assertRaisesRegex(ValueError, "os_prefix"):
+            AnalysisRequest.parse(bad, prefix)
+        for state in ("failed", "pending", "disabled"):
+            with self.assertRaises(ValueError):
+                AnalysisRequest.parse(dict(bad, os_status=state), prefix)
+        with self.assertRaises(ValueError):
+            AnalysisRequest.parse(dict(request, os_status="not_requested"), prefix)
+        disabled = AnalysisRequest.parse(dict(bad, os_status="not_requested"), prefix)
+        manifest = json.loads(client.objects[request["manifest_uri"]])
+        with self.assertRaisesRegex(ValueError, "intent mismatch"):
+            validate_analysis_manifest(manifest, disabled)
+        manifest["icmp"]["os_status"] = "not_requested"
+        with self.assertRaisesRegex(ValueError, "measurement ID"):
+            validate_analysis_manifest(manifest, disabled)
+        manifest["icmp"].pop("os")
+        validate_analysis_manifest(manifest, disabled)
+        with self.assertRaisesRegex(ValueError, "intent mismatch"):
+            validate_analysis_manifest(manifest, old)
+        client.objects[remote + "/os-policy.json"] = json.dumps(
+            dict(version=1, job_id=request["job_id"], os_status="not_requested")
+        ).encode()
+        with self.assertRaisesRegex(ValueError, "persisted OS intent"):
+            load_analysis_request(
+                client, remote + "/request.json", prefix, self.root / "policy-check"
+            )
+
+    def test_no_os_marks_only_os_stages_disabled_and_preserves_non_os_failures(self):
+        manifest = self.pipeline_fixture()
+        data = json.loads(manifest.read_text())
+        data["icmp"]["os_status"] = "not_requested"
+        data["icmp"]["ipid"]["no-connection"]["fixed-interval"] = {
+            "mass": "icmp_2026-01-01_00-00-03"
+        }
+        manifest.write_text(json.dumps(data))
+        report = self.root / "no-os-missing.json"
+        with patch.object(
+            postprocess, "render_os_strategy_plot", side_effect=AssertionError("OS plot executed")
+        ):
+            result = CliRunner().invoke(
+                postprocess.app,
+                [
+                    str(manifest),
+                    "--strict",
+                    "--status-file",
+                    str(report),
+                    "--skip-itdk",
+                    "--skip-ripe",
+                    "--threads",
+                    "1",
+                ],
+            )
+        self.assertNotEqual(result.exit_code, 0)
+        status = json.loads(report.read_text())
+        self.assertFalse(status["required_complete"])
+        disabled = [stage for stage in status["stages"] if stage["status"] == "disabled"]
+        self.assertEqual(len(disabled), 3)
+        self.assertTrue(
+            all(not stage["required"] and stage["reason"] == "not_requested" for stage in disabled)
+        )
+        self.assertTrue(
+            any(stage["required"] and stage["status"] == "failed" for stage in status["stages"])
+        )
 
     def test_strict_pipeline_reports_skipped_mandatory_measurement_as_failure(self):
         manifest = self.pipeline_fixture()

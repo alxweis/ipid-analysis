@@ -326,7 +326,11 @@ PERCENTAGE_CMAP = LinearSegmentedColormap.from_list(
 
 
 def resolve_os_measurement_id(manifest: dict, protocol: str) -> str | None:
+    from ipid_analysis.manifest import os_scan_requested
+
     section = manifest.get(protocol)
+    if isinstance(section, dict) and not os_scan_requested(section):
+        return None
     if not isinstance(section, dict) or "os" not in section:
         return None
     measurement_id = section["os"]

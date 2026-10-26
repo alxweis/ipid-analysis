@@ -59,6 +59,7 @@ from ipid_analysis.manifest import (
     iter_ipid_measurements,
     iter_random_reproducibility,
     load_manifest,
+    os_scan_requested,
 )
 from ipid_analysis.random_reproducibility_analysis import (
     COHORT_FILE_NAME,
@@ -208,6 +209,13 @@ class AnalysisRequest:
     created_at: str
     fixed_base_target_uri: str | None = None
     connection_target_uri: str | None = None
+    os_status: str | None = None
+
+    def payload(self) -> dict:
+        value = asdict(self)
+        if self.os_status is None:
+            value.pop("os_status")
+        return value
 
     @classmethod
     def parse(cls, data: dict, s3_prefix: str) -> AnalysisRequest:
@@ -226,7 +234,16 @@ class AnalysisRequest:
             raise ValueError(
                 f"protocol {request.protocol!r} does not match job id ({expected_protocol!r})"
             )
-        for field in ("zmap_prefix", "os_prefix", "ipid_prefix"):
+        if request.os_status not in (None, "requested", "not_requested"):
+            raise ValueError("invalid analysis OS intent")
+        if request.os_status == "not_requested" and request.os_prefix != "":
+            raise ValueError("not_requested analysis must not reference OS storage")
+        fields = (
+            ("zmap_prefix", "ipid_prefix")
+            if request.os_status == "not_requested"
+            else ("zmap_prefix", "os_prefix", "ipid_prefix")
+        )
+        for field in fields:
             value = getattr(request, field)
             if not value.startswith("s3://") or not value.removeprefix("s3://").strip("/"):
                 raise ValueError(f"invalid {field}")
@@ -746,7 +763,20 @@ def load_analysis_request(
 ) -> AnalysisRequest:
     path = work_dir / "request.json"
     client.download(request_uri, path)
-    return AnalysisRequest.parse(json.loads(path.read_text()), s3_prefix)
+    request = AnalysisRequest.parse(json.loads(path.read_text()), s3_prefix)
+    policy_uri = join_s3(s3_prefix, "analysis-jobs", request.job_id, "os-policy.json")
+    if client.exists(policy_uri):
+        policy_path = work_dir / "os-policy.json"
+        client.download(policy_uri, policy_path)
+        policy = json.loads(policy_path.read_text())
+        expected = dict(
+            version=1,
+            job_id=request.job_id,
+            os_status="not_requested" if request.os_status == "not_requested" else "requested",
+        )
+        if policy != expected:
+            raise ValueError("analysis request differs from persisted OS intent")
+    return request
 
 
 def validate_analysis_manifest(manifest: dict, request: AnalysisRequest) -> None:
@@ -758,7 +788,10 @@ def validate_analysis_manifest(manifest: dict, request: AnalysisRequest) -> None
     if section.get("zmap") != request.job_id:
         raise ValueError("manifest zmap id must equal the analysis job id")
     os_id = section.get("os")
-    if not isinstance(os_id, str) or not JOB_ID_RE.fullmatch(os_id):
+    requested = os_scan_requested(section)
+    if requested != (request.os_status != "not_requested"):
+        raise ValueError("manifest/request OS intent mismatch")
+    if requested and (not isinstance(os_id, str) or not JOB_ID_RE.fullmatch(os_id)):
         raise ValueError("manifest is missing a valid OS measurement id")
 
     if section.get("connection_target") != (
@@ -768,7 +801,9 @@ def validate_analysis_manifest(manifest: dict, request: AnalysisRequest) -> None
     measurements = iter_ipid_measurements(manifest)
     if not measurements:
         raise ValueError("analysis manifest contains no IPID measurements")
-    for measurement_id in [os_id, *(m.measurement_id for m in measurements)]:
+    for measurement_id in ([os_id] if requested else []) + [
+        m.measurement_id for m in measurements
+    ]:
         if not JOB_ID_RE.fullmatch(measurement_id):
             raise ValueError(f"invalid measurement id {measurement_id!r}")
         if measurement_id == "shared-os" and SCOPE:
@@ -793,7 +828,7 @@ def download_analysis_inputs(
 ) -> None:
     section = manifest[request.protocol]
     zmap_id = section["zmap"]
-    os_id = section["os"]
+    os_id = section.get("os")
     client.download(
         join_s3(request.zmap_prefix, zmap_id, "zmap.pq"),
         raw_root / "zmap" / zmap_id / "zmap.pq",
@@ -820,7 +855,9 @@ def download_analysis_inputs(
             ),
             raw_root / "zmap" / zmap_id / FIXED_BASE_TARGET_METADATA_NAME,
         )
-    if os_id == "shared-os" and SCOPE:
+    if not os_scan_requested(section):
+        pass
+    elif os_id == "shared-os" and SCOPE:
         for name in ("os.pq", "os-coverage.json"):
             path = os_source_path(raw_root, os_id, name)
             if not path.is_file():
@@ -954,6 +991,11 @@ def process_analysis_request(
             or status.get("manifest") != fingerprints([manifest_path])
         ):
             raise ValueError("postprocessing did not complete its mandatory stages")
+        if (
+            request.os_status == "not_requested"
+            and status.get("optional", {}).get("os", {}).get(request.protocol) != "not_requested"
+        ):
+            raise ValueError("postprocessing did not confirm explicitly disabled OS analyses")
         from ipid_analysis.postprocess import required_core_artifacts
 
         required = {
@@ -986,7 +1028,10 @@ def process_analysis_request(
             completed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
         done_path = work_dir / "done.json"
-        write_json(done_path, asdict(done))
+        done_value = asdict(done)
+        if request.os_status == "not_requested":
+            done_value["os_status"] = "not_requested"
+        write_json(done_path, done_value)
         client.upload(done_path, request.done_uri)
         logger.success(f"[{request.job_id}] automatic postprocessing completed")
         cleanup_completed_job(work_dir)

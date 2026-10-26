@@ -65,6 +65,7 @@ from ipid_analysis.manifest import (
     iter_ipid_measurements,
     iter_random_reproducibility,
     load_manifest,
+    os_scan_requested,
     resolve,
 )
 from ipid_analysis.missing_reply_analysis import analyze_missing_replies
@@ -259,6 +260,47 @@ def main(
     reproducibility_ok = 0
     missing_ok = False
     manifest = load_manifest(manifest_path)
+    os_states = {
+        protocol: "not_requested"
+        if not os_scan_requested(section)
+        else "requested"
+        if section.get("os")
+        else "not_specified"
+        for protocol, section in manifest.items()
+        if protocol in {"icmp", "tcp", "udp", "udp-dns"} and isinstance(section, dict)
+    }
+    for merge in iter_strategy_merges(manifest):
+        if os_states.get(merge.protocol) == "not_requested":
+            for name in (
+                "render_os_strategy_plot",
+                "render_itdk_os_analysis",
+                "render_ripe_atlas_os_analysis",
+            ):
+                stages.append(
+                    dict(
+                        name=name,
+                        target=merge.target,
+                        required=False,
+                        status="disabled",
+                        reason="not_requested",
+                    )
+                )
+    connection = resolve(manifest, "tcp.ipid.connection.rt-based.base")
+    if connection is not None and os_states.get("tcp") == "not_requested":
+        for name in (
+            "render_os_strategy_measurement_plot",
+            "render_itdk_os_analysis",
+            "render_ripe_atlas_os_analysis",
+        ):
+            stages.append(
+                dict(
+                    name=name,
+                    target=connection.target,
+                    required=False,
+                    status="disabled",
+                    reason="not_requested",
+                )
+            )
     measurements = iter_ipid_measurements(manifest)
     logger.info(f"{len(measurements)} ipid measurement(s) in {manifest_path}")
 
@@ -723,6 +765,7 @@ def main(
         "warnings": warnings,
         "stages": stages,
         "optional": {
+            "os": os_states,
             "itdk": "skipped" if skip_itdk else "prepared" if itdk else "failed",
             "ripe": "skipped" if skip_ripe else "prepared" if ripe else "failed",
         },

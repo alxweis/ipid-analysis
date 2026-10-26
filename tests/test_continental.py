@@ -299,12 +299,12 @@ class ContinentalTests(unittest.TestCase):
         c.publish_task_failure(self.client, task, "replacement", self.work)
         self.assertEqual(self.client.value(c.failure_uri(task))["error"], "original error")
 
-    def protocol_events(self):
+    def protocol_events(self, no_os=False, site_code="eu"):
         from ipid_analysis.s3_workflow import AnalysisRequest
 
         events = []
         manifests = {}
-        site = CAMPAIGN + "/sites/eu"
+        site = CAMPAIGN + "/sites/" + site_code
         for pi, protocol in enumerate(c.PROTOCOLS):
             payload = ("icmp", "tcp-80", "udp-dns-53")[pi]
             zmap = payload + "_2026-10-25_01-00-00"
@@ -323,7 +323,7 @@ class ContinentalTests(unittest.TestCase):
                 )
             }
             job = site + "/analysis-jobs/" + zmap
-            raw = RAW + "/continental/round/eu"
+            raw = RAW + "/continental/round/" + site_code
             request = AnalysisRequest(
                 1,
                 zmap,
@@ -336,11 +336,16 @@ class ContinentalTests(unittest.TestCase):
                 job + "/failed.json",
                 "2026-10-25T01:00:00Z",
             )
+            if no_os:
+                manifest[protocol].pop("os")
+                manifest[protocol]["os_status"] = "not_requested"
+                from dataclasses import replace
+
+                request = replace(request, os_prefix="", os_status="not_requested")
             self.client.json(job + "/manifest.json", manifest)
-            from dataclasses import asdict
 
             event = site + "/strategy-jobs/" + zmap + "/request.json"
-            self.client.json(event, asdict(request))
+            self.client.json(event, request.payload())
             events.append(event)
             manifests["udp" if protocol == "udp-dns" else protocol] = job + "/manifest.json"
             for mid, ips, labels in [
@@ -568,6 +573,252 @@ class ContinentalTests(unittest.TestCase):
         self.assertEqual(len(archived), 1)
         self.assertEqual(self.client.value(archived[0]), dict(error="original"))
         self.assertEqual(self.client.values[RAW + "/keep.pq"], b"keep")
+
+    def disable_os(self):
+        binding = self.client.value(CAMPAIGN + "/campaign.json")
+        binding["os_mode"] = "disabled"
+        self.client.json(CAMPAIGN + "/campaign.json", binding)
+        self.client.json(
+            CAMPAIGN + "/os/not-requested.json",
+            dict(version=1, campaign_id="round", status="not_requested"),
+        )
+
+    def test_no_os_six_sites_and_campaign_complete_without_os_or_global_discovery_wait(self):
+        from dataclasses import asdict
+
+        from ipid_analysis import s3_workflow as workflow
+        from ipid_analysis import workflow_task
+
+        self.discoveries()
+        self.disable_os()
+        # Other discoveries have not arrived yet; EU must still be runnable.
+        delayed = {}
+        for site in c.SITES[1:]:
+            uri = f"{CAMPAIGN}/sites/{site}/discovery.json"
+            delayed[uri] = self.client.values.pop(uri)
+        forbidden = {
+            CAMPAIGN + "/os/request.json",
+            CAMPAIGN + "/os/done.json",
+            CAMPAIGN + "/os/targets.pq",
+        }
+        original_download = self.client.download
+        original_exists = self.client.exists
+
+        def download(uri, path):
+            self.assertNotIn(uri, forbidden)
+            self.assertNotIn("/os/shared-os/", uri)
+            original_download(uri, path)
+
+        def exists(uri):
+            self.assertNotIn(uri, forbidden)
+            return original_exists(uri)
+
+        self.client.download = download
+        self.client.exists = exists
+        for index, site_code in enumerate(c.SITES):
+            site = f"{CAMPAIGN}/sites/{site_code}"
+            if index:
+                uri = site + "/discovery.json"
+                self.client.values[uri] = delayed[uri]
+            self.protocol_events(no_os=True, site_code=site_code)
+            self.client.json(
+                site + "/final/request.json",
+                dict(
+                    version=1,
+                    campaign_id="round",
+                    site=site_code,
+                    interprotocol_job="interprotocol",
+                ),
+            )
+            pending = tasks_from_objects(set(self.client.values), PREFIX)
+            self.assertFalse(any(t.kind == "union" for t in pending))
+            self.assertTrue(
+                any(t.kind == "submit" and t.scope.endswith("/" + site_code) for t in pending)
+            )
+            with (
+                patch.object(workflow, "SCOPE", f"continental/round/{site_code}"),
+                patch.object(
+                    c,
+                    "verify_shared_os",
+                    side_effect=AssertionError("OS verification in No-OS mode"),
+                ),
+                patch.object(
+                    c, "regional_coverage", side_effect=AssertionError("fake OS coverage")
+                ),
+            ):
+                if index == 0:
+                    # Publish one final request, then fail uploading the next.
+                    failed_request = (
+                        site + "/analysis-jobs/tcp-80_2026-10-25_01-00-00/request.json"
+                    )
+                    self.client.fail_upload = failed_request
+                    with self.assertRaises(PermissionError):
+                        c.submit_site(self.client, site, self.work)
+                    self.assertNotIn(site + "/final/submitted.json", self.client.values)
+                    self.client.fail_upload = None
+                    task = Task(
+                        "submit",
+                        site + "/final/request.json",
+                        PREFIX,
+                        f"continental/round/{site_code}",
+                        10,
+                    )
+                    c.publish_task_failure(
+                        self.client, task, "temporary upload failure", self.work
+                    )
+                    workflow.retry_failed_request(self.client, task.uri, PREFIX)
+                c.submit_site(self.client, site, self.work)
+                submitted = self.client.value(site + "/final/submitted.json")
+                self.assertEqual(submitted["os_status"], "not_requested")
+                self.assertNotIn("shared_os", submitted)
+                pending = tasks_from_objects(set(self.client.values), PREFIX)
+                self.assertEqual(
+                    len(
+                        [
+                            t
+                            for t in pending
+                            if t.kind == "analysis" and t.scope.endswith("/" + site_code)
+                        ]
+                    ),
+                    3,
+                )
+
+                def finish_analysis(client, uri, *args):
+                    request = client.value(uri)
+                    client.json(
+                        request["done_uri"],
+                        dict(
+                            job_id=request["job_id"],
+                            manifest_uri=request["manifest_uri"],
+                            os_status="not_requested",
+                        ),
+                    )
+                    return True
+
+                with (
+                    patch.object(workflow, "S3Client", return_value=self.client),
+                    patch.object(
+                        workflow, "process_analysis_request", side_effect=finish_analysis
+                    ),
+                ):
+                    for request in submitted["requests"]:
+                        task = Task(
+                            "analysis",
+                            request["done_uri"].replace("/done.json", "/request.json"),
+                            site,
+                            f"continental/round/{site_code}",
+                            10,
+                        )
+                        self.assertEqual(
+                            workflow_task.execute(
+                                dict(task=asdict(task), batch_size=10, cost={"cpus": 1})
+                            ),
+                            0,
+                        )
+                with self.assertRaisesRegex(ValueError, "interprotocol"):
+                    c.finish_site(self.client, site, self.work)
+                self.client.json(
+                    site + "/interprotocol-jobs/interprotocol/done.json", dict(version=1)
+                )
+                c.finish_site(self.client, site, self.work)
+        pending = tasks_from_objects(set(self.client.values), PREFIX)
+        completed = [t for t in pending if t.kind == "campaign-done"]
+        self.assertEqual(len(completed), 1)
+        with patch.object(workflow, "S3Client", return_value=self.client):
+            self.assertEqual(
+                workflow_task.execute(
+                    dict(task=asdict(completed[0]), batch_size=10, cost={"cpus": 1})
+                ),
+                0,
+            )
+        done = self.client.value(CAMPAIGN + "/done.json")
+        self.assertEqual(done["os_status"], "not_requested")
+        self.assertEqual(set(done["sites"]), set(c.SITES))
+        self.assertTrue(
+            all(site["os_status"] == "not_requested" for site in done["sites"].values())
+        )
+        self.assertFalse(forbidden.intersection(self.client.values))
+
+    def test_disabled_policy_cannot_dispatch_os_or_accept_enabled_protocol(self):
+        from ipid_analysis import s3_workflow as workflow
+
+        self.disable_os()
+        events, _ = self.protocol_events()
+        with self.assertRaisesRegex(ValueError, "not requested"):
+            c.union_discovery(self.client, CAMPAIGN, self.work)
+        with self.assertRaisesRegex(ValueError, "not requested"):
+            c.verify_shared_os(self.client, CAMPAIGN, self.work)
+        with patch.object(workflow, "SCOPE", "continental/round/eu"):
+            with self.assertRaises(ValueError):
+                c.protocol_request(self.client, events[0], CAMPAIGN + "/sites/eu", self.work)
+        binding = self.client.value(CAMPAIGN + "/campaign.json")
+        binding["os_mode"] = "failed"
+        self.client.json(CAMPAIGN + "/campaign.json", binding)
+        with self.assertRaisesRegex(ValueError, "OS policy"):
+            c.descriptor(self.client, CAMPAIGN, self.work)
+
+    def test_no_os_preliminary_strategies_and_targets_keep_scientific_results(self):
+        from ipid_analysis import s3_workflow as workflow
+        from ipid_analysis import strategies, strategy_merge
+
+        self.disable_os()
+        events, manifests = self.protocol_events(no_os=True)
+        raw, processed = self.root / "raw", self.root / "processed"
+        original_classify, original_merge = (
+            strategies.classify_measurement,
+            strategy_merge.merge_strategies,
+        )
+        site = CAMPAIGN + "/sites/eu"
+        with (
+            patch.object(workflow, "SCOPE", "continental/round/eu"),
+            patch.object(c, "RAW_DATA_DIR", raw),
+            patch.object(c, "PROCESSED_DATA_DIR", processed),
+            patch.object(
+                strategies,
+                "classify_measurement",
+                side_effect=lambda m, **opts: original_classify(
+                    m, raw_root=raw, processed_root=processed, **opts
+                ),
+            ),
+            patch.object(
+                strategy_merge,
+                "merge_strategies",
+                side_effect=lambda m, **opts: original_merge(m, processed_root=processed, **opts),
+            ),
+        ):
+            for event in events:
+                c.prepare_strategies(self.client, event, site, self.work, 10, 1)
+                # Simulate a lost process response; committed preliminary work is reusable.
+                c.prepare_strategies(self.client, event, site, self.work, 10, 1)
+            job = site + "/interprotocol-target-jobs/interprotocol"
+            self.client.json(
+                job + "/request.json",
+                dict(
+                    version=1,
+                    job_id="interprotocol",
+                    campaign_id="interprotocol",
+                    manifests=manifests,
+                    target_prefix=job + "/targets",
+                    done_uri=job + "/done.json",
+                    failed_uri=job + "/failed.json",
+                    created_at="2026-10-25T01:00:00Z",
+                ),
+            )
+            self.assertTrue(
+                workflow.process_interprotocol_target_request(
+                    self.client,
+                    job + "/request.json",
+                    site,
+                    self.work / "targets",
+                    output_root=processed / "interprotocol",
+                    processed_root=processed,
+                    figures_root=self.root / "figures",
+                )
+            )
+        self.assertEqual(
+            self.client.value(job + "/done.json")["rows"],
+            {"icmp-tcp": 0, "icmp-udp": 0, "tcp-udp": 0, "icmp-tcp-udp": 2},
+        )
 
 
 if __name__ == "__main__":

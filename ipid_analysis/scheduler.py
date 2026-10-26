@@ -92,7 +92,10 @@ def tasks_from_objects(objects: set[str], prefix: str) -> list[Task]:
         if scope and kind == "analysis":
             campaign_prefix = site_prefix.rsplit("/sites/", 1)[0]
             if (
-                campaign_prefix + "/os/done.json" not in objects
+                not any(
+                    campaign_prefix + suffix in objects
+                    for suffix in ("/os/not-requested.json", "/os/done.json")
+                )
                 or site_prefix + "/final/submitted.json" not in objects
             ):
                 continue
@@ -106,7 +109,10 @@ def tasks_from_objects(objects: set[str], prefix: str) -> list[Task]:
             or campaign_prefix + "/failed.json" in objects
         ):
             continue
-        if all(f"{campaign_prefix}/sites/{s}/discovery.json" in objects for s in SITES):
+        disabled = campaign_prefix + "/os/not-requested.json" in objects
+        if not disabled and all(
+            f"{campaign_prefix}/sites/{s}/discovery.json" in objects for s in SITES
+        ):
             if not any(
                 campaign_prefix + suffix in objects
                 for suffix in ("/os/request.json", "/union/failed.json")
@@ -114,7 +120,7 @@ def tasks_from_objects(objects: set[str], prefix: str) -> list[Task]:
                 tasks.append(
                     Task("union", campaign_prefix + "/union/request.json", prefix, priority=1)
                 )
-        if campaign_prefix + "/os/done.json" in objects:
+        if disabled or campaign_prefix + "/os/done.json" in objects:
             for site in SITES:
                 site_prefix = f"{campaign_prefix}/sites/{site}"
                 if site_prefix + "/final/request.json" not in objects:
@@ -526,6 +532,7 @@ class Scheduler:
                                     "/discovery.json",
                                     "/submitted.json",
                                     "/campaign.json",
+                                    "/not-requested.json",
                                 )
                             )
                             and not any(

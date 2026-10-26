@@ -80,7 +80,14 @@ def execute(spec):
         elif task.kind == "analysis":
             if task.scope:
                 campaign_prefix = task.prefix.rsplit("/sites/", 1)[0]
-                verify_shared_os(client, campaign_prefix, work)
+                from ipid_analysis.continental import descriptor, not_requested_status, os_disabled
+
+                binding = descriptor(client, campaign_prefix, work)
+                if os_disabled(binding):
+                    not_requested_status(client, campaign_prefix, binding, work)
+                    os.environ.pop("IPID_ANALYSIS_SHARED_OS_DIR", None)
+                else:
+                    verify_shared_os(client, campaign_prefix, work)
                 from ipid_analysis.continental import protocol_request
 
                 protocol_request(client, task.uri, task.prefix, work)
@@ -101,9 +108,18 @@ def execute(spec):
                 s: read_json(client, f"{campaign_prefix}/sites/{s}/final/done.json", work)
                 for s in SITES
             }
-            publish_json(
-                client, campaign_prefix + "/done.json", dict(version=1, sites=sites), work
-            )
+            from ipid_analysis.continental import descriptor, not_requested_status, os_disabled
+
+            binding = descriptor(client, campaign_prefix, work)
+            completed = dict(version=1, sites=sites)
+            if os_disabled(binding):
+                not_requested_status(client, campaign_prefix, binding, work)
+                if any(site.get("os_status") != "not_requested" for site in sites.values()):
+                    raise ValueError("campaign site completion OS intent mismatch")
+                completed["os_status"] = "not_requested"
+            elif any(site.get("os_status") == "not_requested" for site in sites.values()):
+                raise ValueError("enabled campaign contains no-OS site completion")
+            publish_json(client, campaign_prefix + "/done.json", completed, work)
         else:
             raise ValueError(f"unknown workflow task {task.kind}")
         from ipid_analysis.continental import success_uri

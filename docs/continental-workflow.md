@@ -5,6 +5,44 @@ campaigns and their request/Done schemas remain supported. No S3 mount or VM
 configuration is changed. Keep the existing `mounted-s3`, scratch, S3 roots and
 workflow-prefix environment and start `make workflow-worker` as before.
 
+## Explicit No-OS mode in both workflows
+
+OS remains enabled by default. Deploy the optional-OS update in both
+repositories, then start a protocol sweep with, for example,
+`make run-all-tcp SKIP_OS=1`, or a geographic site with
+`make run-all-eu CAMPAIGN_ID=ROUND SKIP_OS=1`. All six sites must use the same
+campaign policy. Other protocol/site targets accept the same option.
+
+An opted-out protocol manifest has `"os_status": "not_requested"` and no OS
+measurement ID. Its request has the same status and an empty OS prefix. The
+producer persists `os-policy.json` before measurements; the worker verifies
+that policy when present. Old requests/manifests without the new status retain
+their existing OS requirements. Empty/missing OS inputs, `failed` or `pending`
+are never interpreted as an opt-out. Conflicting IDs/storage/intent are rejected.
+
+Geographic campaigns persist `"os_mode": "disabled"` in `campaign.json` and a
+separate `os/not-requested.json` control status. Old descriptors without that
+field retain the enabled default. The scheduler uses the explicit control
+status, while producers validate its contents against the immutable descriptor.
+No OS union, request, dataset verification or coverage reconstruction runs in
+No-OS mode. No task waits for `os/request.json` or `os/done.json`; a site's final
+analysis also does not wait for the other sites' discovery events.
+
+All measurement classification, merges, interprotocol work, non-OS external role
+analysis and final non-OS plots retain their semantics and mandatory checks.
+Postprocess status records OS intent under `optional.os` by protocol; applicable
+OS-only stages are `disabled` with reason `not_requested`. Mandatory non-OS
+errors still fail completion. No OS artifacts are synthesized. Analysis, site
+and campaign completions explicitly carry `os_status: not_requested`, without
+claiming a shared OS dataset. There is no successful or failed OS-scan marker
+for an unrequested scan.
+
+Keep the original mode during restart/retry. A conflicting mode is rejected;
+use a new campaign/ZMap identity for an intentional change. Existing explicit
+worker retries archive only terminal failure markers and retain the No-OS
+request/manifest policy. The intentionally absent OS scan itself has nothing
+to retry. Default enabled campaigns still require the shared OS gate.
+
 ## Dependencies and storage
 
 Each explicit campaign has six fixed sites (`eu,as,af,na,sa,au`) and three
