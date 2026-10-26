@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -256,6 +258,31 @@ class ContinentalTests(unittest.TestCase):
         pq.write_table(pa.table(dict(IP_ADDR=["203.0.113.1"])), zmap)
         with self.assertRaisesRegex(ValueError, "missing 1"):
             c.regional_coverage(zmap, observations, self.root / "invalid.json", provenance={})
+
+    def test_child_scope_keeps_physical_mount_mapping_and_shared_caches(self):
+        scope = "continental/round/eu"
+        env = dict(
+            os.environ,
+            IPID_ANALYSIS_SCOPE=scope,
+            IPID_ANALYSIS_WORKFLOW_ROOT=PREFIX,
+            IPID_ANALYSIS_S3_PREFIX=CAMPAIGN + "/sites/eu",
+            IPID_ANALYSIS_S3_ROOTS=json.dumps({"raw": RAW}),
+        )
+        env.pop("IPID_ANALYSIS_RIPE_CACHE_S3", None)
+        code = "from ipid_analysis.config import *; from ipid_analysis.runtime import persistent_roots; from ipid_analysis.s3_workflow import S3Client; from ipid_analysis.ripe_cache import RoleCache; import json; print(json.dumps(dict(scope=RAW_DATA_DIR.relative_to(RAW_STORAGE_DIR).as_posix(),mapped=str(S3Client().mapped_path('s3://bucket/raw/continental/round/eu/zmap/run/zmap.pq')),expected=str(RAW_DATA_DIR/'zmap/run/zmap.pq'),mounts=[str(p) for p in persistent_roots()],expected_mounts=[str(RAW_STORAGE_DIR),str(PROCESSED_STORAGE_DIR),str(REPORTS_STORAGE_DIR)],cache=RoleCache().prefix)))"
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
+        )
+        value = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual(value["scope"], scope)
+        self.assertEqual(value["mapped"], value["expected"])
+        self.assertEqual(value["mounts"], value["expected_mounts"])
+        self.assertEqual(value["cache"], PREFIX + "/ripe-atlas-cache/v4")
 
     def test_terminal_failure_preserves_existing_done_and_original_failure(self):
         task = Task(
