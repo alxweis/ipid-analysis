@@ -45,7 +45,9 @@ class SchedulerTests(unittest.TestCase):
 
     def active(self, task):
         cost = self.scheduler.cost(task)
-        return s.Active(task, cost, Mock(), self.root / task.key, io.StringIO(), time.monotonic())
+        return s.Active(
+            task, cost, Mock(pid=2147483647), self.root / task.key, io.StringIO(), time.monotonic()
+        )
 
     def test_reserved_critical_capacity_and_global_cpu_ram_scratch_admission(self):
         background = s.Task(
@@ -101,6 +103,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(env["OPENBLAS_NUM_THREADS"], str(self.scheduler.critical.cpus))
         self.assertEqual(env["IPID_ANALYSIS_WORKFLOW_ROOT"], self.scheduler.prefix)
         self.scheduler.active[task.key].log.close()
+        self.scheduler.active.clear()
 
     def test_memory_and_scratch_watchdog_terminate_and_publish_failure(self):
         task = s.Task("handoff", "s3://bucket/jobs/1/request.json", "s3://bucket")
@@ -145,6 +148,100 @@ class SchedulerTests(unittest.TestCase):
         task = s.Task("handoff", "s3://bucket/jobs/1/request.json", "s3://bucket")
         with patch.object(s.shutil, "disk_usage", return_value=SimpleNamespace(free=1)):
             self.assertFalse(self.scheduler.admitted(task))
+
+    def test_stopped_job_reclaims_only_owned_scratch_and_retains_logs(self):
+        task = s.Task("analysis", "s3://bucket/analysis/request.json", "s3://bucket", priority=10)
+        active = self.active(task)
+        root = active.directory / "scratch"
+        root.mkdir(parents=True)
+        (root / "spill.tmp").write_bytes(b"spill")
+        (root / "postprocess.log").write_text("diagnostic progress")
+        sentinel = self.root / "unrelated.pq"
+        sentinel.write_bytes(b"keep")
+        self.scheduler.release_scratch(active)
+        self.assertFalse(root.exists())
+        self.assertEqual(sentinel.read_bytes(), b"keep")
+        self.assertEqual(
+            next((active.directory / "diagnostics").glob("*.log")).read_text(),
+            "diagnostic progress",
+        )
+
+    def test_live_restart_owner_prevents_scratch_cleanup(self):
+        from ipid_analysis.runtime import exclusive_lock
+
+        task = s.Task("handoff", "s3://bucket/jobs/1/request.json", "s3://bucket")
+        active = self.active(task)
+        root = active.directory / "scratch"
+        root.mkdir(parents=True)
+        source = root / "active-input.pq"
+        source.write_bytes(b"in use")
+        with exclusive_lock("scheduled-task:" + task.key, timeout_seconds=0):
+            self.scheduler.release_scratch(active)
+        self.assertEqual(source.read_bytes(), b"in use")
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux descendant cleanup")
+    def test_exited_wrapper_cannot_leave_a_background_writer(self):
+        ready = self.root / "child.pid"
+        code = "import subprocess,sys; from pathlib import Path; p=subprocess.Popen([sys.executable,'-c','import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)']); Path(sys.argv[1]).write_text(str(p.pid)); sys.exit(1)"
+        process = subprocess.Popen(
+            [sys.executable, "-c", code, str(ready)], start_new_session=True
+        )
+        task = s.Task("analysis", "s3://bucket/analysis/request.json", "s3://bucket", priority=10)
+        active = s.Active(
+            task,
+            self.scheduler.background,
+            process,
+            self.root / task.key,
+            io.StringIO(),
+            time.monotonic(),
+        )
+        self.scheduler.active[task.key] = active
+        process.wait(timeout=10)
+        pid = int(ready.read_text())
+        with patch("ipid_analysis.continental.publish_task_failure"):
+            self.scheduler.reap()
+            for future in self.scheduler.failure_futures.values():
+                future.result(timeout=5)
+        deadline = time.monotonic() + 5
+
+        def live():
+            try:
+                return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+            except FileNotFoundError:
+                return False
+
+        while live() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(live())
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux process-group RSS")
+    def test_actual_process_tree_rss_overrun_terminates_all_children(self):
+        ready = self.root / "ready.json"
+        code = "import subprocess,sys,time,json,os; from pathlib import Path; block=bytearray(8<<20); p=subprocess.Popen([sys.executable,'-c','import time;block=bytearray(8<<20);time.sleep(60)']); Path(sys.argv[1]).write_text(json.dumps([os.getpid(),p.pid])); time.sleep(60)"
+        process = subprocess.Popen(
+            [sys.executable, "-c", code, str(ready)], start_new_session=True
+        )
+        task = s.Task("handoff", "s3://bucket/jobs/1/request.json", "s3://bucket")
+        active = s.Active(
+            task,
+            s.Cost(1, 4 << 20, 10 * s.GIB),
+            process,
+            self.root / task.key,
+            io.StringIO(),
+            time.monotonic(),
+        )
+        self.scheduler.active[task.key] = active
+        deadline = time.monotonic() + 10
+        while not ready.is_file() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(ready.is_file())
+        self.assertGreater(s.process_group_usage(process.pid), active.cost.memory)
+        with patch("ipid_analysis.continental.publish_task_failure") as failure:
+            self.scheduler.reap()
+            for future in self.scheduler.failure_futures.values():
+                future.result(timeout=5)
+        self.assertIsNotNone(process.poll())
+        failure.assert_called_once()
         with patch.object(s, "available_memory", return_value=1):
             self.assertFalse(self.scheduler.admitted(task))
 

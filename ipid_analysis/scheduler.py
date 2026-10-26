@@ -20,7 +20,13 @@ import time
 
 from loguru import logger
 
-from ipid_analysis.runtime import available_memory, cpu_budget, scratch_root
+from ipid_analysis.runtime import (
+    available_memory,
+    cleanup_work,
+    cpu_budget,
+    exclusive_lock,
+    scratch_root,
+)
 
 GIB = 1 << 30
 SITES = ("eu", "as", "af", "na", "sa", "au")
@@ -201,6 +207,7 @@ class Scheduler:
         self.client, self.prefix = client, prefix.rstrip("/")
         self.root = work_root / "scheduled"
         self.root.mkdir(parents=True, exist_ok=True)
+        os.environ["IPID_ANALYSIS_LOCK_DIR"] = str(scratch_root() / "global-locks")
         self.batch_size = batch_size
         cpus = min(int(os.environ.get("IPID_ANALYSIS_WORKER_CPUS", cpu_budget())), cpu_budget())
         if cpus < 3:
@@ -340,19 +347,28 @@ class Scheduler:
 
     @staticmethod
     def terminate(active):
-        if active.process.poll() is None:
-            if os.name == "posix":
+        # A failed postprocess can leave grandchildren even after its wrapper
+        # exits (e.g. subprocess.run timeout). Always close the entire group.
+        if os.name == "posix":
+            try:
                 os.killpg(active.process.pid, signal.SIGTERM)
-            else:
-                active.process.terminate()
+            except ProcessLookupError:
+                return
+        elif active.process.poll() is None:
+            active.process.terminate()
+        if active.process.poll() is None:
             try:
                 active.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                if os.name == "posix":
-                    os.killpg(active.process.pid, signal.SIGKILL)
-                else:
+                if os.name != "posix":
                     active.process.kill()
-                active.process.wait(timeout=5)
+                    active.process.wait(timeout=5)
+        if os.name == "posix":
+            try:
+                os.killpg(active.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            active.process.wait(timeout=5)
 
     def reap(self):
         from ipid_analysis.continental import publish_task_failure
@@ -372,6 +388,8 @@ class Scheduler:
                 else:
                     continue
             code = active.process.returncode
+            if code != 75 and not active.failure and os.name == "posix":
+                self.terminate(active)
             active.log.close()
             if code == 75:  # old live process still owns the same per-job lease
                 self.retry_after[key] = time.monotonic() + 30
@@ -393,8 +411,31 @@ class Scheduler:
                 logger.success(
                     f"task finished: {active.task.kind}: {active.task.uri}; log={active.directory / 'supervisor.log'}"
                 )
+            if code != 75:
+                self.release_scratch(active)
             self.finished.add(key)
             del self.active[key]
+
+    def release_scratch(self, active):
+        """Retain bounded diagnostic logs; reclaim only this stopped job's scratch."""
+        root = active.directory / "scratch"
+        if not root.is_dir() or root.is_symlink():
+            return
+        try:
+            with exclusive_lock("scheduled-task:" + active.task.key, timeout_seconds=0):
+                for path in root.rglob("*.log"):
+                    if not path.is_file() or path.is_symlink():
+                        continue
+                    name = hashlib.sha256(str(path.relative_to(root)).encode()).hexdigest()[:16]
+                    diagnostics = active.directory / "diagnostics"
+                    diagnostics.mkdir(exist_ok=True)
+                    with path.open("rb") as source:
+                        source.seek(max(0, path.stat().st_size - (10 << 20)))
+                        with (diagnostics / f"{name}-{path.name}").open("wb") as output:
+                            shutil.copyfileobj(source, output)
+                cleanup_work(root, root=active.directory)
+        except OSError:
+            logger.exception(f"stopped job scratch retained for local maintenance: {root}")
 
     def dispatch(self, tasks):
         for key, future in list(self.failure_futures.items()):

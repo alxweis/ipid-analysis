@@ -8,8 +8,8 @@ target parquet beside the measurement's ``ipid.pq``, and only then publishes
 done marker as an atomic readiness signal.
 
 After a full protocol sweep, ``analysis-jobs/<zmap-id>/request.json`` starts the
-normal manifest-driven postprocessing. These jobs are handled sequentially by
-the same worker and retain their manifest, log, and terminal marker.
+normal manifest-driven postprocessing. The supervisor reserves critical handoff
+capacity while background children retain their manifest, log and terminal marker.
 """
 
 from __future__ import annotations

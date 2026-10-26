@@ -83,10 +83,10 @@ partitions or VM configuration changes are required. Keep RAM/disk headroom and
 measure real peaks before increasing concurrency.
 
 Logs include admitted resource budgets, job completion/failure and the local
-`scheduled/<job-hash>/supervisor.log`. Retained failure diagnostics and unrelated
-disk usage reduce available scratch for subsequent admissions. Operators must
-manage retained local failures when capacity is exhausted; the worker does not
-delete scientific data to make room. `--once` drains currently runnable stages;
+`scheduled/<job-hash>/supervisor.log`. Stopped jobs release their owned local scratch after bounded diagnostic-log
+tails are retained outside it. Active restart leases are never cleaned. Failed
+local cleanup and unrelated disk usage reduce capacity and require operator
+maintenance; the worker never deletes scientific S3 data to make room. `--once` drains currently runnable stages;
 it does not wait for external scans to produce missing dependencies.
 
 ## Restart, failure and explicit retry
