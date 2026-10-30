@@ -154,6 +154,12 @@ class CacheTests(unittest.TestCase):
                 expected = pq.read_table(first.roles_path).to_pylist()
                 self.assertEqual(downloads.call_count, 1)
                 self.assertEqual(list((root / "processed").rglob("*.bz2")), [])
+            with patch.object(
+                ripe, "_available_dump_days", side_effect=AssertionError("must not crawl")
+            ):
+                first.roles_path.write_bytes(b"corrupt local window cache")
+                repaired = ripe.prepare_ripe_atlas(**args)
+                self.assertEqual(pq.read_table(repaired.roles_path).to_pylist(), expected)
             shutil.rmtree(root / "processed")
             with patch.object(
                 ripe, "_available_dump_days", side_effect=AssertionError("must not crawl")

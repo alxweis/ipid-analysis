@@ -28,6 +28,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import threading
 import time
 from typing import TextIO
 from urllib.error import HTTPError
@@ -44,9 +45,13 @@ from ipid_analysis.artifacts import assert_complete, file_digest, publish_file
 from ipid_analysis.downloads import download as download_http
 from ipid_analysis.runtime import (
     available_memory,
+    cleanup_work,
     connect,
     cpu_budget,
+    directory_bytes,
     reserve_download,
+    ripe_transfer_limit,
+    ripe_transfer_root,
     scratch_root,
     start_run,
     temporary_path,
@@ -61,7 +66,7 @@ except ImportError:  # pragma: no cover - compatibility for existing environment
 from ipid_analysis.config import PROCESSED_STORAGE_DIR as PROCESSED_DATA_DIR
 from ipid_analysis.config import RAW_STORAGE_DIR as RAW_DATA_DIR
 from ipid_analysis.ripe_bitmaps import ROLE_SCHEMA, RoleBitmaps, trace_roles
-from ipid_analysis.ripe_cache import RoleCache
+from ipid_analysis.ripe_cache import RoleCache, read_metadata, validate_roles
 
 app = typer.Typer()
 
@@ -688,26 +693,61 @@ def _cached_role_part(part: Path, metadata: Path) -> dict | None:
     if not part.is_file() or not metadata.is_file():
         return None
     try:
-        info = json.loads(metadata.read_text(encoding="utf-8"))
-        assert_complete(part)
-        parquet = pq.ParquetFile(part)
-        schema = parquet.schema_arrow
-        if parquet.metadata.num_rows != info.get("addresses"):
-            return None
-    except (OSError, ValueError, TypeError):
-        return None
-    if info.get("cache_version") != RIPE_PART_CACHE_VERSION:
-        return None
-    if not schema.equals(_PART_SCHEMA, check_metadata=False):
+        info = read_metadata(metadata)
+        validate_roles(part, info, RIPE_PART_CACHE_VERSION)
+    except (FileNotFoundError, ValueError, TypeError):
         return None
     return info
+
+
+def _cache_lock_path(identity: str, name: str) -> Path:
+    # Unlike work_path(), this does not follow the scheduled job's TMP_DIR.
+    key = hashlib.sha256(identity.encode()).hexdigest()
+    return ripe_transfer_root() / "locks" / f"{key}-{name}"
+
+
+def _prune_stale_cache_locks() -> None:
+    """The preparation owner reclaims dead owners from older window/part keys."""
+    for path in (ripe_transfer_root() / "locks").glob("*.lock"):
+        if path.is_symlink() or not re.fullmatch(
+            "[a-f0-9]{64}-(part|prepare|resources)\\.lock", path.name
+        ):
+            continue
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            continue
+        owner, _ = _read_lock_owner(path)
+        if owner and owner.get("pid") == os.getpid():
+            continue
+        state, _ = _lock_owner_state(owner)
+        if state == "stale" or (
+            state == "malformed" and time.time() - stat.st_mtime >= MALFORMED_LOCK_GRACE_SECONDS
+        ):
+            _unlink_same_file(path, stat)
+
+
+def _release_transfer(source: Path) -> None:
+    """Only reclaim a newly owned transfer after its processed part is committed."""
+    root = ripe_transfer_root() / "downloads"
+    if root not in source.resolve().parents:
+        source.unlink(missing_ok=True)
+        return
+    final = source.with_suffix("") if source.suffix == ".part" else source
+    final.unlink(missing_ok=True)
+    final.with_suffix(final.suffix + ".part").unlink(missing_ok=True)
+    final.with_suffix(final.suffix + ".part.http.json").unlink(missing_ok=True)
+    try:
+        source.parent.rmdir()
+    except OSError:
+        pass
 
 
 def _prepare_role_part(arguments: tuple[str, str, str, str, str, bool]) -> tuple[str, dict]:
     source, part, metadata, start, end, apply_window, *options = arguments
     part_path = Path(part)
     metadata_path = Path(metadata)
-    with _exclusive_lock(work_path(str(part_path), category="locks") / "part.lock"):
+    with _exclusive_lock(_cache_lock_path(str(part_path), "part.lock")):
         info = _cached_role_part(part_path, metadata_path)
         cache = RoleCache()
         remote_key = f"parts/{part_path.stem}"
@@ -725,7 +765,7 @@ def _prepare_role_part(arguments: tuple[str, str, str, str, str, bool]) -> tuple
             )
         cache.publish(remote_key, part_path, metadata_path)
     if options and options[0]:
-        Path(source).unlink(missing_ok=True)
+        _release_transfer(Path(source))
     return part, info
 
 
@@ -889,6 +929,93 @@ def _source_key(source: str, *, samples: int, measurement_ids: tuple[int, ...]) 
     return f"api-{digest}"
 
 
+class _TransferBudget:
+    """Bound the shared raw staging area; the outer RIPE lock owns its writers."""
+
+    def __init__(self, protected):
+        self.root = ripe_transfer_root()
+        self.limit = ripe_transfer_limit()
+        self.protected = set(protected)
+        self.reserved = {}
+        self.lock = threading.Lock()
+        self.failed = threading.Event()
+
+    @contextmanager
+    def reserve(self, destination, expected_size):
+        # Leave room for HTTP metadata and lock files as well as dump bytes.
+        overhead = 1 << 20
+        if expected_size + overhead > self.limit:
+            raise OSError(
+                f"RIPE dump exceeds shared transfer budget: {destination.name} ({expected_size} bytes, limit={self.limit})"
+            )
+        deadline = time.monotonic() + DEFAULT_LOCK_TIMEOUT_SECONDS
+
+        def present(path):
+            partial = path.with_suffix(path.suffix + ".part")
+            sizes = []
+            for candidate in (path, partial):
+                try:
+                    sizes.append(candidate.stat().st_size)
+                except FileNotFoundError:
+                    pass
+            return max(sizes, default=0)
+
+        def additional(path, size):
+            current = present(path)
+            return max(0, size - current) + (overhead if current != size else 0)
+
+        while True:
+            with self.lock:
+                needed = additional(destination, expected_size)
+                if needed and self.failed.is_set():
+                    raise OSError("RIPE prefetch stopped after another transfer failed")
+                pending = sum(additional(path, size) for path, size in self.reserved.items())
+                used = directory_bytes(self.root)
+                if used + pending + needed > self.limit:
+                    # Evict only inactive transfers owned by this new staging
+                    # area. Current-window inputs and persistent RIPE caches
+                    # are never evicted. A successful part frees its raw input.
+                    downloads = self.root / "downloads"
+                    candidates = sorted(
+                        (
+                            p
+                            for p in downloads.glob("*")
+                            if p.is_dir()
+                            and not p.is_symlink()
+                            and re.fullmatch("[a-f0-9]{64}", p.name)
+                            and p.name not in self.protected
+                        ),
+                        key=lambda p: p.stat().st_mtime_ns,
+                    )
+                    for candidate in candidates:
+                        cleanup_work(candidate, root=downloads)
+                        used = directory_bytes(self.root)
+                        if used + pending + needed <= self.limit:
+                            break
+                if used + pending + needed <= self.limit:
+                    self.reserved[destination] = expected_size
+                    break
+                if not self.reserved and not any(
+                    path.is_file()
+                    for identity in self.protected
+                    for path in (self.root / "downloads" / identity).glob("*.bz2")
+                ):
+                    # Only retained partials remain, with no downloader/parser
+                    # able to free bytes. Keep them and report the budget issue
+                    # rather than silently waiting for hours with no progress.
+                    raise OSError(
+                        "insufficient shared RIPE transfer budget; protected partials retained"
+                    )
+            if time.monotonic() >= deadline:
+                raise TimeoutError("timed out waiting for bounded RIPE transfer space")
+            time.sleep(0.1)
+        try:
+            yield
+        finally:
+            with self.lock:
+                del self.reserved[destination]
+
+
 def _daily_dump_files(
     window: RipeWindow,
     *,
@@ -902,6 +1029,15 @@ def _daily_dump_files(
         day for day in available_days if window.start.date() <= day < window.end.date()
     )
     slots = sampled_available_dump_slots(window, samples, available_days)
+    urls = {
+        slot: f"{base_url.rstrip('/')}/{slot:%Y-%m-%d}/traceroute-{slot:%Y-%m-%dT%H00}.bz2"
+        for slot in slots
+    }
+    identities = {
+        slot: hashlib.sha256(f"{RIPE_PART_CACHE_VERSION}|{url}".encode()).hexdigest()
+        for slot, url in urls.items()
+    }
+    transfers = _TransferBudget(identities.values())
     requested_days = (window.end.date() - window.start.date()).days
     if len(days_in_window) < requested_days:
         logger.warning(
@@ -914,10 +1050,10 @@ def _daily_dump_files(
     def fetch(slot):
         day = slot.date().isoformat()
         filename = f"traceroute-{slot:%Y-%m-%dT%H00}.bz2"
-        url = f"{base_url.rstrip('/')}/{day}/{filename}"
-        identity = hashlib.sha256(f"{RIPE_PART_CACHE_VERSION}|{url}".encode()).hexdigest()
+        url = urls[slot]
+        identity = identities[slot]
         part, metadata = parts_root / f"{identity}.pq", parts_root / f"{identity}.json"
-        with _exclusive_lock(work_path(str(part), category="locks") / "part.lock"):
+        with _exclusive_lock(_cache_lock_path(str(part), "part.lock")):
             info = _cached_role_part(part, metadata)
             cache = RoleCache()
             if info is None and cache.restore(
@@ -926,44 +1062,88 @@ def _daily_dump_files(
                 info = _cached_role_part(part, metadata)
             if info is not None:
                 cache.publish(f"parts/{identity}", part, metadata)
+                _release_transfer(transfers.root / "downloads" / identity / filename)
                 logger.info(f"reusing processed RIPE hour: {filename}")
                 return part
         existing = Path(raw_root) / "ripe-atlas" / "daily-dumps" / day / filename
-        scratch = Path(
-            os.environ.get("IPID_ANALYSIS_RIPE_WORK_DIR", str(scratch_root() / "ripe-downloads"))
+        # Keep the explicitly configured legacy download directory usable, but
+        # new transfers always use the bounded, job-independent local area.
+        legacy = (
+            Path(
+                os.environ.get(
+                    "IPID_ANALYSIS_RIPE_WORK_DIR", str(scratch_root() / "ripe-downloads")
+                )
+            )
+            / day
+            / filename
         )
-        destination = existing if existing.is_file() else scratch / day / filename
-        cleanup = destination != existing
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        expected_size = _remote_file_size(url)
+        if not existing.is_file() and legacy.is_file():
+            existing = legacy
+        destination = (
+            existing if existing.is_file() else transfers.root / "downloads" / identity / filename
+        )
+        state_path = destination.with_suffix(destination.suffix + ".part.http.json")
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            state = {}
+        if not isinstance(state, dict):
+            state = {}
+        complete_size = state.get("expected_size") if state.get("url") == url else None
+        expected_size = (
+            complete_size
+            if isinstance(complete_size, int)
+            and complete_size > 0
+            and destination.is_file()
+            and destination.stat().st_size == complete_size
+            else _remote_file_size(url)
+        )
         if existing.is_file() and existing.stat().st_size == expected_size:
             assert_complete(existing)
             return existing, identity, False
-        present = destination.stat().st_size if destination.is_file() else 0
-        required_space = max(0, expected_size - present) + (1 << 30)
-        if shutil.disk_usage(destination.parent).free < required_space:
-            raise OSError(f"insufficient local RIPE scratch space for {filename}")
+        # An invalid retained raw file is not a destination for new downloads.
+        # Leave it untouched and stage the replacement on local storage only.
+        destination = transfers.root / "downloads" / identity / filename
         started = time.monotonic()
-        logger.info(f"downloading RIPE Atlas daily dump: {url}")
-        with reserve_download(required_space):
+        if destination.is_file() and destination.stat().st_size == expected_size:
+            logger.info(f"reusing complete RIPE download: {destination}")
+        else:
+            logger.info(f"downloading RIPE Atlas daily dump: {url}")
+        partial = destination.with_suffix(destination.suffix + ".part")
+        present = max((p.stat().st_size for p in (destination, partial) if p.is_file()), default=0)
+        with (
+            transfers.reserve(destination, expected_size),
+            reserve_download(max(0, expected_size - present) + (1 << 20)),
+        ):
+            destination.parent.mkdir(parents=True, exist_ok=True)
             source_path = _download(url, destination, expected_size=expected_size)
         logger.info(f"RIPE download ready: {filename} ({time.monotonic() - started:.1f}s)")
-        return source_path, identity, cleanup
+        return source_path, identity, True
 
     def inputs():
         # At most two downloaded inputs ahead of the bounded parser queue.
         concurrency = max(1, min(2, int(os.environ.get("IPID_ANALYSIS_RIPE_DOWNLOADS", "2"))))
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             remaining = iter(slots)
-            pending = [pool.submit(fetch, slot) for slot in list(slots)[:concurrency]]
+            pending = {pool.submit(fetch, slot) for slot in list(slots)[:concurrency]}
+            error = None
             for _ in range(min(concurrency, len(slots))):
                 next(remaining)
             while pending:
-                future = pending.pop(0)
-                yield future.result()
-                slot = next(remaining, None)
-                if slot is not None:
-                    pending.append(pool.submit(fetch, slot))
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        error = error or exc
+                        transfers.failed.set()
+                    else:
+                        yield result
+                    slot = next(remaining, None) if error is None else None
+                    if slot is not None:
+                        pending.add(pool.submit(fetch, slot))
+            if error is not None:
+                raise error
 
     return inputs(), slots, days_in_window
 
@@ -1062,30 +1242,38 @@ def prepare_ripe_atlas(
     else:
         key = _source_key(source, samples=dump_samples, measurement_ids=measurement_ids)
     dataset = _dataset_paths(window, key, processed_root=processed_root)
-    dataset.directory.mkdir(parents=True, exist_ok=True)
 
     cache = RoleCache()
     identity = hashlib.sha256(
         f"{window.label}|{key}|{dump_base_url}|{api_base_url}".encode()
     ).hexdigest()
     remote_key = f"windows/{identity}"
-    budget_lock = work_path("ripe-resources", category="locks") / "resources.lock"
+    budget_lock = _cache_lock_path("ripe-resources", "resources.lock")
     with (
         _exclusive_lock(budget_lock),
-        _exclusive_lock(work_path(str(dataset.directory), category="locks") / "prepare.lock"),
+        _exclusive_lock(_cache_lock_path(str(dataset.directory), "prepare.lock")),
     ):
+        _prune_stale_cache_locks()
+        dataset.directory.mkdir(parents=True, exist_ok=True)
         if not force and dataset.roles_path.is_file() and dataset.metadata_path.is_file():
             try:
-                cached_info = json.loads(dataset.metadata_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, TypeError):
+                cached_info = read_metadata(dataset.metadata_path)
+            except (FileNotFoundError, ValueError, TypeError):
                 cached_info = {}
             if (
                 cached_info.get("cache_version") == RIPE_CACHE_VERSION
                 and cached_info.get("cache_identity") == identity
             ):
-                cache.publish(remote_key, dataset.roles_path, dataset.metadata_path)
-                logger.info(f"reusing RIPE Atlas role cache: {dataset.roles_path}")
-                return dataset
+                try:
+                    validate_roles(
+                        dataset.roles_path, cached_info, RIPE_CACHE_VERSION, identity=identity
+                    )
+                except ValueError as exc:
+                    logger.warning(f"invalid local RIPE window cache: {dataset.roles_path}: {exc}")
+                else:
+                    cache.publish(remote_key, dataset.roles_path, dataset.metadata_path)
+                    logger.info(f"reusing RIPE Atlas role cache: {dataset.roles_path}")
+                    return dataset
             logger.info(f"rebuilding outdated RIPE Atlas role cache: {dataset.roles_path}")
 
         if not force and cache.restore(

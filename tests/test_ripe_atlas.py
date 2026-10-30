@@ -18,7 +18,6 @@ import pyarrow.parquet as pq
 from ipid_analysis import ripe_atlas as ripe_atlas_module
 from ipid_analysis.caida_itdk import ITDKDataset
 from ipid_analysis.manifest import IpidMeasurement
-from ipid_analysis.runtime import work_path
 from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
 from ipid_analysis.ripe_atlas import (
     RipeAtlasDataset,
@@ -511,6 +510,9 @@ class RipeAtlasTest(unittest.TestCase):
     def test_concurrent_campaigns_build_shared_daily_dump_part_once(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            # As in the scheduled worker, create the shared directory before
+            # starting concurrent owners (Windows sandbox mkdir is not atomic).
+            (root / "processed/ripe-atlas/file-parts").mkdir(parents=True)
             source = root / "traceroute.bz2"
             timestamp = int(datetime(2026, 1, 15, 12, tzinfo=timezone.utc).timestamp())
             with bz2.open(source, "wt", encoding="utf-8") as output:
@@ -606,7 +608,7 @@ class RipeAtlasTest(unittest.TestCase):
                 apply_window=False,
             )
             part_path = destination.parents[2] / "file-parts" / f"{part_key}.pq"
-            part_lock = work_path(str(part_path), category="locks") / "part.lock"
+            part_lock = ripe_atlas_module._cache_lock_path(str(part_path), "part.lock")
             part_lock.parent.mkdir(parents=True, exist_ok=True)
             part_lock.write_text("pid=512719\n", encoding="utf-8")
 
@@ -657,7 +659,7 @@ class RipeAtlasTest(unittest.TestCase):
             dataset_directory = (
                 root / "processed" / "ripe-atlas" / window.label / f"local-{local_digest}"
             )
-            prepare_lock = work_path(str(dataset_directory), category="locks") / "prepare.lock"
+            prepare_lock = ripe_atlas_module._cache_lock_path(str(dataset_directory), "prepare.lock")
             prepare_lock.parent.mkdir(parents=True, exist_ok=True)
             prepare_lock.write_text("pid=512719\n", encoding="utf-8")
             with patch.object(ripe_atlas_module, "_pid_is_alive", return_value=False):

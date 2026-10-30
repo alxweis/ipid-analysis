@@ -23,6 +23,7 @@ class SchedulerTests(unittest.TestCase):
             os.environ,
             {
                 "IPID_ANALYSIS_TMP_DIR": str(self.root / "tmp"),
+                "IPID_ANALYSIS_RIPE_TRANSFER_DIR": str(self.root / "transfers"),
                 "IPID_ANALYSIS_STORAGE_MODE": "local",
                 "IPID_ANALYSIS_WORKER_MEMORY_BYTES": str(128 * s.GIB),
                 "IPID_ANALYSIS_WORKER_SCRATCH_BYTES": str(200 * s.GIB),
@@ -68,6 +69,16 @@ class SchedulerTests(unittest.TestCase):
                 sum(getattr(a.cost, field) for a in self.scheduler.active.values()),
                 getattr(self.scheduler.total, field),
             )
+
+        self.assertLessEqual(self.scheduler.total.scratch + self.scheduler.transfer_limit, 200 * s.GIB)
+
+    def test_unused_shared_transfer_capacity_is_reserved_before_job_admission(self):
+        task = s.Task("handoff", "s3://bucket/jobs/new/request.json", "s3://bucket")
+        cost = self.scheduler.cost(task)
+        # Enough for this job alone, but not for its unconsumed shared transfer reservation.
+        free = self.scheduler.reserve + cost.scratch + self.scheduler.transfer_limit - 1
+        with patch.object(s.shutil, "disk_usage", return_value=SimpleNamespace(free=free)):
+            self.assertFalse(self.scheduler.admitted(task))
 
     def test_late_os_uses_reserved_admission_without_blocking_handoffs(self):
         root = "s3://bucket/workflow/continental/round/enrichments/os"
