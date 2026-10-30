@@ -15,7 +15,12 @@ from ipid_analysis.interprotocol import (
     load_run_manifest,
     synthetic_sequence,
 )
-from ipid_analysis.interprotocol_outcomes import classify_rows, prerequisites
+from ipid_analysis.interprotocol_outcomes import (
+    STRATEGIES,
+    classify_rows,
+    outcome_plot_style,
+    prerequisites,
+)
 from ipid_analysis.random_classifier_candidate import create_candidate_null_tables
 
 PATTERN = [18933, 18932, 3717, 3718, 3719]
@@ -49,6 +54,39 @@ def result(sequence, baseline, protocols=("icmp", "tcp", "udp"), sample="base", 
 
 
 class OutcomeTests(unittest.TestCase):
+    def test_all_outcome_legends_use_the_greater_equal_unicode_character(self):
+        for strategy in STRATEGIES:
+            with self.subTest(strategy=strategy):
+                labels = dict(outcome_plot_style(strategy)[0])
+                self.assertEqual(labels["STRATEGY_CHANGED"], "\u22651 Strategy Changed")
+
+    def test_upset_renders_pdfs_without_writing_or_removing_existing_pngs(self):
+        from ipid_analysis.artifacts import save_figure
+        from ipid_analysis.plot_interprotocol_upset import plot_campaign_upset
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary = root / "summary.json"
+            summary.write_text(json.dumps({"groups": {}}), encoding="utf-8")
+            existing = root / "interprotocol-upset-single.png"
+            existing.write_bytes(b"existing result, do not change")
+            written = []
+
+            def save(fig, path, **kwargs):
+                self.assertEqual(Path(path).suffix, ".pdf")
+                labels = [text.get_text() for legend in fig.legends for text in legend.get_texts()]
+                self.assertIn("\u22651 Strategy Changed", labels)
+                written.append(Path(path))
+                return save_figure(fig, path, **kwargs)
+
+            with patch("ipid_analysis.plot_interprotocol_upset.save_figure", side_effect=save):
+                outputs = plot_campaign_upset(summary, root)
+            self.assertEqual(outputs, written)
+            self.assertEqual(len(outputs), 7)
+            self.assertTrue(all(path.read_bytes().startswith(b"%PDF-") for path in outputs))
+            self.assertEqual(list(root.glob("*.png")), [existing])
+            self.assertEqual(existing.read_bytes(), b"existing result, do not change")
+
     def test_shared_destination_overrides_all_changed_individual_labels(self):
         for protocols in [("icmp", "tcp"), ("icmp", "tcp", "udp")]:
             cfg = InterprotocolConfig(protocols, 4, 4)
@@ -181,7 +219,6 @@ class OutcomeTests(unittest.TestCase):
             self.assertEqual(missing["MATCHING_PARAMETER_PAIRS"], [])
 
     def test_partial_parameter_export_and_plot_denominators(self):
-        from matplotlib.figure import Figure
 
         from ipid_analysis.interprotocol_outcomes import classify_file
 
@@ -349,7 +386,7 @@ class OutcomeTests(unittest.TestCase):
             self.assertEqual({p.name for p in figures.glob("*.pdf")}, expected_pdfs)
             self.assertEqual(
                 {p.name for p in figures.glob("interprotocol-upset-*.png")},
-                {f"interprotocol-upset-{s}.png" for s in slugs},
+                set(),
             )
             del manifest["groups"]["icmp-tcp"]["measurements"]["mass"]
             path.write_text(json.dumps(manifest))

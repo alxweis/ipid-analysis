@@ -411,7 +411,7 @@ def outcome_plot_style(strategy):
     else:
         categories = [("UNCHANGED", "0 Strategies Changed")]
     categories += [
-        ("STRATEGY_CHANGED", "Ã¢â€°Â¥1 Strategy Changed"),
+        ("STRATEGY_CHANGED", "\u22651 Strategy Changed"),
         ("NOT_ENOUGH_SAMPLES", "Not Enough Samples"),
     ]
     color_names = (

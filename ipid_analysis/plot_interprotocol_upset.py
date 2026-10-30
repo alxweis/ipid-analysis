@@ -159,13 +159,6 @@ def plot_campaign_upset(summary_path: Path, output_dir: Path):
         stem = "interprotocol-upset-" + strategy.lower().replace("_", "-")
         pdf = output_dir / f"{stem}.pdf"
         save_figure(fig, pdf, bbox_inches="tight", pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES)
-        save_figure(
-            fig,
-            output_dir / f"{stem}.png",
-            dpi=220,
-            bbox_inches="tight",
-            pad_inches=COMPACT_PAPER_PDF_PADDING_INCHES,
-        )
         plt.close(fig)
         outputs.append(pdf)
     return outputs
