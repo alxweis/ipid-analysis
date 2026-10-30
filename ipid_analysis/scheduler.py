@@ -24,7 +24,10 @@ from ipid_analysis.runtime import (
     available_memory,
     cleanup_work,
     cpu_budget,
+    directory_bytes,
     exclusive_lock,
+    ripe_transfer_limit,
+    ripe_transfer_root,
     scratch_root,
 )
 
@@ -185,20 +188,6 @@ def process_group_usage(pgid: int) -> int:
     return total
 
 
-def directory_bytes(directory: Path) -> int:
-    total = 0
-    for root, dirs, files in os.walk(directory, followlinks=False):
-        dirs[:] = [d for d in dirs if not (Path(root) / d).is_symlink()]
-        for name in files:
-            path = Path(root) / name
-            try:
-                if not path.is_symlink():
-                    total += path.stat().st_size
-            except FileNotFoundError:
-                pass
-    return total
-
-
 @dataclass
 class Active:
     task: Task
@@ -226,11 +215,25 @@ class Scheduler:
             int(available_memory() * 0.8),
         )
         reserve = int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 10 * GIB))
+        self.transfer_root = ripe_transfer_root()
+        if self.transfer_root.stat().st_dev != self.root.stat().st_dev:
+            raise ValueError(
+                "shared RIPE transfers and job scratch must use the same local filesystem"
+            )
+        resident = directory_bytes(self.transfer_root)
         free = shutil.disk_usage(self.root).free
         scratch = min(
-            int(os.environ.get("IPID_ANALYSIS_WORKER_SCRATCH_BYTES", max(0, free - reserve))),
-            free - reserve,
+            int(
+                os.environ.get(
+                    "IPID_ANALYSIS_WORKER_SCRATCH_BYTES", max(0, free + resident - reserve)
+                )
+            ),
+            free + resident - reserve,
         )
+        self.transfer_limit = min(ripe_transfer_limit(), max(1, scratch // 8))
+        if resident > self.transfer_limit:
+            raise ValueError("retained RIPE transfers exceed their configured scratch budget")
+        scratch -= self.transfer_limit
         if memory < 3 * GIB or scratch < 3 * GIB:
             raise ValueError(
                 "insufficient RAM or scratch for reserved critical/background capacity"
@@ -290,7 +293,11 @@ class Scheduler:
             max(0, a.cost.scratch - directory_bytes(a.directory / "scratch"))
             for a in self.active.values()
         )
-        if shutil.disk_usage(self.root).free - self.reserve - reserved < cost.scratch:
+        transfer_reserved = max(0, self.transfer_limit - directory_bytes(self.transfer_root))
+        if (
+            shutil.disk_usage(self.root).free - self.reserve - reserved - transfer_reserved
+            < cost.scratch
+        ):
             return False
         if available_memory() < cost.memory:
             return False
@@ -329,6 +336,8 @@ class Scheduler:
             IPID_ANALYSIS_WORKFLOW_ROOT=self.prefix,
             IPID_ANALYSIS_LOCK_DIR=str(scratch_root() / "global-locks"),
             IPID_ANALYSIS_CONTROL_ROOT=str(scratch_root()),
+            IPID_ANALYSIS_RIPE_TRANSFER_DIR=str(self.transfer_root),
+            IPID_ANALYSIS_RIPE_TRANSFER_BYTES=str(self.transfer_limit),
             IPID_ANALYSIS_RIPE_WORKERS=str(cost.cpus),
         )
         for key in (

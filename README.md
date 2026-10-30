@@ -319,12 +319,15 @@ the textual `IP_ADDR` column for existing plot joins. DuckDB merges flags with
 `bool_or`, using four threads and an 8GB memory limit by default. Parquet is
 internally compressed, not wrapped in another compressed stream.
 
-New raw hourly downloads use a local scratch directory, defaulting to
-`tmp/ripe-downloads`. Set `IPID_ANALYSIS_RIPE_WORK_DIR` to a sufficiently
-large local SSD directory (not the small root filesystem or an S3 FUSE mount).
-Completed scratch files are removed after their processed part is persisted;
-failed/incomplete files remain resumable. Existing raw files below the following
-directory are reused and never removed:
+New raw hourly downloads use the shared, bounded local transfer area
+`tmp/ripe-transfers`, independently of scheduled jobs' scratch directories.
+`IPID_ANALYSIS_RIPE_TRANSFER_DIR` can select another dedicated local directory
+inside the analysis checkout. The legacy `IPID_ANALYSIS_RIPE_WORK_DIR` selects
+its `shared-transfers` subdirectory and existing files in its old layout remain
+usable. Completed raw transfers are removed only after their processed part is
+committed. Failed transfers retain HTTP resume state across jobs and restarts,
+subject to the bounded area's eviction of inactive older-window transfers.
+Existing raw files below the following directory are reused and never removed:
 
 RIPE exposes these dumps as a rolling archive. Preparation reads the public
 directory index before selecting files. When retention has removed the start
@@ -367,9 +370,14 @@ Resource controls (also available in manifest postprocessing):
 | --- | --- | --- |
 | `IPID_ANALYSIS_RIPE_WORKERS` | 4 | Requested parser processes, further capped by CPU and memory budget |
 | `IPID_ANALYSIS_RIPE_DOWNLOADS` | 2 | Concurrent downloads, constrained to 1–2 |
+| `IPID_ANALYSIS_RIPE_TRANSFER_BYTES` | 8 GiB | Shared transfer cap; the scheduler further caps/reserves it within the global scratch budget |
 | `IPID_ANALYSIS_RIPE_MEMORY_GIB` | 16 | Parser budget estimate: 2 GiB reserve plus 2 GiB per worker; minimum 4 |
 | `IPID_ANALYSIS_RIPE_DUCKDB_THREADS` | 4 | Merge threads, also capped to leave one CPU available where possible |
 | `IPID_ANALYSIS_RIPE_DUCKDB_MEMORY` | 8GB | DuckDB buffer-manager limit |
+
+See [RIPE shared transfers and targeted backfill](docs/RIPE_TRANSFERS_AND_BACKFILL.md)
+for budget accounting, failure/restart behavior, and commands to backfill only
+the missing AS RIPE reports of `geo-test-200k` from its completed cache.
 
 One resource lock under the shared processed root serializes RIPE preparation
 across concurrent protocol jobs on the same VM. Parser pools use spawned

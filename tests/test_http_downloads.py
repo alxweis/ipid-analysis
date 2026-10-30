@@ -18,6 +18,116 @@ class Response(io.BytesIO):
 
 
 class HttpDownloadsTest(unittest.TestCase):
+    def test_replacement_validator_never_describes_an_old_prefix_before_truncation(self):
+        partial = self.partial()
+        original_open = Path.open
+
+        def interrupt(path, mode="r", *args, **kwargs):
+            if path == partial and mode == "wb":
+                raise OSError("interrupted before truncation")
+            return original_open(path, mode, *args, **kwargs)
+
+        with (
+            patch.object(Path, "open", interrupt),
+            self.assertRaisesRegex(OSError, "before truncation"),
+        ):
+            download(
+                self.url,
+                self.destination,
+                expected_size=6,
+                max_attempts=1,
+                opener=lambda *a, **k: Response(
+                    b"newnew", **{"ETag": '"new"', "Content-Length": "6"}
+                ),
+            )
+        self.assertEqual(partial.read_bytes(), b"old")
+        self.assertEqual(
+            json.loads(partial.with_suffix(".part.http.json").read_text())["validator"], '"old"'
+        )
+
+    def test_interrupted_metadata_replace_keeps_the_previous_valid_resume_state(self):
+        partial = self.partial()
+        original_replace = Path.replace
+
+        def interrupt(path, target):
+            if path.name.endswith(".http.json.tmp"):
+                raise OSError("interrupted metadata replace")
+            return original_replace(path, target)
+
+        def response(*args, **kwargs):
+            return Response(
+                b"end", status=206, **{"ETag": '"old"', "Content-Range": "bytes 3-5/6"}
+            )
+
+        with (
+            patch.object(Path, "replace", interrupt),
+            self.assertRaisesRegex(OSError, "metadata replace"),
+        ):
+            download(self.url, self.destination, opener=response, expected_size=6, max_attempts=1)
+        self.assertEqual(partial.read_bytes(), b"old")
+        self.assertEqual(
+            json.loads(partial.with_suffix(".part.http.json").read_text())["validator"], '"old"'
+        )
+        download(self.url, self.destination, opener=response, expected_size=6)
+        self.assertEqual(self.destination.read_bytes(), b"oldend")
+
+    def test_oversized_body_never_exceeds_its_reservation_or_commits_a_prefix(self):
+        with self.assertRaisesRegex(ValueError, "exceeds expected"):
+            download(
+                self.url,
+                self.destination,
+                expected_size=5,
+                opener=lambda *a, **k: Response(b"too large", **{"ETag": '"v1"'}),
+            )
+        partial = self.destination.with_suffix(".gz.part")
+        self.assertLessEqual(partial.stat().st_size, 5)
+        self.assertFalse(partial.with_suffix(".part.http.json").exists())
+        self.assertFalse(self.destination.exists())
+        download(
+            self.url,
+            self.destination,
+            expected_size=5,
+            opener=lambda *a, **k: Response(b"valid", **{"ETag": '"v1"'}),
+        )
+        self.assertEqual(self.destination.read_bytes(), b"valid")
+
+    def test_restart_uses_recorded_total_size_when_caller_has_no_new_head(self):
+        self.partial()
+        download(
+            self.url,
+            self.destination,
+            opener=lambda *a, **k: Response(
+                b"end",
+                status=206,
+                **{
+                    "ETag": '"old"',
+                    "Content-Range": "bytes 3-5/6",
+                },
+            ),
+        )
+        self.assertEqual(self.destination.read_bytes(), b"oldend")
+
+    def test_exhausted_short_response_diagnoses_sizes_offsets_and_attempts(self):
+        self.url = "https://user:secret@example.invalid/input.gz?token=secret"
+        messages = []
+        with (
+            patch("ipid_analysis.downloads.time.sleep"),
+            patch("ipid_analysis.downloads.logger.warning", side_effect=messages.append),
+            self.assertRaisesRegex(OSError, "received=3 expected=6") as error,
+        ):
+            download(
+                self.url,
+                self.destination,
+                expected_size=6,
+                max_attempts=2,
+                opener=lambda *a, **k: Response(b"old", **{"Content-Length": "6"}),
+            )
+        self.assertIn("attempts=2", str(error.exception))
+        self.assertIn("offset=0", messages[-1])
+        self.assertIn("attempt=2/2", messages[-1])
+        self.assertNotIn("secret", str(error.exception) + "".join(messages))
+        self.assertFalse(self.destination.exists())
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

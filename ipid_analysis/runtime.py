@@ -35,7 +35,11 @@ def mounted_storage() -> bool:
 
 
 def persistent_roots() -> tuple[Path, ...]:
-    return (RAW_STORAGE_DIR, PROCESSED_STORAGE_DIR, REPORTS_STORAGE_DIR) if SCOPE else (RAW_DATA_DIR, PROCESSED_DATA_DIR, REPORTS_DIR)
+    return (
+        (RAW_STORAGE_DIR, PROCESSED_STORAGE_DIR, REPORTS_STORAGE_DIR)
+        if SCOPE
+        else (RAW_DATA_DIR, PROCESSED_DATA_DIR, REPORTS_DIR)
+    )
 
 
 def validate_storage() -> None:
@@ -59,8 +63,8 @@ def validate_storage() -> None:
     scratch_root()
 
 
-def scratch_root() -> Path:
-    root = Path(os.environ.get("IPID_ANALYSIS_TMP_DIR", str(PROJ_ROOT / "tmp"))).resolve()
+def scratch_root(root: Path | None = None) -> Path:
+    root = Path(root or os.environ.get("IPID_ANALYSIS_TMP_DIR", str(PROJ_ROOT / "tmp"))).resolve()
     if root == Path(root.anchor) or root == Path.home().resolve():
         raise ValueError("scratch must be a dedicated application directory")
     for persistent in persistent_roots():
@@ -84,6 +88,41 @@ def scratch_root() -> Path:
                     if filesystem.startswith("fuse"):
                         raise OSError(f"scratch must use a local filesystem: {root}")
     return root
+
+
+def ripe_transfer_root() -> Path:
+    """Shared local transfers, independent of a scheduled child's scratch root."""
+    legacy = os.environ.get("IPID_ANALYSIS_RIPE_WORK_DIR")
+    default = Path(legacy) / "shared-transfers" if legacy else PROJ_ROOT / "tmp" / "ripe-transfers"
+    root = Path(os.environ.get("IPID_ANALYSIS_RIPE_TRANSFER_DIR", str(default))).resolve()
+    if root == PROJ_ROOT.resolve() or (
+        mounted_storage() and PROJ_ROOT.resolve() not in root.parents
+    ):
+        raise ValueError(
+            "RIPE transfers must be a dedicated directory inside the analysis checkout"
+        )
+    return scratch_root(root)
+
+
+def ripe_transfer_limit() -> int:
+    limit = int(os.environ.get("IPID_ANALYSIS_RIPE_TRANSFER_BYTES", 8 << 30))
+    if limit <= 0:
+        raise ValueError("RIPE transfer budget must be positive")
+    return limit
+
+
+def directory_bytes(directory: Path) -> int:
+    total = 0
+    for root, dirs, files in os.walk(directory, followlinks=False):
+        dirs[:] = [d for d in dirs if not (Path(root) / d).is_symlink()]
+        for name in files:
+            path = Path(root) / name
+            try:
+                if not path.is_symlink():
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                pass
+    return total
 
 
 def temporary_path(destination: Path) -> Path:
@@ -228,7 +267,9 @@ def connect(*, config: dict | None = None):
         reserve = int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 1 << 30))
         if free <= reserve:
             raise OSError("insufficient local scratch space")
-        spill = min(free - reserve, int(os.environ.get("IPID_ANALYSIS_JOB_SCRATCH_BYTES", free - reserve)))
+        spill = min(
+            free - reserve, int(os.environ.get("IPID_ANALYSIS_JOB_SCRATCH_BYTES", free - reserve))
+        )
         options["max_temp_directory_size"] = f"{max(1, spill // (1 << 20))}MB"
         connection = duckdb.connect(config=options)
         try:
