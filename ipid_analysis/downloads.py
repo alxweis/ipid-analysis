@@ -110,8 +110,13 @@ def download(
                             )
                         expected_size = int(length)
                 state = {"url": url, "validator": validator, "expected_size": expected_size}
-                state_path.write_text(json.dumps(state), encoding="utf-8")
                 with partial.open("ab" if resumed else "wb") as output:
+                    # A replacement validator must never describe the old
+                    # prefix if the process dies before truncating that prefix.
+                    # Preserve the previous JSON until the new state is whole.
+                    staged_state = state_path.with_name(state_path.name + ".tmp")
+                    staged_state.write_text(json.dumps(state), encoding="utf-8")
+                    staged_state.replace(state_path)
                     received = offset
                     while True:
                         size = (

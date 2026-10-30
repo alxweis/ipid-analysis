@@ -43,6 +43,8 @@ before the error is propagated. No partial window is marked complete. Download
 errors now record attempt, status, offset, received/expected bytes and validator;
 credentials and URL query strings are excluded from diagnostics. HTTP size,
 validator, range and incomplete-body checks remain in force.
+HTTP metadata is replaced atomically, after truncation when a full replacement
+response is received, so interruption cannot bind a new validator to old bytes.
 Oversized response bodies are rejected before they exceed the reserved size;
 their prefixes cannot be promoted as completed downloads on a subsequent call.
 

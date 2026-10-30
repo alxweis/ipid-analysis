@@ -122,6 +122,8 @@ class SharedTransfersTest(unittest.TestCase):
             first = list(self.inputs())[0][0]
         self.assertEqual(http.call_count, 1)
         self.assertEqual(first.read_bytes(), BODY)
+        state = first.with_suffix(first.suffix + ".part.http.json")
+        state.with_name(state.name + ".tmp").write_bytes(b"interrupted metadata update")
         (self.root / "job-a").mkdir(exist_ok=True)
         cleanup_work(self.root / "job-a", root=self.root)
         with (

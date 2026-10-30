@@ -736,7 +736,9 @@ def _release_transfer(source: Path) -> None:
     final = source.with_suffix("") if source.suffix == ".part" else source
     final.unlink(missing_ok=True)
     final.with_suffix(final.suffix + ".part").unlink(missing_ok=True)
-    final.with_suffix(final.suffix + ".part.http.json").unlink(missing_ok=True)
+    state = final.with_suffix(final.suffix + ".part.http.json")
+    state.unlink(missing_ok=True)
+    state.with_name(state.name + ".tmp").unlink(missing_ok=True)
     try:
         source.parent.rmdir()
     except OSError:

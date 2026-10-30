@@ -244,12 +244,19 @@ class RipeAtlasTest(unittest.TestCase):
                     }
                 )
             )
+            original_replace = Path.replace
+
+            def reject_dump_rename(path, target):
+                if path == partial:
+                    raise OSError(5, "I/O error")
+                return original_replace(path, target)
+
             with (
                 patch(
                     "ipid_analysis.ripe_atlas.urlopen",
                     return_value=_HTTPResponse(b"de", status=206),
                 ),
-                patch.object(Path, "replace", side_effect=OSError(5, "I/O error")),
+                patch.object(Path, "replace", reject_dump_rename),
             ):
                 result = _download("https://example.invalid/dump", destination, expected_size=5)
             self.assertEqual(result, partial)

@@ -18,6 +18,59 @@ class Response(io.BytesIO):
 
 
 class HttpDownloadsTest(unittest.TestCase):
+    def test_replacement_validator_never_describes_an_old_prefix_before_truncation(self):
+        partial = self.partial()
+        original_open = Path.open
+
+        def interrupt(path, mode="r", *args, **kwargs):
+            if path == partial and mode == "wb":
+                raise OSError("interrupted before truncation")
+            return original_open(path, mode, *args, **kwargs)
+
+        with (
+            patch.object(Path, "open", interrupt),
+            self.assertRaisesRegex(OSError, "before truncation"),
+        ):
+            download(
+                self.url,
+                self.destination,
+                expected_size=6,
+                max_attempts=1,
+                opener=lambda *a, **k: Response(
+                    b"newnew", **{"ETag": '"new"', "Content-Length": "6"}
+                ),
+            )
+        self.assertEqual(partial.read_bytes(), b"old")
+        self.assertEqual(
+            json.loads(partial.with_suffix(".part.http.json").read_text())["validator"], '"old"'
+        )
+
+    def test_interrupted_metadata_replace_keeps_the_previous_valid_resume_state(self):
+        partial = self.partial()
+        original_replace = Path.replace
+
+        def interrupt(path, target):
+            if path.name.endswith(".http.json.tmp"):
+                raise OSError("interrupted metadata replace")
+            return original_replace(path, target)
+
+        def response(*args, **kwargs):
+            return Response(
+                b"end", status=206, **{"ETag": '"old"', "Content-Range": "bytes 3-5/6"}
+            )
+
+        with (
+            patch.object(Path, "replace", interrupt),
+            self.assertRaisesRegex(OSError, "metadata replace"),
+        ):
+            download(self.url, self.destination, opener=response, expected_size=6, max_attempts=1)
+        self.assertEqual(partial.read_bytes(), b"old")
+        self.assertEqual(
+            json.loads(partial.with_suffix(".part.http.json").read_text())["validator"], '"old"'
+        )
+        download(self.url, self.destination, opener=response, expected_size=6)
+        self.assertEqual(self.destination.read_bytes(), b"oldend")
+
     def test_oversized_body_never_exceeds_its_reservation_or_commits_a_prefix(self):
         with self.assertRaisesRegex(ValueError, "exceeds expected"):
             download(
