@@ -147,7 +147,7 @@ def roles_digest(path):
 
 
 def profile_report(profile):
-    stats = pstats.Stats(profile)
+    stats = pstats.Stats(str(profile))
     groups = {
         "bz2_decompression": lambda file, name: "decompress" in name and "BZ2" in name,
         "json_decode": lambda file, name: (
@@ -176,8 +176,12 @@ def profile_report(profile):
                 )
         result[group] = rows
     with profile.with_suffix(".txt").open("w", encoding="utf-8") as stream:
-        pstats.Stats(profile, stream=stream).strip_dirs().sort_stats("cumulative").print_stats(60)
-        pstats.Stats(profile, stream=stream).strip_dirs().sort_stats("tottime").print_stats(60)
+        pstats.Stats(str(profile), stream=stream).strip_dirs().sort_stats(
+            "cumulative"
+        ).print_stats(60)
+        pstats.Stats(str(profile), stream=stream).strip_dirs().sort_stats("tottime").print_stats(
+            60
+        )
     return result
 
 
@@ -201,7 +205,9 @@ def worker(spec):
     started = time.perf_counter()
     if profile:
         profile.enable()
-    info = ripe._build_role_part(root / "input.bz2", part, metadata, window, apply_window=True)
+    # Daily dumps are selected by slot upstream; their reusable production parts
+    # deliberately do not apply a second per-record campaign-window filter.
+    info = ripe._build_role_part(root / "input.bz2", part, metadata, window, apply_window=False)
     if profile:
         profile.disable()
     elapsed = time.perf_counter() - started
@@ -220,6 +226,7 @@ def worker(spec):
         "traces": info["traces"],
         "skipped_non_ipv4": info["skipped_non_ipv4"],
         "skipped_outside_window": info["skipped_outside_window"],
+        "window_filter_applied": info["window_filter_applied"],
         "roles_sha256": canonical,
         "parquet_bytes": part.stat().st_size,
         "source_sha256": info["source_sha256"],

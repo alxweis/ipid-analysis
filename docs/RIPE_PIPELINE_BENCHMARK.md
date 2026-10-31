@@ -51,6 +51,13 @@ several hours for a full dump; these are single-parser trials, not the productio
 three/four-parser workload. For a preliminary two-trial check use `--repeats 1`.
 Do not treat that preliminary pair as a stable performance estimate.
 
+The window arguments document the campaign context passed to the production
+function. As in production's `daily-dumps` mode, `apply_window=False`: hourly
+inputs are selected upstream, and reusable parts do not additionally filter each
+record by the campaign window. The benchmark does not silently switch to the
+different API/local-input filtering semantics. Use a daily dump selected for the
+intended window; the benchmark does not perform automatic slot selection.
+
 ## Isolation and budgets
 
 - Persistent diagnostics and the optional downloaded source stay in a dedicated

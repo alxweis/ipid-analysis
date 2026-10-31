@@ -1,4 +1,5 @@
 import bz2
+import cProfile
 import hashlib
 import json
 import os
@@ -16,6 +17,20 @@ import pyarrow.parquet as pq
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_profile_report_accepts_path_and_reports_decode_functions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = Path(temporary) / "decode.pstats"
+            data = bz2.compress(b'{"af": 4}')
+            profiler = cProfile.Profile()
+            profiler.enable()
+            json.loads(bz2.decompress(data))
+            profiler.disable()
+            profiler.dump_stats(profile)
+            report = bench.profile_report(profile)
+            self.assertTrue(report["bz2_decompression"])
+            self.assertTrue(report["json_decode"])
+            self.assertIn("function calls", profile.with_suffix(".txt").read_text())
+
     def test_workspace_monitor_tolerates_concurrent_temporary_file_removal(self):
         root, item = unittest.mock.Mock(), unittest.mock.Mock()
         root.rglob.return_value = [item]
@@ -323,7 +338,10 @@ class LinuxBenchmarkTests(unittest.TestCase):
             self.assertEqual(report["status"], "passed")
             self.assertEqual(len(report["results"]), 3)
             self.assertEqual(report["results"][0]["addresses"], 2)
-            self.assertEqual(report["results"][0]["traces"], 3)
+            # Production daily-dump parts do not apply a second window filter.
+            self.assertEqual(report["results"][0]["traces"], 4)
+            self.assertEqual(report["results"][0]["skipped_outside_window"], 0)
+            self.assertFalse(report["results"][0]["window_filter_applied"])
             expected = hashlib.sha256(
                 struct.pack("!IBBIBB", 0x01010101, 0, 1, 0x08080808, 1, 0)
             ).hexdigest()
