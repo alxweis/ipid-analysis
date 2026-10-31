@@ -63,8 +63,83 @@ def validate_storage() -> None:
     scratch_root()
 
 
+def ram_scratch() -> bool:
+    mode = os.environ.get("IPID_ANALYSIS_SCRATCH_STORAGE", "ram" if mounted_storage() else "disk")
+    if mode not in {"ram", "disk"}:
+        raise ValueError("IPID_ANALYSIS_SCRATCH_STORAGE must be ram or disk")
+    return mode == "ram"
+
+
+def control_root() -> Path:
+    """Small durable control files and locks; never spill or bulk downloads."""
+    return _scratch_path(
+        Path(
+            os.environ.get(
+                "IPID_ANALYSIS_CONTROL_ROOT",
+                os.environ.get("IPID_ANALYSIS_TMP_DIR", str(PROJ_ROOT / "tmp")),
+            )
+        )
+    )
+
+
+def filesystem_type(path: Path) -> str:
+    """Find the most specific Linux mount, including paths below a mount point."""
+    matches = []
+    for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        fields = line.split()
+        point = Path(fields[4].replace("\\040", " ").replace("\\134", "\\"))
+        if path == point or point in path.parents:
+            matches.append((len(point.parts), line.split(" - ", 1)[1].split()[0]))
+    return max(matches)[1] if matches else ""
+
+
+def ram_root() -> Path:
+    if os.name != "posix":
+        raise OSError("RAM scratch requires an existing Linux tmpfs filesystem")
+    identity = hashlib.sha256(str(PROJ_ROOT.resolve()).encode()).hexdigest()[:16]
+    default = Path("/dev/shm") / f"ipid-analysis-{getattr(os, 'getuid', lambda: 0)()}-{identity}"
+    root = Path(os.environ.get("IPID_ANALYSIS_RAM_DIR", str(default))).absolute()
+    if root.is_symlink() or root.is_mount():
+        raise ValueError(
+            "RAM work directory must be a dedicated directory, not a mount root or symlink"
+        )
+    if filesystem_type(root.resolve()) != "tmpfs":
+        raise OSError(f"RAM work directory must use an existing tmpfs filesystem: {root}")
+    root = _scratch_path(root)
+    if root.stat().st_uid != os.getuid():
+        raise PermissionError(f"RAM work directory must belong to the current user: {root}")
+    # A private directory on the existing tmpfs needs no mount/configuration change.
+    root.chmod(0o700)
+    return root
+
+
+def ram_limit() -> int:
+    limit = int(os.environ.get("IPID_ANALYSIS_RAM_BYTES", min(32 << 30, available_memory() // 4)))
+    if limit <= 0:
+        raise ValueError("RAM scratch budget must be positive")
+    return limit
+
+
 def scratch_root(root: Path | None = None) -> Path:
-    root = Path(root or os.environ.get("IPID_ANALYSIS_TMP_DIR", str(PROJ_ROOT / "tmp"))).resolve()
+    if ram_scratch():
+        base = ram_root()
+        result = (
+            Path(root)
+            if root is not None
+            else Path(os.environ.get("IPID_ANALYSIS_RAM_JOB_DIR", str(base)))
+        ).resolve()
+        if result != base and base not in result.parents:
+            raise ValueError("RAM scratch must be inside the configured RAM work directory")
+        if filesystem_type(result) != "tmpfs":
+            raise OSError("RAM scratch must not cross into a disk filesystem")
+        return _scratch_path(result)
+    return _scratch_path(
+        Path(root or os.environ.get("IPID_ANALYSIS_TMP_DIR", str(PROJ_ROOT / "tmp")))
+    )
+
+
+def _scratch_path(root: Path) -> Path:
+    root = root.resolve()
     if root == Path(root.anchor) or root == Path.home().resolve():
         raise ValueError("scratch must be a dedicated application directory")
     for persistent in persistent_roots():
@@ -74,7 +149,7 @@ def scratch_root(root: Path | None = None) -> Path:
             or root in persistent.resolve().parents
         ):
             raise ValueError(f"scratch must not be inside persistent storage: {root}")
-    root.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
     # An accidental scratch mount must not turn spill/locks into remote operations.
     if mounted_storage():
         ancestor = root
@@ -93,10 +168,16 @@ def scratch_root(root: Path | None = None) -> Path:
 def ripe_transfer_root() -> Path:
     """Shared local transfers, independent of a scheduled child's scratch root."""
     legacy = os.environ.get("IPID_ANALYSIS_RIPE_WORK_DIR")
-    default = Path(legacy) / "shared-transfers" if legacy else PROJ_ROOT / "tmp" / "ripe-transfers"
+    default = (
+        ram_root() / "ripe-transfers"
+        if ram_scratch()
+        else Path(legacy) / "shared-transfers"
+        if legacy
+        else PROJ_ROOT / "tmp" / "ripe-transfers"
+    )
     root = Path(os.environ.get("IPID_ANALYSIS_RIPE_TRANSFER_DIR", str(default))).resolve()
     if root == PROJ_ROOT.resolve() or (
-        mounted_storage() and PROJ_ROOT.resolve() not in root.parents
+        mounted_storage() and not ram_scratch() and PROJ_ROOT.resolve() not in root.parents
     ):
         raise ValueError(
             "RIPE transfers must be a dedicated directory inside the analysis checkout"
@@ -125,8 +206,31 @@ def directory_bytes(directory: Path) -> int:
     return total
 
 
+def scratch_free() -> int:
+    root = scratch_root()
+    if not ram_scratch():
+        return shutil.disk_usage(root).free
+    reserve = int(os.environ.get("IPID_ANALYSIS_RAM_RESERVE_BYTES", 64 << 20))
+    global_free = ram_limit() - directory_bytes(ram_root())
+    job_free = int(
+        os.environ.get("IPID_ANALYSIS_JOB_SCRATCH_BYTES", ram_limit())
+    ) - directory_bytes(root)
+    return max(0, min(global_free, job_free, shutil.disk_usage(root).free - reserve))
+
+
+def check_scratch_budget() -> None:
+    if ram_scratch() and (
+        directory_bytes(ram_root()) > ram_limit()
+        or directory_bytes(scratch_root())
+        > int(os.environ.get("IPID_ANALYSIS_JOB_SCRATCH_BYTES", ram_limit()))
+    ):
+        raise OSError("RAM scratch budget exceeded; refusing publication")
+
+
 def temporary_path(destination: Path) -> Path:
     root = scratch_root() / "artifacts"
+    if ram_scratch() and scratch_free() <= 0:
+        raise OSError("RAM scratch budget exhausted")
     root.mkdir(exist_ok=True)
     descriptor, name = tempfile.mkstemp(
         prefix=f"artifact-{os.getpid()}-", suffix=destination.suffix, dir=root
@@ -138,7 +242,8 @@ def temporary_path(destination: Path) -> Path:
 def work_path(identity: str, *, category: str = "downloads") -> Path:
     """Stable local location for resumable work; identity need not be a pathname."""
     key = hashlib.sha256(str(identity).encode()).hexdigest()
-    root = scratch_root() / category / key
+    base = control_root() if category in {"locks", "terminal", "retry"} else scratch_root()
+    root = base / category / key
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -263,8 +368,12 @@ def connect(*, config: dict | None = None):
         requested = float(match[1]) * (1024 if match[3] else 1000) ** power
         options["memory_limit"] = f"{max(1, int(min(requested, available_memory() // 2)))}B"
         options["temp_directory"] = directory
-        free = shutil.disk_usage(root).free
-        reserve = int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 1 << 30))
+        free = scratch_free()
+        reserve = (
+            0
+            if ram_scratch()
+            else int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 1 << 30))
+        )
         if free <= reserve:
             raise OSError("insufficient local scratch space")
         spill = min(
@@ -357,8 +466,12 @@ def reserve_download(bytes_needed: int):
     global _reserved
     needed = max(0, bytes_needed)
     with _reservation_lock:
-        reserve = int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 1 << 30))
-        if shutil.disk_usage(scratch_root()).free < reserve + _reserved + needed:
+        reserve = (
+            0
+            if ram_scratch()
+            else int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 1 << 30))
+        )
+        if scratch_free() < reserve + _reserved + needed:
             raise OSError("insufficient unreserved local scratch space")
         _reserved += needed
     try:

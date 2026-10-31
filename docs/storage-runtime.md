@@ -3,8 +3,10 @@
 ## Deployment contract
 
 The supported production layout is three existing rclone mounts at `data/raw`,
-`data/processed`, and `reports`, with dedicated local scratch at `tmp` below the
-repository. Nothing in this change installs, restarts, or reconfigures a mount,
+`data/processed`, and `reports`, with local control files at `tmp` below the
+repository and bounded RAM scratch on an existing tmpfs. See
+[RAM and S3 processing](RAM_S3_PROCESSING.md) for the current default, budgets,
+compatibility mode and migration. Nothing installs, restarts, or reconfigures a mount,
 changes Ansible, or migrates/deletes existing measurement objects.
 
 Use Python 3.12 and the frozen dependency set:
@@ -51,8 +53,10 @@ The worker verifies canonical URI mapping, object size through `s3cmd info`,
 and FUSE visibility before reuse; it does not download a second measurement
 copy or hydrate a missing mount. Legacy local mode retains downloads.
 
-DuckDB spills, parser parts, HTTP resume state, locks, logs while open, ZipFile
-construction, and incomplete Parquet outputs use local scratch. Completed
+In mounted-S3 mode DuckDB spills, parser parts, HTTP resume state, ZipFile
+construction and incomplete Parquet outputs use RAM scratch. Locks, task specs,
+supervisor logs and retained diagnostic logs use the local control directory.
+Explicit disk compatibility mode retains local ext4 data scratch. Completed
 artifacts are staged **one file at a time**, validated, hashed, and published.
 Local destinations use atomic replace. Remote destinations use a known-size
 `rclone copyto` through the exact remote/configuration of the owning mount.

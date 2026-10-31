@@ -80,6 +80,7 @@ class ContinentalTests(unittest.TestCase):
                 "IPID_ANALYSIS_STORAGE_MODE": "local",
                 "IPID_ANALYSIS_S3_ROOTS": "{}",
                 "IPID_ANALYSIS_TMP_DIR": str(self.root / "scratch"),
+                "IPID_ANALYSIS_CONTROL_ROOT": str(self.root / "control"),
             },
         )
         self.env.start()

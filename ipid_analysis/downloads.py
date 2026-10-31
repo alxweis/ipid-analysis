@@ -13,6 +13,8 @@ from urllib.request import Request
 
 from loguru import logger
 
+from ipid_analysis.runtime import ram_scratch, scratch_free, scratch_root
+
 
 def download(
     url: str,
@@ -26,6 +28,8 @@ def download(
 ):
     if max_attempts < 1:
         raise ValueError("max_attempts must be positive")
+    if ram_scratch():
+        scratch_root(destination.parent)  # Never silently download onto ext4 in RAM mode.
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_suffix(destination.suffix + ".part")
     state_path = partial.with_suffix(partial.suffix + ".http.json")
@@ -133,6 +137,11 @@ def download(
                             # the next call after observing an oversized body.
                             state_path.unlink(missing_ok=True)
                             raise ValueError("HTTP body exceeds expected object size")
+                        if ram_scratch():
+                            if len(chunk) > scratch_free():
+                                raise ValueError(
+                                    "HTTP transfer exceeds available RAM scratch budget"
+                                )
                         output.write(chunk)
                         received += len(chunk)
             if expected_size is None or partial.stat().st_size == expected_size:

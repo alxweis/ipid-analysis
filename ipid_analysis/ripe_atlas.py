@@ -47,8 +47,10 @@ from ipid_analysis.runtime import (
     available_memory,
     cleanup_work,
     connect,
+    control_root,
     cpu_budget,
     directory_bytes,
+    ram_scratch,
     reserve_download,
     ripe_transfer_limit,
     ripe_transfer_root,
@@ -64,6 +66,7 @@ except ImportError:  # pragma: no cover - compatibility for existing environment
     orjson = None
 
 from ipid_analysis.config import PROCESSED_STORAGE_DIR as PROCESSED_DATA_DIR
+from ipid_analysis.config import PROJ_ROOT
 from ipid_analysis.config import RAW_STORAGE_DIR as RAW_DATA_DIR
 from ipid_analysis.ripe_bitmaps import ROLE_SCHEMA, RoleBitmaps, trace_roles
 from ipid_analysis.ripe_cache import RoleCache, read_metadata, validate_roles
@@ -497,6 +500,9 @@ def _download(
     )
     if local != destination:
         publish_file(result, destination, parameters={"source_url": url})
+        if ram_scratch():
+            result.unlink(missing_ok=True)
+            return destination
     return result
 
 
@@ -703,12 +709,14 @@ def _cached_role_part(part: Path, metadata: Path) -> dict | None:
 def _cache_lock_path(identity: str, name: str) -> Path:
     # Unlike work_path(), this does not follow the scheduled job's TMP_DIR.
     key = hashlib.sha256(identity.encode()).hexdigest()
-    return ripe_transfer_root() / "locks" / f"{key}-{name}"
+    root = (Path(os.environ.get("IPID_ANALYSIS_CONTROL_ROOT", str(PROJ_ROOT / "tmp"))) / "ripe-locks"
+            if ram_scratch() else ripe_transfer_root() / "locks")
+    return root / f"{key}-{name}"
 
 
 def _prune_stale_cache_locks() -> None:
     """The preparation owner reclaims dead owners from older window/part keys."""
-    for path in (ripe_transfer_root() / "locks").glob("*.lock"):
+    for path in _cache_lock_path("ripe-resources", "resources.lock").parent.glob("*.lock"):
         if path.is_symlink() or not re.fullmatch(
             "[a-f0-9]{64}-(part|prepare|resources)\\.lock", path.name
         ):
@@ -1067,7 +1075,8 @@ def _daily_dump_files(
                 _release_transfer(transfers.root / "downloads" / identity / filename)
                 logger.info(f"reusing processed RIPE hour: {filename}")
                 return part
-        existing = Path(raw_root) / "ripe-atlas" / "daily-dumps" / day / filename
+        raw_destination = Path(raw_root) / "ripe-atlas" / "daily-dumps" / day / filename
+        existing = raw_destination
         # Keep the explicitly configured legacy download directory usable, but
         # new transfers always use the bounded, job-independent local area.
         legacy = (
@@ -1081,6 +1090,10 @@ def _daily_dump_files(
         )
         if not existing.is_file() and legacy.is_file():
             existing = legacy
+        if ram_scratch() and not existing.is_file():
+            old = control_root() / "ripe-transfers" / "downloads" / identity / filename
+            if old.is_file():
+                existing = old  # Read-only reuse of complete pre-upgrade downloads.
         destination = (
             existing if existing.is_file() else transfers.root / "downloads" / identity / filename
         )
@@ -1120,6 +1133,13 @@ def _daily_dump_files(
             destination.parent.mkdir(parents=True, exist_ok=True)
             source_path = _download(url, destination, expected_size=expected_size)
         logger.info(f"RIPE download ready: {filename} ({time.monotonic() - started:.1f}s)")
+        if ram_scratch():
+            # Keep reusable downloads in the existing global raw namespace.
+            # Publish only a complete, validated RAM file; never stream a partial
+            # HTTP response into the canonical S3 object.
+            publish_file(source_path, raw_destination, parameters={"source_url": url})
+            _release_transfer(source_path)
+            return raw_destination, identity, False
         return source_path, identity, True
 
     def inputs():

@@ -72,6 +72,7 @@ from ipid_analysis.runtime import (
     cleanup_current_artifacts,
     cleanup_work,
     connect,
+    control_root,
     exclusive_lock,
     mounted_storage,
     scratch_root,
@@ -1359,7 +1360,7 @@ def retry_failed_request(client: S3Client, request_uri: str, s3_prefix: str) -> 
     if "/enrichments/os/" in request_uri:
         root = work_path(request_uri, category="retry")
         if retry_enrichment(client, request_uri, s3_prefix, root):
-            cleanup_work(root)
+            cleanup_work(root, root=control_root() / "retry")
             return
         raise ValueError("retry needs a canonical enrichment request URI")
     from ipid_analysis.continental import campaign_parts
@@ -1382,7 +1383,7 @@ def retry_failed_request(client: S3Client, request_uri: str, s3_prefix: str) -> 
             client.download(job+"/failed.json", failure)
             client.upload(failure, job+"/attempts/"+str(time.time_ns())+"/failed.json")
             client.delete_failure(job+"/failed.json")
-            cleanup_work(root)
+            cleanup_work(root, root=control_root() / "retry")
             return
     prefix = s3_prefix.rstrip("/") + "/"
     if not request_uri.startswith(prefix):
@@ -1418,7 +1419,7 @@ def retry_failed_request(client: S3Client, request_uri: str, s3_prefix: str) -> 
     attempt = str(time.time_ns())
     client.upload(failure, job_prefix + "/attempts/" + attempt + "/failed.json")
     client.delete_failure(job_prefix + "/failed.json")
-    cleanup_work(root)
+    cleanup_work(root, root=control_root() / "retry")
 
 
 @app.command()
@@ -1456,8 +1457,8 @@ def main(
             raise typer.BadParameter(
                 "mounted-s3 requires an explicit raw URI in IPID_ANALYSIS_S3_ROOTS before accepting jobs"
             )
-    work_root = work_root or scratch_root() / "workflow"
-    if mounted_storage() and scratch_root() not in work_root.resolve().parents:
+    work_root = work_root or control_root() / "workflow"
+    if mounted_storage() and control_root() not in work_root.resolve().parents:
         raise ValueError("mounted-s3 worker work-root must be under local scratch")
     client = S3Client()
     with exclusive_lock("workflow-worker", timeout_seconds=0):
@@ -1469,6 +1470,10 @@ def main(
             return
         if scheduling != "sequential":
             raise ValueError("scheduling must be scheduled or sequential")
+        from ipid_analysis.runtime import ram_scratch
+
+        if ram_scratch():
+            work_root = scratch_root() / "workflow"
         while True:
             listing_errors = []
             for handler, category, options in (
