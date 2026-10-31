@@ -1,6 +1,7 @@
 import bz2
 import cProfile
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,84 @@ import pyarrow.parquet as pq
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_url_entry_downloads_once_with_real_downloader_before_trials(self):
+        from ipid_analysis import downloads, runtime
+
+        body = bz2.compress(b'{"af": 4}\n')
+        requests = []
+        trial_sources = []
+
+        def open_http(request, *, timeout):
+            requests.append((request.get_method(), timeout))
+            response = io.BytesIO(b"" if request.get_method() == "HEAD" else body)
+            response.status = 200
+            response.headers = {"Content-Length": str(len(body)), "ETag": '"fixture"'}
+            return response
+
+        def trial(spec, *args):
+            trial_sources.append((Path(spec["workspace"]) / "input.bz2").read_bytes())
+            return dict(
+                source_sha256=hashlib.sha256(body).hexdigest(),
+                roles_sha256="roles",
+                addresses=1,
+                traces=1,
+                skipped_non_ipv4=0,
+                skipped_outside_window=0,
+                profiled=False,
+                wall_seconds=1,
+            )
+
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ):
+            root = Path(temporary)
+            work, ram = root / "tmp" / "benchmarks", root / "ram"
+            ram.mkdir()
+            with (
+                patch.object(sys, "platform", "linux"),
+                patch.object(bench, "PROJECT", root),
+                patch.object(
+                    bench, "filesystem", side_effect=lambda p: "tmpfs" if p == ram else "ext4"
+                ),
+                patch.object(
+                    bench.shutil,
+                    "disk_usage",
+                    return_value=unittest.mock.Mock(free=100 * bench.GIB),
+                ),
+                patch.object(runtime, "available_memory", return_value=100 * bench.GIB),
+                patch.object(os, "sched_getaffinity", return_value={0}, create=True),
+                patch.object(os, "posix_fadvise", create=True),
+                patch.object(os, "POSIX_FADV_DONTNEED", 4, create=True),
+                patch.object(bench, "swap_pages", return_value={"pswpin": 0, "pswpout": 0}),
+                patch("urllib.request.urlopen", side_effect=open_http) as opener,
+                patch.object(downloads, "download", wraps=downloads.download) as download,
+                patch.object(bench, "run_trial", side_effect=trial),
+            ):
+                bench.main(
+                    [
+                        "--url",
+                        "https://data-store.ripe.net/datasets/atlas-daily-dumps/"
+                        "2026-10-03/traceroute-2026-10-03T0000.bz2",
+                        "--window-start",
+                        "2026-10-02",
+                        "--window-end",
+                        "2026-10-30",
+                        "--work-dir",
+                        str(work),
+                        "--ram-dir",
+                        str(ram),
+                        "--repeats",
+                        "1",
+                    ]
+                )
+                download.assert_called_once()
+                self.assertIs(download.call_args.kwargs["opener"], opener)
+            self.assertEqual(requests, [("HEAD", 120), ("GET", 120)])
+            self.assertEqual(trial_sources, [body, body])
+            result_path = next(work.glob("*/results.json"))
+            report = json.loads(result_path.read_text())
+            self.assertEqual(report["status"], "passed")
+            self.assertIn("download_seconds", report)
+            self.assertEqual((result_path.parent / "source.bz2").read_bytes(), body)
+
     def test_profile_report_accepts_path_and_reports_decode_functions(self):
         with tempfile.TemporaryDirectory() as temporary:
             profile = Path(temporary) / "decode.pstats"

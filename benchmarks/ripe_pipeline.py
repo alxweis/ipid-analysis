@@ -451,7 +451,7 @@ def main(argv=None):
             if not 0 < size < workspace:
                 raise ValueError("dump exceeds workspace cap")
             started = time.perf_counter()
-            download(args.url, source, expected_size=size)
+            download(args.url, source, opener=urlopen, expected_size=size)
             report["download_seconds"] = time.perf_counter() - started
         if (
             not source.is_file()
