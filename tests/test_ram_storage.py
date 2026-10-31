@@ -93,6 +93,7 @@ class RamStorageTests(unittest.TestCase):
                 "IPID_ANALYSIS_RAM_JOB_DIR": str(self.ram / "job"),
                 "IPID_ANALYSIS_TMP_DIR": str(self.root / "control"),
                 "IPID_ANALYSIS_CONTROL_ROOT": str(self.root / "control"),
+                "IPID_ANALYSIS_LOCK_DIR": str(self.root / "control" / "locks"),
             },
         )
         self.environment.start()
@@ -121,6 +122,30 @@ class RamStorageTests(unittest.TestCase):
         with runtime.exclusive_lock("fixture"):
             self.assertTrue(list((runtime.control_root() / "locks").rglob("owner.lock")))
         self.assertFalse(list(runtime.control_root().rglob("*.pq")))
+
+    def test_explicit_lock_override_is_honored_outside_the_control_directory(self):
+        custom = self.root / "custom-locks"
+        with patch.dict(os.environ, {"IPID_ANALYSIS_LOCK_DIR": str(custom)}):
+            with runtime.exclusive_lock("fixture"):
+                self.assertEqual(len(list(custom.rglob("owner.lock"))), 1)
+        self.assertFalse(list(self.ram.rglob("owner.lock")))
+
+    def test_enrichment_retry_cleans_only_its_control_namespace_in_ram_mode(self):
+        from ipid_analysis.s3_workflow import retry_failed_request
+
+        uri = "s3://test/workflow/continental/campaign/enrichments/os/request.json"
+        root = runtime.work_path(uri, category="retry")
+        sentinel = runtime.control_root() / "keep.json"
+        sentinel.write_text("keep")
+        other = runtime.work_path("unrelated", category="retry")
+        (other / "keep.json").write_text("keep")
+        with patch("ipid_analysis.os_enrichment.retry", return_value=True):
+            retry_failed_request(Mock(), uri, "s3://test/workflow")
+        self.assertFalse(root.exists())
+        self.assertEqual(sentinel.read_text(), "keep")
+        self.assertTrue((other / "keep.json").exists())
+        with self.assertRaisesRegex(ValueError, "outside owned"):
+            runtime.cleanup_work(sentinel, root=runtime.control_root() / "retry")
 
     def test_job_directory_cannot_escape_ram_or_use_an_ext4_submount(self):
         with patch.dict(os.environ, {"IPID_ANALYSIS_RAM_JOB_DIR": str(self.root / "disk")}):
