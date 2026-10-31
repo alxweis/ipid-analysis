@@ -24,10 +24,17 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 
-from ipid_analysis.artifacts import assert_complete, file_digest, publish_file
+from ipid_analysis.artifacts import assert_complete, completion_path, file_digest, publish_file
 from ipid_analysis.config import RAW_STORAGE_DIR as RAW_DATA_DIR
 from ipid_analysis.downloads import download as download_http
-from ipid_analysis.runtime import connect, exclusive_lock, start_run, temporary_path, work_path
+from ipid_analysis.runtime import (
+    connect,
+    exclusive_lock,
+    ram_scratch,
+    start_run,
+    temporary_path,
+    work_path,
+)
 
 app = typer.Typer()
 
@@ -82,9 +89,17 @@ def _exclusive_lock(path: Path, timeout_seconds: float = 3600.0):
 
 
 def _download(url: str, destination: Path) -> Path:
+    if destination.is_file() and completion_path(destination).is_file():
+        info = json.loads(completion_path(destination).read_text())
+        if info.get("parameters", {}).get("source_url") == url:
+            assert_complete(destination)
+            return destination
     local = work_path(url) / destination.name
     result = download_http(url, local, opener=urlopen)
     publish_file(result, destination, parameters={"source_url": url})
+    if ram_scratch():
+        result.unlink(missing_ok=True)
+        return destination
     return result
 
 

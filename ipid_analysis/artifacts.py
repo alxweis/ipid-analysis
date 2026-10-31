@@ -19,6 +19,7 @@ import sys
 import pyarrow.parquet as pq
 
 from ipid_analysis.runtime import (
+    check_scratch_budget,
     exclusive_lock,
     mounted_storage,
     persistent_roots,
@@ -175,6 +176,7 @@ def publish_file(
     No raw or previously successful artifact is deleted by this function.
     """
     source, destination = Path(source), Path(destination)
+    check_scratch_budget()
     persistent = any(
         root.absolute() in destination.absolute().parents for root in persistent_roots()
     )

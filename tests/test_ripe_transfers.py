@@ -352,7 +352,9 @@ class SharedTransfersTest(unittest.TestCase):
 
     def test_production_transfer_path_cannot_escape_analysis_checkout(self):
         with (
-            patch.dict(os.environ, {"IPID_ANALYSIS_STORAGE_MODE": "mounted-s3"}),
+            patch.dict(os.environ, {"IPID_ANALYSIS_STORAGE_MODE": "mounted-s3",
+                                    "IPID_ANALYSIS_SCRATCH_STORAGE": "disk"}),
+            patch("ipid_analysis.runtime.PROJ_ROOT", self.root / "synthetic-checkout"),
             self.assertRaisesRegex(ValueError, "inside the analysis checkout"),
         ):
             ripe_transfer_root()

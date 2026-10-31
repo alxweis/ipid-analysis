@@ -2,6 +2,14 @@
 
 ## Transfers, cache compatibility, and budgets
 
+**Current production default:** Mounted-S3 processing now uses shared bounded
+RAM transfers and publishes completed raw downloads into S3 before parsing.
+Locks remain in the local control root. See
+[RAM and S3 processing](RAM_S3_PROCESSING.md) for budgets, overrides, migration
+and the distinction between worker restart and reboot. The historical ext4
+transfer behavior described below remains available in explicit disk mode;
+existing cache keys and the targeted backfill instructions are unchanged.
+
 The Analysis VM's default shared transfer area is
 `/mnt/data01/ipid-analysis/tmp/ripe-transfers/`. It does not follow the scheduled
 child's `IPID_ANALYSIS_TMP_DIR`. In mounted-S3 mode an override must remain

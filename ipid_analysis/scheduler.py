@@ -23,12 +23,15 @@ from loguru import logger
 from ipid_analysis.runtime import (
     available_memory,
     cleanup_work,
+    control_root,
     cpu_budget,
     directory_bytes,
     exclusive_lock,
+    ram_limit,
+    ram_root,
+    ram_scratch,
     ripe_transfer_limit,
     ripe_transfer_root,
-    scratch_root,
 )
 
 GIB = 1 << 30
@@ -205,7 +208,10 @@ class Scheduler:
         self.client, self.prefix = client, prefix.rstrip("/")
         self.root = work_root / "scheduled"
         self.root.mkdir(parents=True, exist_ok=True)
-        os.environ["IPID_ANALYSIS_LOCK_DIR"] = str(scratch_root() / "global-locks")
+        os.environ["IPID_ANALYSIS_LOCK_DIR"] = str(control_root() / "global-locks")
+        self.ram = ram_scratch()
+        self.bulk_root = ram_root() / "workflow" / "scheduled" if self.ram else self.root
+        self.bulk_root.mkdir(parents=True, exist_ok=True)
         self.batch_size = batch_size
         cpus = min(int(os.environ.get("IPID_ANALYSIS_WORKER_CPUS", cpu_budget())), cpu_budget())
         if cpus < 3:
@@ -214,14 +220,18 @@ class Scheduler:
             int(os.environ.get("IPID_ANALYSIS_WORKER_MEMORY_BYTES", available_memory() * 0.8)),
             int(available_memory() * 0.8),
         )
-        reserve = int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 10 * GIB))
+        reserve = (
+            int(os.environ.get("IPID_ANALYSIS_RAM_RESERVE_BYTES", 64 << 20))
+            if self.ram
+            else int(os.environ.get("IPID_ANALYSIS_SCRATCH_RESERVE_BYTES", 10 * GIB))
+        )
         self.transfer_root = ripe_transfer_root()
-        if self.transfer_root.stat().st_dev != self.root.stat().st_dev:
+        if self.transfer_root.stat().st_dev != self.bulk_root.stat().st_dev:
             raise ValueError(
                 "shared RIPE transfers and job scratch must use the same local filesystem"
             )
-        resident = directory_bytes(self.transfer_root)
-        free = shutil.disk_usage(self.root).free
+        resident = directory_bytes(ram_root()) if self.ram else directory_bytes(self.transfer_root)
+        free = shutil.disk_usage(self.bulk_root).free
         scratch = min(
             int(
                 os.environ.get(
@@ -230,8 +240,16 @@ class Scheduler:
             ),
             free + resident - reserve,
         )
+        if self.ram:
+            # Scratch tmpfs pages and shared downloads consume the same physical
+            # RAM as Python/Arrow/DuckDB. Reserve the whole pool before CPU jobs.
+            scratch = min(scratch, ram_limit(), memory // 4, free + resident - reserve)
+            if resident > scratch:
+                raise ValueError("retained RAM scratch exceeds the configured RAM budget")
+            memory -= scratch
+        self.ram_bytes = scratch if self.ram else 0
         self.transfer_limit = min(ripe_transfer_limit(), max(1, scratch // 8))
-        if resident > self.transfer_limit:
+        if directory_bytes(self.transfer_root) > self.transfer_limit:
             raise ValueError("retained RIPE transfers exceed their configured scratch budget")
         scratch -= self.transfer_limit
         if memory < 3 * GIB or scratch < 3 * GIB:
@@ -260,6 +278,12 @@ class Scheduler:
 
     def cost(self, task):
         return self.critical if task.priority < 10 else self.background
+
+    def scratch_directory(self, task, control_directory=None):
+        directory = (
+            self.bulk_root / task.key if self.ram else (control_directory or self.root / task.key)
+        )
+        return directory / "scratch"
 
     def admitted(self, task):
         critical = task.priority < 10
@@ -290,16 +314,28 @@ class Scheduler:
         # Pending critical reservations remain available even when a background
         # job starts first. Retained failures and unrelated disk users count too.
         reserved = sum(
-            max(0, a.cost.scratch - directory_bytes(a.directory / "scratch"))
+            max(0, a.cost.scratch - directory_bytes(self.scratch_directory(a.task, a.directory)))
             for a in self.active.values()
         )
         transfer_reserved = max(0, self.transfer_limit - directory_bytes(self.transfer_root))
+        # A restarted task may already own tmpfs files. They are included in
+        # resident usage/free space, so reserve only its remaining allocation.
+        needed = (
+            max(0, cost.scratch - directory_bytes(self.scratch_directory(task)))
+            if self.ram
+            else cost.scratch
+        )
         if (
-            shutil.disk_usage(self.root).free - self.reserve - reserved - transfer_reserved
-            < cost.scratch
+            shutil.disk_usage(self.bulk_root).free - self.reserve - reserved - transfer_reserved
+            < needed
         ):
             return False
-        if available_memory() < cost.memory:
+        if self.ram:
+            resident = directory_bytes(ram_root())
+            if resident + reserved + transfer_reserved + needed > self.ram_bytes:
+                return False
+        pending_ram = reserved + transfer_reserved + needed if self.ram else 0
+        if available_memory() < cost.memory + pending_ram:
             return False
         return True
 
@@ -319,8 +355,8 @@ class Scheduler:
             task=asdict(task),
             cost=asdict(cost),
             batch_size=self.batch_size,
-            control_root=str(scratch_root()),
-            scratch=str(directory / "scratch"),
+            control_root=str(control_root()),
+            scratch=str(self.scratch_directory(task)),
         )
         spec_path = directory / "task.json"
         spec_path.write_text(json.dumps(spec), encoding="utf-8")
@@ -334,12 +370,17 @@ class Scheduler:
             IPID_ANALYSIS_JOB_SCRATCH_BYTES=str(cost.scratch),
             IPID_ANALYSIS_DUCKDB_MEMORY=f"{cost.memory // 2}B",
             IPID_ANALYSIS_WORKFLOW_ROOT=self.prefix,
-            IPID_ANALYSIS_LOCK_DIR=str(scratch_root() / "global-locks"),
-            IPID_ANALYSIS_CONTROL_ROOT=str(scratch_root()),
+            IPID_ANALYSIS_LOCK_DIR=str(control_root() / "global-locks"),
+            IPID_ANALYSIS_CONTROL_ROOT=str(control_root()),
             IPID_ANALYSIS_RIPE_TRANSFER_DIR=str(self.transfer_root),
             IPID_ANALYSIS_RIPE_TRANSFER_BYTES=str(self.transfer_limit),
             IPID_ANALYSIS_RIPE_WORKERS=str(cost.cpus),
         )
+        if self.ram:
+            env.update(
+                IPID_ANALYSIS_RAM_JOB_DIR=spec["scratch"],
+                IPID_ANALYSIS_RAM_BYTES=str(self.ram_bytes),
+            )
         for key in (
             "OMP_NUM_THREADS",
             "OPENBLAS_NUM_THREADS",
@@ -394,12 +435,13 @@ class Scheduler:
         for key, active in list(self.active.items()):
             if active.process.poll() is None:
                 memory = process_group_usage(active.process.pid) if os.name == "posix" else 0
-                scratch = directory_bytes(active.directory / "scratch")
+                scratch = directory_bytes(self.scratch_directory(active.task, active.directory))
                 timeout = int(os.environ.get("IPID_ANALYSIS_JOB_TIMEOUT", "172800"))
                 if (
                     memory > active.cost.memory
                     or scratch > active.cost.scratch
                     or time.monotonic() - active.started > timeout
+                    or (self.ram and directory_bytes(ram_root()) > self.ram_bytes)
                 ):
                     active.failure = f"job resource limit exceeded: RSS={memory}, scratch={scratch}, timeout={timeout}"
                     self.terminate(active)
@@ -436,7 +478,7 @@ class Scheduler:
 
     def release_scratch(self, active):
         """Retain bounded diagnostic logs; reclaim only this stopped job's scratch."""
-        root = active.directory / "scratch"
+        root = self.scratch_directory(active.task, active.directory)
         if not root.is_dir() or root.is_symlink():
             return
         try:
@@ -451,7 +493,7 @@ class Scheduler:
                         source.seek(max(0, path.stat().st_size - (10 << 20)))
                         with (diagnostics / f"{name}-{path.name}").open("wb") as output:
                             shutil.copyfileobj(source, output)
-                cleanup_work(root, root=active.directory)
+                cleanup_work(root, root=root.parent)
         except OSError:
             logger.exception(f"stopped job scratch retained for local maintenance: {root}")
 

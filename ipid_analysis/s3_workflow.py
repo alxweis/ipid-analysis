@@ -1456,8 +1456,10 @@ def main(
             raise typer.BadParameter(
                 "mounted-s3 requires an explicit raw URI in IPID_ANALYSIS_S3_ROOTS before accepting jobs"
             )
-    work_root = work_root or scratch_root() / "workflow"
-    if mounted_storage() and scratch_root() not in work_root.resolve().parents:
+    from ipid_analysis.runtime import control_root
+
+    work_root = work_root or control_root() / "workflow"
+    if mounted_storage() and control_root() not in work_root.resolve().parents:
         raise ValueError("mounted-s3 worker work-root must be under local scratch")
     client = S3Client()
     with exclusive_lock("workflow-worker", timeout_seconds=0):
@@ -1469,6 +1471,10 @@ def main(
             return
         if scheduling != "sequential":
             raise ValueError("scheduling must be scheduled or sequential")
+        from ipid_analysis.runtime import ram_scratch
+
+        if ram_scratch():
+            work_root = scratch_root() / "workflow"
         while True:
             listing_errors = []
             for handler, category, options in (

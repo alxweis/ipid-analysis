@@ -5,6 +5,11 @@ and the outstanding benchmark matrix are documented in
 [docs/storage-runtime.md](docs/storage-runtime.md). The worker now defaults to
 `mounted-s3`; configure the explicit URI mapping before starting it.
 
+In mounted-S3 mode, bulk temporary outputs, downloads and DuckDB spill now use
+bounded RAM scratch on an existing tmpfs. Local `tmp` retains controls/locks and
+diagnostic logs. See [RAM and S3 processing](docs/RAM_S3_PROCESSING.md) for memory
+accounting, migration, explicit disk compatibility and restart limitations.
+
 For an opt-in comparison of the production RIPE parser on ext4 and RAM, see
 [RIPE parser benchmark](docs/RIPE_PIPELINE_BENCHMARK.md). It includes the Analysis-VM
 commands, resource limits, cache caveats, and interpretation of the profiling results.
@@ -323,14 +328,16 @@ the textual `IP_ADDR` column for existing plot joins. DuckDB merges flags with
 `bool_or`, using four threads and an 8GB memory limit by default. Parquet is
 internally compressed, not wrapped in another compressed stream.
 
-New raw hourly downloads use the shared, bounded local transfer area
-`tmp/ripe-transfers`, independently of scheduled jobs' scratch directories.
-`IPID_ANALYSIS_RIPE_TRANSFER_DIR` can select another dedicated local directory
-inside the analysis checkout. The legacy `IPID_ANALYSIS_RIPE_WORK_DIR` selects
-its `shared-transfers` subdirectory and existing files in its old layout remain
-usable. Completed raw transfers are removed only after their processed part is
-committed. Failed transfers retain HTTP resume state across jobs and restarts,
-subject to the bounded area's eviction of inactive older-window transfers.
+In mounted-S3 mode new raw hourly downloads use shared, bounded RAM transfers,
+independently of scheduled jobs' scratch directories. Complete downloads are
+published in the shared S3 raw namespace before their RAM copy is reclaimed;
+parsers then read that persistent object. HTTP partials can resume while tmpfs
+survives, including across worker restarts. They do not survive VM reboots.
+Shared RIPE locks remain local under the stable control root. In explicit disk
+compatibility mode transfers retain the historical `tmp/ripe-transfers` default
+and legacy `IPID_ANALYSIS_RIPE_WORK_DIR/shared-transfers` behavior. Existing valid
+parts/windows and raw objects remain reusable. See the RAM processing guide for
+override requirements and read-only reuse of old complete ext4 downloads.
 Existing raw files below the following directory are reused and never removed:
 
 RIPE exposes these dumps as a rolling archive. Preparation reads the public
