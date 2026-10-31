@@ -5,6 +5,10 @@ and the outstanding benchmark matrix are documented in
 [docs/storage-runtime.md](docs/storage-runtime.md). The worker now defaults to
 `mounted-s3`; configure the explicit URI mapping before starting it.
 
+For an opt-in comparison of the production RIPE parser on ext4 and RAM, see
+[RIPE parser benchmark](docs/RIPE_PIPELINE_BENCHMARK.md). It includes the Analysis-VM
+commands, resource limits, cache caveats, and interpretation of the profiling results.
+
 ## Inter-protocol measurement outcomes
 
 New campaigns use the v2 manifest produced by `ipid-measure`. Update the analysis
