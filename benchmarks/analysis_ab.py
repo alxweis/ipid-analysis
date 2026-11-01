@@ -424,7 +424,7 @@ def equivalence(inventories):
     return True
 
 
-def worker(spec):
+def configure_paths(spec):
     sys.path.insert(0, spec["tree"])
     import ipid_analysis.config as config
 
@@ -439,6 +439,19 @@ def worker(spec):
     config.PROCESSED_DATA_DIR = Path(spec["processed"])
     config.REPORTS_DIR = Path(spec["reports"])
     config.FIGURES_DIR = config.REPORTS_DIR / "figures"
+    from ipid_analysis import runtime
+
+    # Classic (empty-scope) runtimes otherwise mistake redirected output folders
+    # for mount points. Bind the physical roots before artifacts/transport import
+    # this function; preserve the original validation and native publication.
+    roots = (config.RAW_STORAGE_DIR, config.PROCESSED_STORAGE_DIR, config.REPORTS_STORAGE_DIR)
+    runtime.persistent_roots = lambda: roots
+    return config
+
+
+def worker(spec):
+    config = configure_paths(spec)
+    repo = Path(spec["repo"])
     control = Path(spec["control"])
     if spec["mode"] == "trial":
         # Create only fresh diagnostic roots before enabling the narrower child

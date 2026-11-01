@@ -116,6 +116,11 @@ invocation uses fresh paths; it does not overwrite/resume previous diagnostics.
   cache transport is disabled to prevent any canonical cache write or restore.
   Full input hashing precedes timing and warms reads equally; a genuinely cold
   hypervisor/network cache is neither requested nor claimed.
+- Inside each diagnostic child, persistent roots are bound to the three actual
+  mount points before publication modules are imported. Trial result directories
+  are children of those mounts, not mount points themselves. This also applies
+  to classic requests with an empty scope. The historical mount validation and
+  native rclone mount discovery remain active; no production runtime is edited.
 - New output objects go only to `data/processed/.ipid-analysis-tests/analysis-ab-<uuid>/<trial>/`
   and `reports/.ipid-analysis-tests/analysis-ab-<uuid>/<trial>/` on the existing
   mounts. Existing objects are never deleted or used as benchmark destinations.

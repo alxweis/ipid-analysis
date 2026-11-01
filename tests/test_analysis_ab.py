@@ -457,6 +457,78 @@ def warm_fixture(repo, protocol="tcp", scope="continental/fixture/as"):
     return scope, request, manifest
 
 
+class HistoricalMountRootsTest(unittest.TestCase):
+    def test_mounted_storage_uses_real_roots_and_rejects_missing_mounts(self):
+        script = r"""
+import json
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+from benchmarks import analysis_ab as ab
+spec = json.loads(sys.argv[2])
+config = ab.configure_paths(spec)
+from ipid_analysis import artifacts, runtime, transport
+
+repo = Path(spec["repo"])
+roots = (repo / "data/raw", repo / "data/processed", repo / "reports")
+assert config.SCOPE == spec["scope"]
+assert config.RAW_DATA_DIR == roots[0] / spec["scope"]
+assert config.PROCESSED_DATA_DIR == Path(spec["processed"])
+assert config.REPORTS_DIR == Path(spec["reports"])
+assert config.PROCESSED_DATA_DIR not in roots
+assert config.REPORTS_DIR not in roots
+assert runtime.mounted_storage()
+for module in (runtime, artifacts, transport):
+    assert module.persistent_roots() == roots, module.__name__
+with patch.object(Path, "is_mount", autospec=True, side_effect=lambda p: p in roots) as mounts:
+    with patch.object(runtime, "scratch_root") as scratch:
+        runtime.validate_storage()
+        scratch.assert_called_once_with()
+    assert tuple(call.args[0] for call in mounts.call_args_list) == roots
+for missing in roots:
+    with patch.object(Path, "is_mount", autospec=True,
+                      side_effect=lambda p: p in roots and p != missing):
+        with patch.object(runtime, "scratch_root", side_effect=AssertionError("scratch touched")):
+            try:
+                runtime.validate_storage()
+            except OSError as exc:
+                assert str(missing) in str(exc)
+            else:
+                raise AssertionError("missing real mount accepted")
+"""
+        with tempfile.TemporaryDirectory(dir=ab.PROJECT.parent) as temporary:
+            root = Path(temporary)
+            for label, revision in ab.PINS.items():
+                source = root / label
+                ab.export_tree(ab.PROJECT, revision, source)
+                for scope in ("", "continental/fixture/as"):
+                    with self.subTest(label=label, scope=scope):
+                        spec = dict(
+                            tree=str(source),
+                            repo=str(root / "live"),
+                            scope=scope,
+                            processed=str(root / "live/data/processed/.ipid-analysis-tests/trial"),
+                            reports=str(root / "live/reports/.ipid-analysis-tests/trial"),
+                        )
+                        env = dict(
+                            os.environ,
+                            PYTHON_DOTENV_DISABLED="1",
+                            IPID_ANALYSIS_STORAGE_MODE="mounted-s3",
+                            IPID_ANALYSIS_SCOPE=scope,
+                        )
+                        result = subprocess.run(
+                            [sys.executable, "-c", script, str(ab.PROJECT), json.dumps(spec)],
+                            cwd=source,
+                            env=env,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 @unittest.skipUnless(sys.platform == "linux", "real historical Linux subprocess integration")
 class HistoricalAnalysisABTest(unittest.TestCase):
     def test_both_pinned_sources_run_real_warm_no_os_pipeline_and_match(self):
