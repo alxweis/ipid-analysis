@@ -462,7 +462,17 @@ def worker(spec):
 
     instrument_science(postprocess, timings)
     request_data = json.loads(Path(spec["request"]).read_text())
-    request = s3_workflow.AnalysisRequest(**request_data)
+    request = s3_workflow.AnalysisRequest.parse(request_data, spec["workflow"])
+    if request.job_id != spec["job"]:
+        raise ValueError("request job does not match its URI")
+    for field, directory in (("zmap_prefix", "zmap"), ("ipid_prefix", "ipid")):
+        expected = "/".join(
+            part
+            for part in (spec["s3_roots"]["raw"].rstrip("/"), spec["scope"], directory)
+            if part
+        )
+        if getattr(request, field).rstrip("/") != expected:
+            raise ValueError(f"request {field} does not match its raw scope")
     manifest = load_manifest(Path(spec["manifest"]))
     s3_workflow.validate_analysis_manifest(manifest, request)
     paths = set()
@@ -775,6 +785,25 @@ def mount_remote(root):
     raise RuntimeError(f"cannot identify same-user rclone mount: {root}")
 
 
+def request_location(uri):
+    """Bind classic/geographic request paths to their canonical raw scope."""
+    match = re.fullmatch(
+        r"(s3://[^\s]+?)(?:/continental/([A-Za-z0-9][A-Za-z0-9_-]{0,79})/sites/(eu|as|af|na|sa|au))?"
+        r"/analysis-jobs/((?:icmp|tcp-80|udp-dns-53)_[A-Za-z0-9_.-]+)/request\.json",
+        uri,
+    )
+    if not match:
+        raise ValueError("requires a classic or Geographic ICMP/TCP/UDP analysis request")
+    root, campaign, site, job = match.groups()
+    if any(
+        part in {".", "..", "continental", "sites", "analysis-jobs"}
+        for part in root.removeprefix("s3://").split("/")
+    ):
+        raise ValueError("invalid workflow root or Geographic request path")
+    workflow = root + (f"/continental/{campaign}/sites/{site}" if campaign else "")
+    return workflow, f"continental/{campaign}/{site}" if campaign else "", job
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -801,13 +830,10 @@ def main(argv=None):
         or not 1 <= args.scratch_gib <= 32
     ):
         parser.error("invalid CPU/RAM/scratch budget")
-    match = re.fullmatch(
-        r"(s3://[^\s]+?)/continental/([A-Za-z0-9][A-Za-z0-9_-]{0,79})/sites/(eu|as|af|na|sa|au)/analysis-jobs/(tcp-80_[A-Za-z0-9_.-]+)/request.json",
-        args.request_uri,
-    )
-    if not match:
-        parser.error("requires a Geographic TCP analysis request")
-    workflow, campaign, site, job = match.groups()
+    try:
+        workflow, scope, job = request_location(args.request_uri)
+    except ValueError as exc:
+        parser.error(str(exc))
     roots = json.loads(os.environ.get("IPID_ANALYSIS_S3_ROOTS", "{}"))
     if set(roots) != {"raw", "processed", "reports"}:
         parser.error("set IPID_ANALYSIS_S3_ROOTS to the existing three mounted S3 roots")
@@ -851,7 +877,9 @@ def main(argv=None):
         cpus = sorted(os.sched_getaffinity(0))[: args.cpus]
         common = dict(
             repo=str(repo),
-            scope=f"continental/{campaign}/{site}",
+            scope=scope,
+            workflow=workflow,
+            job=job,
             request=str(request_path),
             manifest=str(manifest_path),
             s3_roots=roots,

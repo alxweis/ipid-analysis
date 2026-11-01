@@ -74,6 +74,28 @@ class AnalysisABTests(unittest.TestCase):
         self.assertEqual(ab.PINS["A"], "b6e142c7de41d9c6c4a5c8f4515e82abeccc97ed")
         self.assertEqual(ab.PINS["B"], "68edad13e3b0f5a4e765f8c071dea8dc2e65a0a0")
 
+    def test_request_location_binds_classic_and_geographic_scopes(self):
+        root = "s3://bucket:owner/workflow"
+        for payload in ("icmp", "tcp-80", "udp-dns-53"):
+            job = payload + "_2026-10-31_17-19-06"
+            for site in (None, "eu", "as", "af", "na", "sa", "au"):
+                workflow = root + (f"/continental/test/sites/{site}" if site else "")
+                with self.subTest(payload=payload, site=site):
+                    self.assertEqual(
+                        ab.request_location(f"{workflow}/analysis-jobs/{job}/request.json"),
+                        (workflow, f"continental/test/{site}" if site else "", job),
+                    )
+        for invalid in (
+            root + "/continental/test/sites/xx/analysis-jobs/icmp_x/request.json",
+            root + "/continental/../sites/as/analysis-jobs/icmp_x/request.json",
+            root + "/../analysis-jobs/icmp_x/request.json",
+            root + "/analysis-jobs/icmp_x/requestXjson",
+            root + "/analysis-jobs/icmp_x/request.json/extra",
+            root + "/analysis-jobs/os_x/request.json",
+        ):
+            with self.subTest(uri=invalid), self.assertRaises(ValueError):
+                ab.request_location(invalid)
+
     def test_exported_source_closes_archive_pipe(self):
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "source"
@@ -175,6 +197,7 @@ class AnalysisABTests(unittest.TestCase):
             {
                 "IPID_ANALYSIS_FORCE": "1",
                 "IPID_ANALYSIS_S3_PREFIX": "s3://production/jobs",
+                "IPID_ANALYSIS_SCOPE": "continental/old/eu",
                 "IPID_MAXMIND_DB": "/old/mmdb",
             },
         ):
@@ -186,6 +209,9 @@ class AnalysisABTests(unittest.TestCase):
         self.assertEqual(env["IPID_ANALYSIS_SCRATCH_STORAGE"], "ram")
         self.assertEqual(env["IPID_ANALYSIS_TMP_DIR"], "/disk")
         self.assertEqual(env["TMPDIR"], "/ram")
+        spec["scope"] = ""
+        with patch.dict(os.environ, {"IPID_ANALYSIS_SCOPE": "continental/old/eu"}):
+            self.assertEqual(ab.environment(spec)["IPID_ANALYSIS_SCOPE"], "")
 
     def test_rclone_allowlist_accepts_only_test_copyto_destination(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -297,11 +323,11 @@ class AnalysisABTests(unittest.TestCase):
                     pass
 
 
-def warm_fixture(repo):
-    """Small real TCP workflow with cached external datasets, never network."""
-    scope = "continental/fixture/as"
+def warm_fixture(repo, protocol="tcp", scope="continental/fixture/as"):
+    """Small real workflow with cached external datasets, never network."""
     raw = repo / "data/raw" / scope
-    job = "tcp-80_2026-10-31_17-19-14"
+    payload = "tcp-80" if protocol == "tcp" else "icmp"
+    job = payload + "_2026-10-31_17-19-14"
     ips = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
     variants = {}
     for index, (mode, interval, scale, requests) in enumerate(
@@ -313,7 +339,9 @@ def warm_fixture(repo):
             ("connection", "fixed-interval", "base", 4),
         )
     ):
-        name = f"tcp-80_2026-10-31_17-20-{index:02}"
+        if mode == "connection" and protocol != "tcp":
+            continue
+        name = f"{payload}_2026-10-31_17-20-{index:02}"
         variants.setdefault(mode, {}).setdefault(interval, {})[scale] = name
         directory = raw / "ipid" / name
         directory.mkdir(parents=True)
@@ -369,16 +397,18 @@ def warm_fixture(repo):
     pq.write_table(
         pa.table(dict(IP_ADDR=ips, REPLY_TYPE=["synack", "synack", "rst"])), zmap / "zmap.pq"
     )
-    manifest = dict(tcp=dict(zmap=job, os_status="not_requested", ipid=variants))
-    request_base = f"s3://test/workflow/continental/fixture/sites/as/analysis-jobs/{job}"
+    manifest = {protocol: dict(zmap=job, os_status="not_requested", ipid=variants)}
+    workflow = "s3://test/workflow" + ("/continental/fixture/sites/as" if scope else "")
+    request_base = f"{workflow}/analysis-jobs/{job}"
+    raw_prefix = "s3://test/raw" + ("/" + scope if scope else "")
     request = dict(
         version=1,
         job_id=job,
-        protocol="tcp",
+        protocol=protocol,
         manifest_uri=request_base + "/manifest.json",
-        zmap_prefix="s3://test/raw/" + scope + "/zmap",
+        zmap_prefix=raw_prefix + "/zmap/",
         os_prefix="",
-        ipid_prefix="s3://test/raw/" + scope + "/ipid",
+        ipid_prefix=raw_prefix + "/ipid/",
         done_uri=request_base + "/done.json",
         failed_uri=request_base + "/failed.json",
         created_at="2026-10-31T17:19:14Z",
@@ -430,6 +460,12 @@ def warm_fixture(repo):
 @unittest.skipUnless(sys.platform == "linux", "real historical Linux subprocess integration")
 class HistoricalAnalysisABTest(unittest.TestCase):
     def test_both_pinned_sources_run_real_warm_no_os_pipeline_and_match(self):
+        self.run_pipeline("tcp", "continental/fixture/as")
+
+    def test_both_pinned_sources_run_classic_icmp_no_os_pipeline_and_match(self):
+        self.run_pipeline("icmp", "")
+
+    def run_pipeline(self, protocol, scope):
         # CI fetches full history. Historical integration must not silently use
         # current sources when a pinned revision is absent.
         for pin in ab.PINS.values():
@@ -442,7 +478,11 @@ class HistoricalAnalysisABTest(unittest.TestCase):
             root = Path(temporary)
             repo = root / "live"
             repo.mkdir()
-            scope, request, manifest = warm_fixture(repo)
+            scope, request, manifest = warm_fixture(repo, protocol, scope)
+            workflow, bound_scope, job = ab.request_location(
+                request["manifest_uri"].removesuffix("manifest.json") + "request.json"
+            )
+            self.assertEqual(bound_scope, scope)
             request_path, manifest_path = root / "request.json", root / "manifest.json"
             request_path.write_text(json.dumps(request))
             manifest_path.write_text(json.dumps(manifest))
@@ -464,6 +504,8 @@ class HistoricalAnalysisABTest(unittest.TestCase):
                     revision=ab.PINS[label],
                     mode=mode,
                     scope=scope,
+                    workflow=workflow,
+                    job=job,
                     request=str(request_path),
                     manifest=str(manifest_path),
                     control=str(root / name / "control"),
@@ -483,6 +525,18 @@ class HistoricalAnalysisABTest(unittest.TestCase):
                     memory_limit=4 * ab.GIB,
                     test_local=True,
                 )
+                if mode == "preflight" and protocol == "icmp":
+                    for changes, message in (
+                        ({"protocol": "tcp"}, "does not match job id"),
+                        ({"done_uri": "s3://test/other/done.json"}, "canonical S3 location"),
+                        ({"ipid_prefix": "s3://test/raw/continental/other/eu/ipid"}, "raw scope"),
+                    ):
+                        with self.subTest(rejected=changes):
+                            request_path.write_text(json.dumps(dict(request, **changes)))
+                            with self.assertRaises(RuntimeError):
+                                ab.run_child(spec, 180)
+                            self.assertIn(message, (Path(spec["control"]) / "run.log").read_text())
+                    request_path.write_text(json.dumps(request))
                 try:
                     ab.run_child(spec, 180)
                 except Exception:
@@ -502,7 +556,7 @@ class HistoricalAnalysisABTest(unittest.TestCase):
                 status = json.loads((control / "postprocess-status.json").read_text())
                 self.assertEqual(
                     status["optional"],
-                    dict(os={"tcp": "not_requested"}, itdk="prepared", ripe="prepared"),
+                    dict(os={protocol: "not_requested"}, itdk="prepared", ripe="prepared"),
                 )
                 events = [
                     json.loads(line)
