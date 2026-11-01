@@ -1,6 +1,6 @@
 # Warm-cache analysis A/B benchmark
 
-This opt-in Linux diagnostic replays the existing Geographic AS/TCP No-OS
+This opt-in Linux diagnostic replays classic or Geographic ICMP/TCP/UDP No-OS
 postprocessing on two pinned source packages, with one Python environment and
 fresh isolated result paths. It does not rerun IPID/ZMap measurements, submit
 worker jobs, change production completion markers, or rebuild external caches.
@@ -59,6 +59,31 @@ Inputs stay on the existing S3 mounts. Real bytes are SHA-256 checked before
 and after each trial; available completion-marker hashes must match. Missing
 or invalid warm RIPE/ITDK caches fail the diagnostic: no HTTP download, cache
 restore or cache publication is allowed.
+
+### Classic ICMP No-OS analysis
+
+To compare only the final analysis of the existing `make run-all-icmp SKIP_OS=1`
+run, pass its classic request explicitly (the default remains Geographic AS/TCP):
+
+```bash
+/mnt/data01/ipid-analysis/.venv/bin/python \
+  "$tools/benchmarks/analysis_ab.py" \
+  --repo /mnt/data01/ipid-analysis --execute --order AB \
+  --request-uri 's3://netds3o:aweis/ipid-2/analysis-workflow/analysis-jobs/icmp_2026-10-31_17-19-06/request.json'
+```
+
+Use the worker-stop, Git-fetch, mount configuration and isolation instructions
+above. Classic inputs are read from the unscoped raw root; Geographic inputs
+retain their campaign/site scope. Request IDs, protocol, canonical workflow
+references and raw prefixes are checked before reading analysis inputs. Both
+revisions replay the same manifest, including its fixed-interval repeats and
+RANDOM reproducibility analyses. OS remains explicitly `not_requested`.
+
+This measures final postprocessing, including plots and publication, with warm
+RIPE/ITDK caches. It excludes ZMap/IPID acquisition, handoffs and scheduler wait.
+It is not an end-to-end timing of `make run-all-icmp`. Missing warm caches abort
+the diagnostic rather than initiating downloads. The earlier TCP timing estimate
+is not a guarantee for this different protocol/population.
 
 Use `--order ABBA` for two trials per revision, or `--order BA` for a separate
 reverse-order screening. A single AB pair is preliminary and must not justify
