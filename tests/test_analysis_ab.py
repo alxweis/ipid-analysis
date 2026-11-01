@@ -176,6 +176,14 @@ class AnalysisABTests(unittest.TestCase):
         self.assertEqual(
             ab.scientific_json(a, [("/a", "<root>")]), ab.scientific_json(b, [("/b", "<root>")])
         )
+        self.assertEqual(
+            ab.scientific_json(
+                {"sources": {"/a/data.pq": {"size": 12, "mtime_ns": 1}}}, [("/a", "<root>")]
+            ),
+            ab.scientific_json(
+                {"sources": {"/b/data.pq": {"size": 12, "mtime_ns": 2}}}, [("/b", "<root>")]
+            ),
+        )
         inv = {"data": dict(kind="parquet", rows=2, logical_sha256="abc", schema=["IP_ADDR"])}
         self.assertTrue(ab.equivalence([inv, copy.deepcopy(inv)]))
         different = copy.deepcopy(inv)
@@ -237,11 +245,33 @@ def warm_fixture(repo):
         directory = raw / "ipid" / name
         directory.mkdir(parents=True)
         length = 4 * requests
+        values = (
+            [
+                4107,
+                15352,
+                54225,
+                34522,
+                612,
+                50201,
+                19084,
+                62820,
+                7311,
+                45002,
+                28217,
+                65100,
+                233,
+                39810,
+                16601,
+                57234,
+            ]
+            if index == 0
+            else list(range(100, 100 + length))
+        )
         pq.write_table(
             pa.table(
                 dict(
                     IP_ADDR=ips,
-                    IPID_SEQUENCE=[",".join(str(100 + i) for i in range(length))] * 3,
+                    IPID_SEQUENCE=[",".join(str(value) for value in values)] * 3,
                     SEND_TIMESTAMP_SEQUENCE=[
                         ",".join(str(1_000_000_000 + i * 20_000) for i in range(length))
                     ]

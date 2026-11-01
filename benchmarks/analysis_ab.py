@@ -325,7 +325,11 @@ def scientific_json(value, replacements):
             "storage_roots",
             "mtime_ns",
         }
-        return {k: scientific_json(v, replacements) for k, v in value.items() if k not in volatile}
+        return {
+            scientific_json(k, replacements): scientific_json(v, replacements)
+            for k, v in value.items()
+            if k not in volatile
+        }
     if isinstance(value, list):
         return [scientific_json(v, replacements) for v in value]
     if isinstance(value, str):
