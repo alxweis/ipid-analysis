@@ -11,9 +11,10 @@ Run for every FI Mass target present in a manifest::
 
     python -m ipid_analysis.missing_reply_analysis data.json
 
-The command writes a compact aggregate Parquet file plus JSON metadata and a
-two-panel histogram/ECDF figure.  Measurement attempts rejected before upload
-because they did not meet the configured minimum reply rate are not present in
+The command writes aggregated counts as Parquet, JSON metadata, and a two-panel
+histogram/ECDF figure for each measurement in its campaign directory.
+Measurement attempts rejected before upload because they did not meet the
+configured minimum reply rate are not present in
 ``ipid.pq``; consequently, the reported distribution is conditioned on the
 persisted population and excludes the high-missingness tail.
 """
@@ -34,7 +35,6 @@ import typer
 import yaml
 
 from ipid_analysis.artifacts import publish_file, save_figure
-from ipid_analysis.manifest import campaign_scope
 from ipid_analysis.runtime import connect, start_run, temporary_path
 
 matplotlib.use("Agg")
@@ -63,8 +63,6 @@ from ipid_analysis.strategies import (
 
 app = typer.Typer()
 
-OUTPUT_DIRECTORY = "missing-replies"
-OUTPUT_STEM = "mass-missing-replies"
 MANIFEST_ARGUMENT = typer.Argument(..., help="measurement manifest JSON")
 
 OUTPUT_SCHEMA = pa.schema(
@@ -380,14 +378,12 @@ def analyze_missing_replies(
     compression: str | None = "zstd",
     threads: int = 0,
 ) -> dict[str, Path]:
-    """Write per-measurement outputs and an aggregate for every FI Mass target."""
+    """Write outputs beside each FI Mass measurement's other campaign artifacts."""
     manifest = load_manifest(manifest_path)
     measurements = _fixed_interval_mass_measurements(manifest)
     if not measurements:
         raise ValueError(f"{manifest_path}: no fixed-interval Mass measurement in manifest")
 
-    rows: list[dict] = []
-    measurement_metadata: list[dict] = []
     outputs: dict[str, Path] = {}
     for measurement in measurements:
         logger.info(f"[{measurement.target}] counting observed missing replies")
@@ -396,8 +392,6 @@ def analyze_missing_replies(
             raw_root=raw_root,
             threads=threads,
         )
-        rows.extend(measurement_rows)
-        measurement_metadata.append(metadata)
         measurement_table = pa.Table.from_pylist(measurement_rows, schema=OUTPUT_SCHEMA)
         measurement_parquet = measurement.artifact_path(
             processed_root,
@@ -446,49 +440,7 @@ def analyze_missing_replies(
         outputs[f"{key}_json"] = measurement_json
         outputs[f"{key}_pdf"] = measurement_pdf
 
-    table = pa.Table.from_pylist(rows, schema=OUTPUT_SCHEMA)
-    scope = campaign_scope(manifest)
-    aggregate_path = processed_root / OUTPUT_DIRECTORY / scope / f"{OUTPUT_STEM}.pq"
-    json_path = figures_root / OUTPUT_DIRECTORY / scope / f"{OUTPUT_STEM}.json"
-    pdf_path = figures_root / OUTPUT_DIRECTORY / scope / f"{OUTPUT_STEM}.pdf"
-    _write_table(table, aggregate_path, compression)
-
-    metadata = {
-        "schema_version": 1,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "manifest": str(manifest_path),
-        "aggregate": str(aggregate_path),
-        "semantics": {
-            "missing_reply": (
-                "a fixed IPID_SEQUENCE position whose token cannot be parsed as an integer"
-            ),
-            "population": "persisted fixed-interval Mass sequences only",
-            "censoring": (
-                "measurement attempts rejected before persistence because they did not meet "
-                "the configured minimum reply rate are absent"
-            ),
-            "causal_scope": (
-                "missing replies are observed outcomes and are not attributed specifically "
-                "to forward-path or return-path packet loss"
-            ),
-        },
-        "measurements": measurement_metadata,
-    }
-    _write_json(json_path, metadata)
-    render_missing_reply_figure(table, metadata, pdf_path)
-    # Retain the public global paths as explicit latest-run aliases.
-    for source, destination in (
-        (aggregate_path, processed_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.pq"),
-        (json_path, figures_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.json"),
-        (pdf_path, figures_root / OUTPUT_DIRECTORY / f"{OUTPUT_STEM}.pdf"),
-    ):
-        publish_file(source, destination, parameters={"alias": "latest", "campaign_scope": scope})
-    return {
-        **outputs,
-        "aggregate": aggregate_path,
-        "json": json_path,
-        "pdf": pdf_path,
-    }
+    return outputs
 
 
 @app.command()

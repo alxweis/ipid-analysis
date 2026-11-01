@@ -587,20 +587,21 @@ make analyse-missing-replies ARGS="data.json"
 ```
 
 The command counts non-numeric positions in each stored `IPID_SEQUENCE` using
-the same missing-value interpretation as the production classifier. It writes:
+the same missing-value interpretation as the production classifier. For each
+measurement, it writes the outputs beside the other campaign artifacts:
 
 ```text
-data/processed/missing-replies/mass-missing-replies.pq
-reports/figures/missing-replies/mass-missing-replies.json
-reports/figures/missing-replies/mass-missing-replies.pdf
+data/processed/<zmap-id>/no-connection/fixed-interval-mass/n-fi-m_missing-replies.pq
+reports/figures/<zmap-id>/no-connection/fixed-interval-mass/n-fi-m_missing-replies.json
+reports/figures/<zmap-id>/no-connection/fixed-interval-mass/n-fi-m_missing-replies.pdf
 ```
 
-Normal manifest postprocessing runs this analysis automatically and additionally
-writes measurement-specific Parquet/JSON/PDF artifacts directly below each
-campaign's `no-connection/fixed-interval-mass/` directory.
+Normal manifest postprocessing runs this analysis automatically. Each measurement
+has its own Parquet/JSON/PDF artifacts; no cross-measurement aggregate or global
+latest-run copies are written.
 
-The Parquet aggregate contains absolute, percentage, and cumulative counts for
-every missing-reply count, separated by protocol and Mass measurement. The PDF
+Each Parquet contains absolute, percentage, and cumulative counts for
+every missing-reply count in its Mass measurement. The PDF
 shows the exact distribution and ECDF. The JSON sidecar records the measurement
 shape, configured minimum reply rate, complete/incomplete shares, and data
 provenance.
