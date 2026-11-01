@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -301,7 +302,9 @@ def verify_input(path):
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise ValueError(f"input changed while hashing: {path}")
     marker = path.parent / ".ipid-complete" / (path.name + ".json")
+    marker_checksum = None
     if marker.is_file():
+        marker_checksum = sha256(marker)
         info = json.loads(marker.read_text())
         if (
             info.get("status") != "complete"
@@ -311,7 +314,9 @@ def verify_input(path):
             raise ValueError(f"input completion integrity mismatch: {path}")
     if path.suffix in {".pq", ".parquet"}:
         pq.ParquetFile(path).metadata
-    return dict(path=str(path), size=before.st_size, sha256=checksum)
+    return dict(
+        path=str(path), size=before.st_size, sha256=checksum, completion_sha256=marker_checksum
+    )
 
 
 def scientific_json(value, replacements):
@@ -708,6 +713,12 @@ def run_child(spec, timeout):
                 raise RuntimeError(f"benchmark child failed: {control / 'run.log'}")
         finally:
             stop(process)
+            # An externally killed Python leader can leave an in-flight rclone
+            # child. Reclaim RAM only after terminating this owned session group.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
     result = dict(
         sampled_peak_rss_bytes=peak_rss,
         sampled_peak_scratch_bytes=peak_files,
@@ -822,13 +833,19 @@ def main(argv=None):
             export_tree(repo, revision, trees[label])
         request_path, manifest_path = result / "request.json", result / "manifest.json"
         subprocess.run(
-            ["s3cmd", "get", "--no-progress", args.request_uri, str(request_path)], check=True
+            ["s3cmd", "get", "--no-progress", args.request_uri, str(request_path)],
+            check=True,
+            timeout=120,
         )
         request = json.loads(request_path.read_text())
         expected = args.request_uri.removesuffix("request.json") + "manifest.json"
         if request.get("manifest_uri") != expected or request.get("os_status") != "not_requested":
             raise ValueError("benchmark requires the bound No-OS request/manifest pair")
-        subprocess.run(["s3cmd", "get", "--no-progress", expected, str(manifest_path)], check=True)
+        subprocess.run(
+            ["s3cmd", "get", "--no-progress", expected, str(manifest_path)],
+            check=True,
+            timeout=120,
+        )
         cpus = sorted(os.sched_getaffinity(0))[: args.cpus]
         common = dict(
             repo=str(repo),

@@ -1,5 +1,6 @@
 """Isolation, historical source selection and real small warm-cache analyses."""
 
+from contextlib import nullcontext
 import copy
 import hashlib
 import json
@@ -8,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +21,49 @@ import yaml
 
 
 class AnalysisABTests(unittest.TestCase):
+    def test_null_table_timing_preserves_values_and_traces_only_generation(self):
+        from ipid_analysis.empirical_random_uniformity import EmpiricalNullTables
+        from ipid_analysis.multiscale_increment_uniformity import MultiscaleIncrementNullTables
+
+        expected = EmpiricalNullTables(32, 17).spacing(4).tolist()
+        original_spacing = EmpiricalNullTables.spacing
+        original_single = MultiscaleIncrementNullTables.single
+        original_joint = MultiscaleIncrementNullTables.joint
+        fake = SimpleNamespace(record_stage=lambda *a, **kw: nullcontext())
+        for name in (
+            "prepare_itdk",
+            "prepare_ripe_atlas",
+            "render_itdk_analysis",
+            "render_ripe_atlas_analysis",
+            "evaluate_random_reproducibility",
+            "render_strategy_refinement_plot",
+        ):
+            setattr(fake, name, lambda *a, **kw: None)
+        with tempfile.TemporaryDirectory() as temporary:
+            timings = ab.Timings(Path(temporary) / "trace.jsonl")
+            with (
+                patch.object(EmpiricalNullTables, "spacing", original_spacing),
+                patch.object(MultiscaleIncrementNullTables, "single", original_single),
+                patch.object(MultiscaleIncrementNullTables, "joint", original_joint),
+            ):
+                ab.instrument_science(fake, timings)
+                table = EmpiricalNullTables(32, 17)
+                self.assertEqual(table.spacing(4).tolist(), expected)
+                self.assertEqual(table.spacing(sample_count=4).tolist(), expected)
+                tables = MultiscaleIncrementNullTables(32, 17)
+                first = tables.joint(8, (2, 4)).tolist()
+                self.assertEqual(
+                    tables.joint(transition_count=8, bin_counts=(2, 4)).tolist(), first
+                )
+            timings.stream.close()
+            events = [
+                json.loads(s) for s in (Path(temporary) / "trace.jsonl").read_text().splitlines()
+            ]
+            spacing = [e for e in events if "spacing" in e["name"]]
+            joint = [e for e in events if "joint" in e["name"]]
+            self.assertEqual(len(spacing), 1)
+            self.assertEqual(len(joint), 1)
+
     def test_requires_opt_in_before_any_work(self):
         with patch.object(ab, "writer_lease", side_effect=AssertionError("lease touched")):
             with self.assertRaises(SystemExit):
@@ -170,6 +215,24 @@ class AnalysisABTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "integrity"):
                 ab.verify_input(path)
 
+    def test_input_pin_includes_completion_parameters(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "input.json"
+            path.write_text("{}")
+            marker = path.parent / ".ipid-complete" / "input.json.json"
+            marker.parent.mkdir()
+            info = dict(
+                status="complete",
+                sha256=ab.sha256(path),
+                size_bytes=2,
+                parameters={"version": "old"},
+            )
+            marker.write_text(json.dumps(info))
+            before = ab.verify_input(path)
+            info["parameters"]["version"] = "changed"
+            marker.write_text(json.dumps(info))
+            self.assertNotEqual(before, ab.verify_input(path))
+
     def test_science_comparison_ignores_provenance_but_rejects_changed_values(self):
         a = dict(generated_at="old", mtime_ns=1, count=12, seconds=4, source="/a/input")
         b = dict(generated_at="new", mtime_ns=2, count=12, seconds=4, source="/b/input")
@@ -293,7 +356,9 @@ def warm_fixture(repo):
             pq.write_table(pa.table({"IP_ADDR": ips}), directory / "zmap_unclassified.pq")
     zmap = raw / "zmap" / job
     zmap.mkdir(parents=True)
-    pq.write_table(pa.table(dict(IP_ADDR=ips, REPLY_TYPE=["synack"] * 3)), zmap / "zmap.pq")
+    pq.write_table(
+        pa.table(dict(IP_ADDR=ips, REPLY_TYPE=["synack", "synack", "rst"])), zmap / "zmap.pq"
+    )
     manifest = dict(tcp=dict(zmap=job, os_status="not_requested", ipid=variants))
     request_base = f"s3://test/workflow/continental/fixture/sites/as/analysis-jobs/{job}"
     request = dict(
