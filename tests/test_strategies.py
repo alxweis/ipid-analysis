@@ -198,7 +198,7 @@ class StrategyClassificationTest(unittest.TestCase):
             [int(IPIDStrategy.MULTI), int(IPIDStrategy.RANDOM)],
         )
 
-    def test_production_random_score_uses_confirmed_candidate(self):
+    def test_production_random_score_uses_current_candidate(self):
         rng = np.random.default_rng(71)
         values = rng.integers(0, 1 << 16, size=(6, 100), dtype=np.uint16)
         present = rng.random(values.shape) >= 0.20
@@ -218,6 +218,24 @@ class StrategyClassificationTest(unittest.TestCase):
         )
 
         np.testing.assert_array_equal(actual, expected)
+
+    def test_provisional_threshold_includes_equality_and_excludes_lower_scores(self):
+        values = np.random.default_rng(71).integers(0, 65536, size=(2, 100)).tolist()
+        with patch(
+            "ipid_analysis.strategies.random_structure_scores",
+            return_value=np.array(
+                [
+                    RANDOM_STRUCTURE_MIN_SCORE,
+                    np.nextafter(RANDOM_STRUCTURE_MIN_SCORE, 0),
+                ]
+            ),
+        ):
+            codes = classify_batch_mass(
+                pa.array(values, type=pa.list_(pa.int64())), self.mass_config
+            )
+        self.assertEqual(
+            codes.tolist(), [int(IPIDStrategy.RANDOM), int(IPIDStrategy.UNCLASSIFIED)]
+        )
 
     def test_mass_constant_and_multi_keep_priority_over_random_score(self):
         rng = np.random.default_rng(13)
@@ -303,6 +321,7 @@ class StrategyClassificationTest(unittest.TestCase):
             strategies = pq.read_table(output)["IPID_SELECTION_STRATEGY"].to_pylist()
             metadata = pq.ParquetFile(output).schema_arrow.metadata
             self.assertEqual(metadata[b"classifier_version"].decode(), CLASSIFIER_VERSION)
+            self.assertEqual(metadata[b"random_threshold_status"], b"provisional-uncalibrated")
             self.assertEqual(
                 metadata[b"random_structure_score_version"].decode(),
                 RANDOM_STRUCTURE_SCORE_VERSION,

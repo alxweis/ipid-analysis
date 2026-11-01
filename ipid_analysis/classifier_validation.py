@@ -39,7 +39,6 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_INCREMENT_MIN_TRANSITIONS,
-    CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
     CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     CANDIDATE_NULL_TABLE_SAMPLES,
@@ -1518,13 +1517,14 @@ def validate_classifier(
                     CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN
                 ),
                 "minimum_transitions": CANDIDATE_INCREMENT_MIN_TRANSITIONS,
-                "scale_aggregation": "jointly calibrated minimum",
+                "bin_rule": "min(16, floor(valid_transitions / 5)); skip if fewer than 3 bins",
+                "pvalue_method": "theoretical chi-square with k-1 degrees of freedom",
                 "subsequence_aggregation": CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
                 "subsequence_groups": {
                     "full": "standalone",
-                    "destinations": "Fisher combination of two disjoint views",
-                    "connections": "Fisher combination of four disjoint views",
-                    "final": "minimum of full, destination, and connection evidence",
+                    "destinations": "two individual tests",
+                    "connections": "four individual tests",
+                    "final": "minimum of all available view p-values",
                 },
             },
             "target_random_false_rejection_rate": (CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE),
@@ -1533,9 +1533,6 @@ def validate_classifier(
                 "sample_count": candidate_null_table_samples,
                 "base_seed": candidate_null_table_seed,
                 "component_seeds": {
-                    "increment_uniformity": (
-                        candidate_null_table_seed + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
-                    ),
                     "gap_uniformity": (
                         candidate_null_table_seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
                     ),
@@ -1545,6 +1542,7 @@ def validate_classifier(
             "validation_only": False,
             "production_classifier_changed": True,
             "scope": "fixed-interval mass classifier only",
+            "threshold_status": "provisional-uncalibrated",
         }
     else:
         random_score_metadata = {

@@ -50,7 +50,6 @@ class SequenceDiagnostics:
     unique_count: int
     cluster_count: int
     maximum_gap: int
-    raw_uniformity_pvalue: float
     increment_uniformity_pvalue: float
     gap_uniformity_pvalue: float
     random_score: float
@@ -146,8 +145,7 @@ def sequence_diagnostics(sequence: np.ndarray, cfg: MeasurementConfig) -> Sequen
     clusters = _cluster_counts_mass(values, present, lengths, ordered=ordered)
 
     components = {
-        "raw uniformity": float(score_components.raw_uniformity[0]),
-        "aggregated increment uniformity": float(score_components.increment_uniformity[0]),
+        "minimum increment uniformity": float(score_components.increment_uniformity[0]),
         "circular gap uniformity": float(score_components.gap_uniformity[0]),
     }
     return SequenceDiagnostics(
@@ -155,8 +153,7 @@ def sequence_diagnostics(sequence: np.ndarray, cfg: MeasurementConfig) -> Sequen
         unique_count=int(features.unique_count[0]),
         cluster_count=int(clusters[0]),
         maximum_gap=int(features.maximum_gap[0]),
-        raw_uniformity_pvalue=components["raw uniformity"],
-        increment_uniformity_pvalue=components["aggregated increment uniformity"],
+        increment_uniformity_pvalue=components["minimum increment uniformity"],
         gap_uniformity_pvalue=components["circular gap uniformity"],
         random_score=float(score_components.score[0]),
         limiting_component=min(components, key=components.get),
@@ -270,8 +267,7 @@ def _plot_sample(
         f"Unique IP-IDs: {diagnostics.unique_count}\n"
         f"Circular clusters: {diagnostics.cluster_count}\n"
         f"Maximum circular gap: {diagnostics.maximum_gap}\n"
-        f"Raw-uniformity p: {diagnostics.raw_uniformity_pvalue:.3e}\n"
-        f"Increment-evidence p: {diagnostics.increment_uniformity_pvalue:.3e}\n"
+        f"Minimum increment p: {diagnostics.increment_uniformity_pvalue:.3e}\n"
         f"Circular-gap p: {diagnostics.gap_uniformity_pvalue:.3e}\n\n"
         "Close window / Right / Space: next\n"
         "Left: previous    Q / Esc: quit"
