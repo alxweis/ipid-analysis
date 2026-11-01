@@ -186,19 +186,7 @@ def checked_publication(original, guard, timings):
     return publish
 
 
-def instrument(guard, timings, remote_prefixes):
-    import duckdb
-    import matplotlib.figure
-    import pyarrow.csv as csv
-    import pyarrow.parquet as pq
-
-    from ipid_analysis import transport
-
-    connect = duckdb.connect
-    duckdb.connect = lambda *a, **kw: Connection(connect(*a, **kw), guard, timings)
-    transport.native_put = checked_publication(transport.native_put, guard, timings)
-    run = subprocess.run
-
+def checked_rclone(run, timings, remote_prefixes):
     def checked_run(command, *args, **kwargs):
         # All publication subprocesses are rclone copyto. No s3cmd, rm,
         # shells, HTTP tools or arbitrary subprocesses run inside a trial.
@@ -214,7 +202,21 @@ def instrument(guard, timings, remote_prefixes):
         with timings.span("rclone", "copyto"):
             return run(command, *args, **kwargs)
 
-    subprocess.run = checked_run
+    return checked_run
+
+
+def instrument(guard, timings, remote_prefixes):
+    import duckdb
+    import matplotlib.figure
+    import pyarrow.csv as csv
+    import pyarrow.parquet as pq
+
+    from ipid_analysis import transport
+
+    connect = duckdb.connect
+    duckdb.connect = lambda *a, **kw: Connection(connect(*a, **kw), guard, timings)
+    transport.native_put = checked_publication(transport.native_put, guard, timings)
+    subprocess.run = checked_rclone(subprocess.run, timings, remote_prefixes)
     matplotlib.figure.Figure.savefig = timings.wrap(matplotlib.figure.Figure.savefig, "figure")
     for module, name, position in (
         (pq, "write_table", 1),
@@ -429,6 +431,18 @@ def worker(spec):
     config.REPORTS_DIR = Path(spec["reports"])
     config.FIGURES_DIR = config.REPORTS_DIR / "figures"
     control = Path(spec["control"])
+    if spec["mode"] == "trial":
+        # Create only fresh diagnostic roots before enabling the narrower child
+        # guard. Ancestor mkdir must not require permitting arbitrary writes to
+        # the shared .ipid-analysis-tests parent or any production directory.
+        for key, parent in (("processed", repo / "data/processed"), ("reports", repo / "reports")):
+            destination = Path(spec[key])
+            namespace = parent / ".ipid-analysis-tests"
+            if destination.resolve() == namespace.resolve() or not below(destination, namespace):
+                raise ValueError("diagnostic output root is outside the test namespace")
+            if destination.exists():
+                raise FileExistsError("diagnostic trial output root already exists")
+            destination.mkdir(parents=True, exist_ok=False)
     guard = WriteGuard([control, spec["scratch"], spec["ram"], spec["processed"], spec["reports"]])
     sys.addaudithook(guard.audit)
     timings = Timings(control / "timings.jsonl")
@@ -579,9 +593,9 @@ def environment(spec):
         OPENBLAS_NUM_THREADS="1",
         MKL_NUM_THREADS="1",
         NUMEXPR_NUM_THREADS="1",
-        TMPDIR=spec["scratch"],
-        TMP=spec["scratch"],
-        TEMP=spec["scratch"],
+        TMPDIR=spec["ram"] if spec["label"] == "B" else spec["scratch"],
+        TMP=spec["ram"] if spec["label"] == "B" else spec["scratch"],
+        TEMP=spec["ram"] if spec["label"] == "B" else spec["scratch"],
     )
     return env
 

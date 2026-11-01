@@ -130,6 +130,35 @@ class AnalysisABTests(unittest.TestCase):
         self.assertEqual(env["IPID_ANALYSIS_RIPE_CACHE_S3"], "")
         self.assertEqual(env["IPID_ANALYSIS_SCRATCH_STORAGE"], "ram")
         self.assertEqual(env["IPID_ANALYSIS_TMP_DIR"], "/disk")
+        self.assertEqual(env["TMPDIR"], "/ram")
+
+    def test_rclone_allowlist_accepts_only_test_copyto_destination(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            timings = ab.Timings(Path(temporary) / "trace.jsonl")
+            calls = []
+            prefix = "rclone-remote:bucket/.ipid-analysis-tests/uuid/trial"
+            run = ab.checked_rclone(lambda *a, **kw: calls.append((a, kw)), timings, [prefix])
+            command = [
+                "/usr/bin/rclone",
+                "copyto",
+                "--s3-no-check-bucket",
+                "/ram/file",
+                prefix + "/result.pq",
+            ]
+            run(command, check=True)
+            self.assertEqual(calls[0][0][0], command)
+            for invalid in (
+                ["s3cmd", "put", "/ram/file", prefix + "/result"],
+                ["rclone", "copyto", "/ram/file", "rclone-remote:bucket/production/file"],
+                ["rclone", "delete", prefix + "/result"],
+                "rclone copyto /ram/file production",
+            ):
+                with self.assertRaises(PermissionError):
+                    run(invalid)
+            with self.assertRaises(PermissionError):
+                run(command, shell=True)
+            self.assertEqual(len(calls), 1)
+            timings.stream.close()
 
     def test_actual_input_hash_rejects_corrupt_marker(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -213,8 +242,8 @@ def warm_fixture(repo):
                 dict(
                     IP_ADDR=ips,
                     IPID_SEQUENCE=[",".join(str(100 + i) for i in range(length))] * 3,
-                    TIMESTAMP_SEQUENCE=[
-                        ",".join(str(1_000_000_000 + i * 20_000_000) for i in range(length))
+                    SEND_TIMESTAMP_SEQUENCE=[
+                        ",".join(str(1_000_000_000 + i * 20_000) for i in range(length))
                     ]
                     * 3,
                 )
