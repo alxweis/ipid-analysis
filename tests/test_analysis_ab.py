@@ -197,6 +197,7 @@ class AnalysisABTests(unittest.TestCase):
             {
                 "IPID_ANALYSIS_FORCE": "1",
                 "IPID_ANALYSIS_S3_PREFIX": "s3://production/jobs",
+                "IPID_ANALYSIS_SCOPE": "continental/old/eu",
                 "IPID_MAXMIND_DB": "/old/mmdb",
             },
         ):
@@ -208,6 +209,9 @@ class AnalysisABTests(unittest.TestCase):
         self.assertEqual(env["IPID_ANALYSIS_SCRATCH_STORAGE"], "ram")
         self.assertEqual(env["IPID_ANALYSIS_TMP_DIR"], "/disk")
         self.assertEqual(env["TMPDIR"], "/ram")
+        spec["scope"] = ""
+        with patch.dict(os.environ, {"IPID_ANALYSIS_SCOPE": "continental/old/eu"}):
+            self.assertEqual(ab.environment(spec)["IPID_ANALYSIS_SCOPE"], "")
 
     def test_rclone_allowlist_accepts_only_test_copyto_destination(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -521,6 +525,18 @@ class HistoricalAnalysisABTest(unittest.TestCase):
                     memory_limit=4 * ab.GIB,
                     test_local=True,
                 )
+                if mode == "preflight" and protocol == "icmp":
+                    for changes, message in (
+                        ({"protocol": "tcp"}, "does not match job id"),
+                        ({"done_uri": "s3://test/other/done.json"}, "canonical S3 location"),
+                        ({"ipid_prefix": "s3://test/raw/continental/other/eu/ipid"}, "raw scope"),
+                    ):
+                        with self.subTest(rejected=changes):
+                            request_path.write_text(json.dumps(dict(request, **changes)))
+                            with self.assertRaises(RuntimeError):
+                                ab.run_child(spec, 180)
+                            self.assertIn(message, (Path(spec["control"]) / "run.log").read_text())
+                    request_path.write_text(json.dumps(request))
                 try:
                     ab.run_child(spec, 180)
                 except Exception:

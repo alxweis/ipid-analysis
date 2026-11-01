@@ -27,7 +27,7 @@ its tools in a new separate checkout (replace the branch name if appropriate):
 
 ```bash
 cd /mnt/data01/ipid-analysis
-git fetch origin codex/analysis-ab-benchmark
+git fetch origin codex/analysis-ab-classic-icmp
 mkdir -p /mnt/data01/ipid-analysis/tmp/benchmarks
 tools=$(mktemp -d /mnt/data01/ipid-analysis/tmp/benchmarks/ab-tools-XXXXXX)
 git worktree add --detach "$tools" FETCH_HEAD
