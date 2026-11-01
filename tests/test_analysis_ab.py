@@ -12,6 +12,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import warnings
 
 from benchmarks import analysis_ab as ab
 import duckdb
@@ -72,6 +73,15 @@ class AnalysisABTests(unittest.TestCase):
     def test_exact_merged_pins(self):
         self.assertEqual(ab.PINS["A"], "b6e142c7de41d9c6c4a5c8f4515e82abeccc97ed")
         self.assertEqual(ab.PINS["B"], "68edad13e3b0f5a4e765f8c071dea8dc2e65a0a0")
+
+    def test_exported_source_closes_archive_pipe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "source"
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ResourceWarning)
+                ab.export_tree(ab.PROJECT, "HEAD", destination)
+            self.assertTrue((destination / "ipid_analysis/postprocess.py").is_file())
+            self.assertFalse([w for w in caught if issubclass(w.category, ResourceWarning)])
 
     def test_write_and_copy_guards_handle_escape_and_parameters(self):
         with tempfile.TemporaryDirectory() as temporary:

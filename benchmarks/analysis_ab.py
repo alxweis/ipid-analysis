@@ -626,10 +626,12 @@ def export_tree(repo, revision, destination):
                 else:
                     path = destination / member.name
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(archive.extractfile(member).read())
+                    with archive.extractfile(member) as source:
+                        path.write_bytes(source.read())
         if process.wait():
             raise RuntimeError(f"git archive failed for pinned revision {revision}")
     finally:
+        process.stdout.close()
         if process.poll() is None:
             process.terminate()
             process.wait()
