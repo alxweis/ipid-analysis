@@ -56,7 +56,7 @@ from ipid_analysis.runtime import batch_budget, connect, start_run, temporary_pa
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
-CLASSIFIER_VERSION = "7"
+CLASSIFIER_VERSION = "8"
 
 # --- classifier thresholds (tuning, measurement-independent) ---------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3
@@ -68,7 +68,8 @@ RANDOM_MIN_P_VALUE = 1e-9
 CHI2_BINS = 4  # equal-width bins for the IPID-value uniformity test
 LEGACY_RANDOM_STRUCTURE_SCORE_VERSION = "raw-multiset-bounded-v2"
 LEGACY_RANDOM_STRUCTURE_MIN_SCORE = 0.000016313656391956604
-RANDOM_STRUCTURE_SCORE_VERSION = "raw-multiscale-increment-evidence-gap-min-v3"
+RANDOM_STRUCTURE_SCORE_VERSION = "increment-pearson-gap-min-v4"
+# Provisional v7 numeric cutoff, retained explicitly pending v8 calibration.
 RANDOM_STRUCTURE_MIN_SCORE = 7.89999176049605e-05
 RANDOM_STRUCTURE_UNIFORMITY_BINS = 16
 RANDOM_STRUCTURE_MIN_TEST_SAMPLES = 2
@@ -153,6 +154,7 @@ OUTPUT_SCHEMA = pa.schema(
         b"classifier_version": CLASSIFIER_VERSION.encode(),
         b"random_structure_score_version": RANDOM_STRUCTURE_SCORE_VERSION.encode(),
         b"random_structure_min_score": str(RANDOM_STRUCTURE_MIN_SCORE).encode(),
+        b"random_threshold_status": b"provisional-uncalibrated",
     },
 )
 
@@ -631,8 +633,8 @@ def random_structure_scores(
 
     ``ordered`` remains accepted for source compatibility with the historical
     score. The final gap component performs its own circular-spacing sort.
-    Tests and offline evaluations may inject smaller null tables; production
-    reuses the confirmed million-sample tables process-wide.
+    Tests and offline evaluations may inject smaller gap null tables;
+    production reuses the existing million-sample gap tables process-wide.
     """
     del ordered
     from ipid_analysis.random_classifier_candidate import (

@@ -1,4 +1,4 @@
-"""Final RANDOM classifier selected by the operating-point confirmation.
+"""Production RANDOM score: minimum increment and circular-gap compatibility.
 
 The module centralizes the exact score specification shared by production,
 paper validation, and held-out diagnostics so those paths cannot silently
@@ -17,37 +17,36 @@ from ipid_analysis.empirical_random_uniformity import (
     EmpiricalNullTables,
     gap_uniformity_pvalues,
 )
-from ipid_analysis.multiscale_increment_uniformity import (
-    MIN_INCREMENT_TRANSITIONS,
-    MULTISCALE_INCREMENT_BINS,
-    MULTISCALE_TARGET_EXPECTED_PER_BIN,
-    MultiscaleIncrementNullTables,
-    multiscale_increment_evidence_pvalues,
+from ipid_analysis.increment_uniformity import (
+    MAX_BINS,
+    MIN_BINS,
+    MIN_EXPECTED_PER_BIN,
+    MIN_TRANSITIONS,
+    increment_uniformity_pvalues,
 )
-from ipid_analysis.strategies import random_structure_features
+from ipid_analysis.strategies import RANDOM_STRUCTURE_MIN_SCORE, RANDOM_STRUCTURE_SCORE_VERSION
 
 if TYPE_CHECKING:
     from ipid_analysis.strategies import MeasurementConfig
 
-CANDIDATE_RANDOM_SCORE_VERSION = "raw-multiscale-increment-evidence-gap-min-v3"
+CANDIDATE_RANDOM_SCORE_VERSION = RANDOM_STRUCTURE_SCORE_VERSION
 CANDIDATE_RANDOM_METRICS = (
-    "raw_uniformity",
     "increment_uniformity",
     "gap_uniformity",
 )
 
-# Selected by the seed-20260927 final operating-point confirmation using a
-# target true-RANDOM false-rejection rate of 0.05%. This threshold is meaningful
-# only for hierarchical increment-evidence aggregation and the null-table
-# specification recorded alongside it.
-CANDIDATE_RANDOM_MIN_SCORE = 7.89999176049605e-05
+# Deliberately retain the previous numeric cutoff as a provisional value.
+# No false-rejection guarantee or v8 threshold calibration is claimed.
+CANDIDATE_RANDOM_MIN_SCORE = RANDOM_STRUCTURE_MIN_SCORE
 CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE = 0.0005
 CANDIDATE_RANDOM_SELECTION = (
-    "seed-20260927 final operating-point confirmation at 0.05% target true-RANDOM false-rejection"
+    "previous numeric cutoff retained provisionally; new-score calibration pending"
 )
-CANDIDATE_NULL_TABLE_VERSION = "empirical-discrete-16bit-multiscale-v2"
+CANDIDATE_NULL_TABLE_VERSION = "empirical-discrete-16bit-circular-cvm-v1"
 CANDIDATE_NULL_TABLE_SAMPLES = 1_000_000
 CANDIDATE_NULL_TABLE_SEED = 20_260_927
+# Historical offline view experiments still import these seed constants.
+# Production creates no increment null table.
 CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET = 11
 CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET = 23
 CANDIDATE_INCREMENT_NULL_TABLE_SEED = (
@@ -55,17 +54,16 @@ CANDIDATE_INCREMENT_NULL_TABLE_SEED = (
 )
 CANDIDATE_GAP_NULL_TABLE_SEED = CANDIDATE_NULL_TABLE_SEED + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
 CANDIDATE_EVALUATION_SEED = CANDIDATE_NULL_TABLE_SEED
-CANDIDATE_INCREMENT_BIN_COUNTS = MULTISCALE_INCREMENT_BINS
-CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN = MULTISCALE_TARGET_EXPECTED_PER_BIN
-CANDIDATE_INCREMENT_MIN_TRANSITIONS = MIN_INCREMENT_TRANSITIONS
-CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION = "hierarchical-fisher-disjoint-v1"
+CANDIDATE_INCREMENT_BIN_COUNTS = tuple(range(MIN_BINS, MAX_BINS + 1))
+CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN = MIN_EXPECTED_PER_BIN
+CANDIDATE_INCREMENT_MIN_TRANSITIONS = MIN_TRANSITIONS
+CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION = "minimum-available-views"
 
 
 @dataclass(frozen=True)
 class CandidateNullTables:
-    """Separately seeded null tables for the two empirical components."""
+    """Only the unchanged circular-gap component needs a null table."""
 
-    increment: MultiscaleIncrementNullTables
     gap: EmpiricalNullTables
 
 
@@ -73,12 +71,8 @@ def create_candidate_null_tables(
     sample_count: int = CANDIDATE_NULL_TABLE_SAMPLES,
     seed: int = CANDIDATE_NULL_TABLE_SEED,
 ) -> CandidateNullTables:
-    """Build the exact null-table pair used by the selected candidate."""
+    """Build the unchanged, separately seeded circular-gap null tables."""
     return CandidateNullTables(
-        increment=MultiscaleIncrementNullTables(
-            sample_count,
-            seed + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
-        ),
         gap=EmpiricalNullTables(
             sample_count,
             seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
@@ -88,7 +82,7 @@ def create_candidate_null_tables(
 
 @lru_cache(maxsize=1)
 def production_candidate_null_tables() -> CandidateNullTables:
-    """Return the process-wide production tables with the confirmed seeds.
+    """Return process-wide gap tables with the existing seed.
 
     The table containers generate individual sample-count tables lazily.  A
     process-wide cache prevents rebuilding them for every streamed mass batch.
@@ -100,7 +94,6 @@ def production_candidate_null_tables() -> CandidateNullTables:
 class CandidateRandomScoreComponents:
     """Candidate component p-values and their minimum score."""
 
-    raw_uniformity: np.ndarray
     increment_uniformity: np.ndarray
     gap_uniformity: np.ndarray
     score: np.ndarray
@@ -112,7 +105,7 @@ def candidate_random_score_components(
     null_tables: CandidateNullTables,
     config: MeasurementConfig | None = None,
 ) -> CandidateRandomScoreComponents:
-    """Calculate the final score components for one measurement shape."""
+    """Calculate S=min(p_inc, p_gap); its cutoff remains provisional."""
     # Historical validation callers omit the shape because all confirmation
     # data use the fixed 4x25 layout. Production always passes its snapshot
     # configuration explicitly and therefore has no validation dependency.
@@ -121,22 +114,11 @@ def candidate_random_score_components(
 
         config = FIXED_CONFIG
     if config.connection_count != 4 or config.requests_per_connection != 25:
-        raise ValueError(
-            "final RANDOM score is calibrated only for 4x25 fixed-interval mass sequences"
-        )
-    raw = random_structure_features(values, present).uniformity_pvalue
-    increment = multiscale_increment_evidence_pvalues(
-        values,
-        present,
-        config,
-        null_tables.increment,
-        bin_counts=CANDIDATE_INCREMENT_BIN_COUNTS,
-        target_expected_per_bin=CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
-    )
+        raise ValueError("RANDOM score supports only 4x25 fixed-interval mass sequences")
+    increment = increment_uniformity_pvalues(values, present, config)
     gap = gap_uniformity_pvalues(values, present, null_tables.gap)
-    score = np.clip(np.minimum.reduce([raw, increment, gap]), 0.0, 1.0)
+    score = np.clip(np.minimum(increment, gap), 0.0, 1.0)
     return CandidateRandomScoreComponents(
-        raw_uniformity=raw,
         increment_uniformity=increment,
         gap_uniformity=gap,
         score=score,

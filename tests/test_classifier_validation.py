@@ -46,7 +46,6 @@ from ipid_analysis.classifier_validation import (
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_BIN_COUNTS,
-    CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
@@ -363,18 +362,13 @@ class ClassifierValidationTest(unittest.TestCase):
             )
             self.assertEqual(
                 random_score["increment_uniformity"]["subsequence_aggregation"],
-                "hierarchical-fisher-disjoint-v1",
+                "minimum-available-views",
             )
             self.assertEqual(
                 random_score["null_tables"]["component_seeds"],
                 {
-                    "increment_uniformity": (
-                        CANDIDATE_NULL_TABLE_SEED
-                        + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
-                    ),
                     "gap_uniformity": (
-                        CANDIDATE_NULL_TABLE_SEED
-                        + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
+                        CANDIDATE_NULL_TABLE_SEED + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
                     ),
                 },
             )

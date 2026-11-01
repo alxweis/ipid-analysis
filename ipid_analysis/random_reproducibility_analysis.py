@@ -51,6 +51,7 @@ from ipid_analysis.inspect_sequences import parse_sequence
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_RANDOM_MIN_SCORE,
+    CANDIDATE_RANDOM_SELECTION,
     CandidateNullTables,
     candidate_random_score_components,
     production_candidate_null_tables,
@@ -78,7 +79,7 @@ DEFAULT_MAXIMUM_TARGETS = 10_000
 TARGET_FILE_NAME = "random-reproducibility-targets.pq"
 COHORT_FILE_NAME = "random-reproducibility-cohort.pq"
 PREPARE_METADATA_FILE_NAME = "random-reproducibility-prepare.json"
-COMPONENTS = ("RAW", "INCREMENT", "GAP")
+COMPONENTS = ("INCREMENT", "GAP")
 MANIFEST_ARGUMENT = typer.Argument(..., help="baseline measurement manifest JSON")
 REPEAT_IDS_OPTION = typer.Option(
     ...,
@@ -147,10 +148,9 @@ def _diagnostics(
         config=cfg,
     )
     cluster_count = int(_cluster_counts_mass(values, present, lengths, ordered=ordered)[0])
-    raw = float(components.raw_uniformity[0])
     increment = float(components.increment_uniformity[0])
     gap = float(components.gap_uniformity[0])
-    component_values = {"RAW": raw, "INCREMENT": increment, "GAP": gap}
+    component_values = {"INCREMENT": increment, "GAP": gap}
 
     row: dict[str, object] = {
         "PRESENT_COUNT": int(features.sample_count[0]),
@@ -160,7 +160,6 @@ def _diagnostics(
         "CLUSTER_COUNT": cluster_count,
         "MULTI_COMPATIBLE": 1 < cluster_count <= MULTI_MAX_CLUSTERS,
         "MAXIMUM_GAP": int(features.maximum_gap[0]),
-        "P_RAW": raw,
         "P_INCREMENT": increment,
         "P_GAP": gap,
         "RANDOM_SCORE": float(components.score[0]),
@@ -393,7 +392,6 @@ def prepare_random_reproducibility_paths(
                 raw_row["SEQUENCE"],
             )
             component_values = {
-                "RAW": float(components.raw_uniformity[index]),
                 "INCREMENT": float(components.increment_uniformity[index]),
                 "GAP": float(components.gap_uniformity[index]),
             }
@@ -479,13 +477,13 @@ def prepare_random_reproducibility_paths(
         "classifier_version": CLASSIFIER_VERSION,
         "score_version": RANDOM_STRUCTURE_SCORE_VERSION,
         "null_models": {
-            "increment": {"samples": tables.increment.sample_count, "seed": tables.increment.seed},
             "gap": {"samples": tables.gap.sample_count, "seed": tables.gap.seed},
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "target": target,
         "measurement_id": measurement_id,
         "threshold": CANDIDATE_RANDOM_MIN_SCORE,
+        "threshold_status": CANDIDATE_RANDOM_SELECTION,
         "selection": {
             "maximum_targets": maximum_targets,
             "unclassified_population": sum(component_population.values()),
@@ -857,7 +855,6 @@ def evaluate_random_reproducibility(
         "classifier_version": CLASSIFIER_VERSION,
         "score_version": RANDOM_STRUCTURE_SCORE_VERSION,
         "null_models": {
-            "increment": {"samples": tables.increment.sample_count, "seed": tables.increment.seed},
             "gap": {"samples": tables.gap.sample_count, "seed": tables.gap.seed},
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -865,6 +862,7 @@ def evaluate_random_reproducibility(
         "target": target,
         "baseline_measurement_id": measurement.measurement_id,
         "threshold": CANDIDATE_RANDOM_MIN_SCORE,
+        "threshold_status": CANDIDATE_RANDOM_SELECTION,
         "cohort_size": len(cohort_ips),
         "repeat_count": len(repeat_ids),
         "repeats": repeat_metadata,

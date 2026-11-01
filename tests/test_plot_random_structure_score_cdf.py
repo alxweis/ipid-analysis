@@ -37,7 +37,6 @@ from ipid_analysis.plot_random_structure_score_cdf import (
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_BIN_COUNTS,
-    CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_NULL_TABLE_VERSION,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
@@ -221,13 +220,11 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             )
             self.assertEqual(
                 metadata["score"]["increment_uniformity"]["subsequence_aggregation"],
-                "hierarchical-fisher-disjoint-v1",
+                "minimum-available-views",
             )
             self.assertEqual(
                 metadata["score"]["null_tables"]["component_seeds"],
                 {
-                    "increment_uniformity": 17
-                    + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
                     "gap_uniformity": 17 + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
                 },
             )

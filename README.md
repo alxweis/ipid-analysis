@@ -496,8 +496,8 @@ as base measurements: `REFLECTION`, `CONSTANT`, `PER_DESTINATION`,
 `PER_CONNECTION`, `SINGLE`, and `PER_BUCKET`. The established
 position-independent `CONSTANT` and `MULTI` rules then handle residual rows,
 including rows with missing replies. Only the remaining sequences are tested
-for `RANDOM` using the calibrated RANDOM-compatibility structure score described
-below; all other sequences remain `UNCLASSIFIED`.
+for `RANDOM` using the provisional version-8 RANDOM-compatibility score described
+in [the classifier specification](docs/RANDOM_CLASSIFIER.md); all other sequences remain `UNCLASSIFIED`.
 
 The exact rules require all 100 positions. Missing-reply markers are never
 removed to create a shorter artificial sequence, so this does not introduce
@@ -625,18 +625,19 @@ make validate-classifier
 make validate-classifier ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-The paper figures and production mass classifier use the same final RANDOM score:
-the minimum of raw-IPID uniformity, hierarchically aggregated multiscale
-increment evidence, and full-sequence circular gap uniformity. The increment
-component evaluates all usable resolutions from `{3, 4, 8, 16}` in every full,
-destination, and connection view. It Fisher-combines the two disjoint
-destination views and the four disjoint connection views, then takes the
-minimum of full, destination, and connection evidence. The complete score and
-threshold are calibrated together because those three families overlap. The
-calibrated threshold and empirical-null specification are recorded in each
-JSON sidecar. Production generates the deterministic empirical tables lazily
-from the confirmed seeds and caches them for the lifetime of the process, so
-streamed mass batches do not rebuild them.
+The production mass classifier now uses version 8: `S = min(p_inc, p_gap)`.
+Each of the seven increment views uses one length-adaptive Pearson chi-square
+test with `k = min(16, floor(valid_transitions / 5))` bins; views with fewer
+than three bins are skipped. `p_inc` is the minimum available view p-value.
+The full-sequence circular-spacing Cramer-von Mises component and its empirical
+null model are unchanged. Raw-IPID uniformity, multiscale testing, Fisher
+aggregation, and increment null tables are absent from the production score.
+See [RANDOM classifier details](docs/RANDOM_CLASSIFIER.md).
+
+The old numeric cutoff is retained provisionally and is **not calibrated for
+version 8**. No new validation results or plots accompany this implementation.
+The existing commands below can be run separately; their report metadata now
+identifies the new method and provisional threshold.
 The validation uses the same version, threshold, null-table sizes, and seeds as
 production. To reproduce the pre-v7 production baseline for a historical
 comparison instead, run:
@@ -703,24 +704,13 @@ make plot-mass-random-score-cdf
 make plot-mass-random-score-cdf ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-The production score is
-`S = min(raw_uniformity, increment_evidence, gap_uniformity)`. Raw uniformity
-uses the established 16-bin Pearson test. Increment evidence is the empirical
-multiscale test over the full, two destination, and four connection views. It
-uses every resolution from `{3, 4, 8, 16}` that retains about two expected
-transitions per bin, calibrates the minimum across those resolutions jointly,
-uses only originally adjacent present positions, and is order-dependent. The
-two destination p-values and four connection p-values are Fisher-combined only
-inside their disjoint groups. Their group values and the overlapping full view
-are combined by a minimum whose effect is included in the complete candidate
-calibration. Gap uniformity compares the complete circular spacing distribution
-of the present, sorted 16-bit IP-ID values against the same versioned discrete
-empirical RANDOM null; it is order-independent and uses only the full sequence.
-The fixed selected threshold is `tau = 7.89999176049605e-05`, calibrated at a
-target 0.05% RANDOM false-rejection rate in the seed-20260927 final operating-point
-confirmation. Increment and gap null tables use the same independent seeds as
-that confirmation run, 20260938 and 20260950, respectively. A sequence is
-RANDOM-compatible when `S >= tau`.
+The plotted score follows the production definition above:
+`S = min(increment_uniformity, gap_uniformity)`. Increment tests preserve the
+fixed missing-reply positions, and the gap component uses all received values
+including duplicates. Only gap null tables are generated, with the unchanged
+seed 20260950. The provisional cutoff is `tau = 7.89999176049605e-05`; a sequence
+is RANDOM-compatible when `S >= tau`. The former 0.05% calibration applies to
+the historical score only and is not an accuracy claim for version 8.
 
 By default, the plotted nontrivial strategies use 100,000 sequences;
 `REFLECTION` and `CONSTANT` remain fixed at 1,000. The exact complete-sequence

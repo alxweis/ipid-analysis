@@ -1,9 +1,8 @@
-"""Plot the final production RANDOM-score CDFs.
+"""Plot the current production RANDOM-score CDFs when explicitly requested.
 
-The ``mass-4x25-random-score-cdf-*`` artifacts exactly match the score selected by
-the final operating-point confirmation: the minimum of raw-IPID uniformity,
-hierarchically aggregated multiscale increment evidence, and empirical circular gap
-uniformity. This is the score used by the v7 production mass classifier.
+Version 8 uses the minimum of adaptive Pearson increment-view p-values and
+empirical circular-spacing Cramer-von Mises compatibility. Its numeric cutoff
+is provisional pending a separate calibration and validation run.
 """
 
 from __future__ import annotations
@@ -39,7 +38,6 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_BIN_COUNTS,
     CANDIDATE_INCREMENT_MIN_TRANSITIONS,
-    CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
     CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN,
     CANDIDATE_NULL_TABLE_SAMPLES,
@@ -585,7 +583,6 @@ def render(
                 "definition": "minimum production RANDOM-compatibility score",
                 "components": list(CANDIDATE_RANDOM_METRICS),
                 "combiner": "minimum",
-                "raw_uniformity_bins": 16,
                 "increment_uniformity_order_invariant": False,
                 "increment_uniformity": {
                     "bin_counts": list(CANDIDATE_INCREMENT_BIN_COUNTS),
@@ -593,13 +590,14 @@ def render(
                         CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN
                     ),
                     "minimum_transitions": CANDIDATE_INCREMENT_MIN_TRANSITIONS,
-                    "scale_aggregation": "jointly calibrated minimum",
+                    "bin_rule": "min(16, floor(valid_transitions / 5)); skip if fewer than 3 bins",
+                    "pvalue_method": "theoretical chi-square with k-1 degrees of freedom",
                     "subsequence_aggregation": CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION,
                     "subsequence_groups": {
                         "full": "standalone",
-                        "destinations": "Fisher combination of two disjoint views",
-                        "connections": "Fisher combination of four disjoint views",
-                        "final": "minimum of full, destination, and connection evidence",
+                        "destinations": "two individual tests",
+                        "connections": "four individual tests",
+                        "final": "minimum of all available view p-values",
                     },
                 },
                 "gap_uniformity_order_invariant": True,
@@ -608,9 +606,6 @@ def render(
                     "sample_count": null_table_samples,
                     "base_seed": null_table_seed,
                     "component_seeds": {
-                        "increment_uniformity": (
-                            null_table_seed + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
-                        ),
                         "gap_uniformity": (null_table_seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET),
                     },
                     "pvalue_resolution": 1.0 / (null_table_samples + 1.0),
@@ -623,6 +618,7 @@ def render(
                 "tau": threshold,
                 "target_global_random_false_rejection_rate": (DEFAULT_RANDOM_FALSE_REJECTION_RATE),
                 "selected_by": CANDIDATE_RANDOM_SELECTION,
+                "status": "provisional-uncalibrated",
             },
             "figure": str(pdf_path),
             "figure_axis": {
