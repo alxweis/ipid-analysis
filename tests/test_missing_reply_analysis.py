@@ -7,10 +7,7 @@ from unittest.mock import patch
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ipid_analysis.missing_reply_analysis import (
-    OUTPUT_STEM,
-    analyze_missing_replies,
-)
+from ipid_analysis.missing_reply_analysis import analyze_missing_replies
 
 
 class MissingReplyAnalysisTest(unittest.TestCase):
@@ -86,10 +83,9 @@ class MissingReplyAnalysisTest(unittest.TestCase):
                     figures_root=root / "figures",
                 )
 
-            self.assertEqual(outputs["aggregate"].name, f"{OUTPUT_STEM}.pq")
-            self.assertTrue(outputs["aggregate"].is_file())
-            self.assertTrue(outputs["json"].is_file())
-            self.assertTrue(outputs["pdf"].is_file())
+            self.assertEqual(len(outputs), 6)
+            self.assertFalse((root / "figures" / "missing-replies").exists())
+            self.assertFalse((root / "processed" / "missing-replies").exists())
             for protocol in ("tcp", "icmp"):
                 key = f"{protocol}_ipid_no-connection_fixed-interval_mass"
                 self.assertTrue(outputs[f"{key}_parquet"].is_file())
@@ -105,7 +101,12 @@ class MissingReplyAnalysisTest(unittest.TestCase):
                 / "n-fi-m_missing-replies.pdf",
             )
 
-            rows = pq.read_table(outputs["aggregate"]).to_pylist()
+            rows = [
+                row
+                for name, path in outputs.items()
+                if name.endswith("_parquet")
+                for row in pq.read_table(path).to_pylist()
+            ]
             self.assertEqual(len(rows), 42)
             tcp = {row["MISSING_REPLY_COUNT"]: row for row in rows if row["PROTOCOL"] == "tcp"}
             self.assertEqual(tcp[0]["SEQUENCE_COUNT"], 2)
@@ -115,9 +116,11 @@ class MissingReplyAnalysisTest(unittest.TestCase):
             self.assertEqual(tcp[20]["CUMULATIVE_PERCENTAGE"], 100.0)
             self.assertEqual(sum(row["PERCENTAGE"] for row in tcp.values()), 100.0)
 
-            metadata = json.loads(outputs["json"].read_text())
+            metadata = json.loads(
+                outputs["tcp_ipid_no-connection_fixed-interval_mass_json"].read_text()
+            )
             self.assertEqual(metadata["schema_version"], 1)
-            self.assertEqual(len(metadata["measurements"]), 2)
+            self.assertEqual(len(metadata["measurements"]), 1)
             tcp_metadata = next(
                 item for item in metadata["measurements"] if item["protocol"] == "tcp"
             )

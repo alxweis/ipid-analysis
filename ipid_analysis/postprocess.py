@@ -380,7 +380,9 @@ def main(
             )
             missing_ok = True
             required_extra.extend(missing_outputs.values())
-            logger.success(f"automatic Mass missing-reply analysis -> {missing_outputs['pdf']}")
+            for name, path in missing_outputs.items():
+                if name.endswith("_pdf"):
+                    logger.success(f"automatic Mass missing-reply analysis [{name}] -> {path}")
     except (FileNotFoundError, ValueError) as exc:
         logger.warning(f"automatic Mass missing-reply analysis failed ({exc}) -- skipped")
 
