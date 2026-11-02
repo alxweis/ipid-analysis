@@ -199,6 +199,11 @@ evaluate-increment-bin-rules:
 evaluate-random-classifier-views:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_view_evaluation $(ARGS)
 
+## Calibrate the current production RANDOM score and test it on independent data
+.PHONY: calibrate-random-classifier
+calibrate-random-classifier:
+	$(PYTHON_INTERPRETER) -m ipid_analysis.random_classifier_view_evaluation --production-only $(ARGS)
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################

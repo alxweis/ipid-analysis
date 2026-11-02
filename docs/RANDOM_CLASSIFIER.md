@@ -43,6 +43,64 @@ generate validation plots. Those steps must be performed separately before
 making accuracy claims. Historical experimental modules remain available;
 production no longer calls their multiscale/Fisher implementation.
 
+## Calibrating the current score
+
+The existing offline evaluator has a production-only mode that calls
+`candidate_random_score_components` directly, using the same one-million-sample
+gap tables and fixed seed as production. No historical score variants are run.
+The data seed changes calibration/test sequences, not the gap reference.
+
+```bash
+# Smaller exploratory run; not the final calibration.
+make calibrate-random-classifier ARGS="--preset screening --seed 20261102"
+
+# Calibration and independent evaluation for the fixed method.
+make calibrate-random-classifier ARGS="--preset confirmation --seed 20261102"
+```
+
+Confirmation generates 250,000 independent IID uniform 16-bit calibration
+sequences per condition. The four conditions are ideal, 20% loss, 20% reordering,
+and their combination. Loss removes 20 of 100 positions; reordering in the
+combined condition acts on the remaining positions. This covers 100 and 80
+replies under those specific impairment models, not arbitrary loss patterns or
+every possible reply count.
+
+For each target false-rejection rate, the evaluator sorts the complete scores
+in each condition and selects the value at zero-based index `floor(target * N)`.
+It takes the smallest condition-specific threshold as the proposed common
+threshold. Decisions use `S >= threshold`, so ties at the threshold are accepted.
+This limits the strict lower-tail fraction on the calibration data; independent
+evaluation is needed to assess the error rate beyond that sample.
+
+The primary target remains 0.05%; 0.01%, 0.025%, and 0.1% are also reported.
+Confirmation separately evaluates 100,000 sequences per generator and condition
+for each of the paper and held-out generator profiles, using independent random
+streams. The proposed thresholds are frozen before those tests. Reports include
+per-condition RANDOM false-rejection rates, structured false-RANDOM rates, and
+95% Wilson intervals. These are score-compatibility results **before** the
+deterministic/CONSTANT/MULTI rules, not complete-classifier confusion matrices.
+
+Outputs are kept separate from historical experiments:
+
+- Data/reports: `data/processed/classifier-validation/random-classifier-view-evaluation/production/confirmation/`
+- Figures: `reports/figures/classifier-validation/random-classifier-view-evaluation/production/confirmation/`
+
+Replace `confirmation` with `screening` for the smaller preset. Important files:
+
+- `summary.json`: proposed thresholds under `calibration`, calibration rates by
+  condition, score version, sample sizes, and seeds.
+- `operating-point-by-scenario.csv`: independent error counts, rates, and confidence
+  intervals for each target, generator, profile, and condition.
+- `operating-point-results.csv`: aggregate independent results for each target.
+- `view-scores.pq`: individual evaluation scores and both component values in
+  float64, with condition, profile, generator, sample ID, and reply count.
+- `random-classifier-view-review-bundle.zip`: summaries, CSV reports, log, and
+  figures for review; the potentially large score Parquet is kept separately.
+
+The command only proposes thresholds. It does not change the production cutoff,
+saved classifications, or source files. Review the independent results before
+adopting a threshold and regenerating the complete-classifier validation plots.
+
 Existing persisted `strategies.pq` labels are reused by default. An explicit
 `--reclassify` is needed to replace them with version-8 decisions; subsequent
 derived analyses must then be rebuilt as appropriate. New strategy Parquet
