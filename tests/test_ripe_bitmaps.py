@@ -130,17 +130,19 @@ class CacheTests(unittest.TestCase):
             root = Path(directory)
             args = dict(
                 campaign_start=datetime(2026, 1, 29, tzinfo=timezone.utc),
-                dump_samples=1,
                 preprocess_workers=1,
                 raw_root=root / "raw",
                 processed_root=root / "processed",
             )
 
             def download(url, path, **kwargs):
+                day = int(url.split("/")[-2][-2:])
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(
                     bz2.compress(
-                        (json.dumps(trace([(1, ["8.8.8.8"]), (2, ["1.1.1.1"])])) + "\n").encode()
+                        (
+                            json.dumps(trace([(1, ["8.8.8.8"]), (2, [f"1.1.1.{day}"])])) + "\n"
+                        ).encode()
                     )
                 )
                 return path
@@ -152,7 +154,7 @@ class CacheTests(unittest.TestCase):
             ):
                 first = ripe.prepare_ripe_atlas(**args)
                 expected = pq.read_table(first.roles_path).to_pylist()
-                self.assertEqual(downloads.call_count, 1)
+                self.assertEqual(downloads.call_count, 14)
                 self.assertEqual(list((root / "processed").rglob("*.bz2")), [])
             with patch.object(
                 ripe, "_available_dump_days", side_effect=AssertionError("must not crawl")
@@ -166,19 +168,29 @@ class CacheTests(unittest.TestCase):
             ):
                 restored = ripe.prepare_ripe_atlas(**args)
                 self.assertEqual(pq.read_table(restored.roles_path).to_pylist(), expected)
-            # A neighboring campaign reuses the same hour from S3 without downloading.
+            # A neighboring campaign restores 13 parts and parses only the new day.
+            shutil.rmtree(root / "processed")
             args["campaign_start"] = datetime(2026, 1, 30, tzinfo=timezone.utc)
             with (
-                patch.object(ripe, "_available_dump_days", return_value=(date(2026, 1, 15),)),
-                patch.object(
-                    ripe, "_remote_file_size", side_effect=AssertionError("must not fetch raw")
-                ),
-                patch.object(
-                    ripe, "_parse_role_file", side_effect=AssertionError("must not parse")
-                ),
+                patch.object(ripe, "_available_dump_days", side_effect=AssertionError("no index")),
+                patch.object(ripe, "_remote_file_size", return_value=100) as heads,
+                patch.object(ripe, "_download", side_effect=download) as downloads,
+                patch.object(ripe, "_parse_role_file", wraps=ripe._parse_role_file) as parses,
             ):
                 reused = ripe.prepare_ripe_atlas(**args)
-                self.assertEqual(pq.read_table(reused.roles_path).to_pylist(), expected)
+                addresses = {
+                    row["IP_ADDR"] for row in pq.read_table(reused.roles_path).to_pylist()
+                }
+                self.assertEqual(
+                    addresses, ({row["IP_ADDR"] for row in expected} - {"1.1.1.15"}) | {"1.1.1.29"}
+                )
+                self.assertEqual(heads.call_count, 1)
+                self.assertEqual(downloads.call_count, 1)
+                self.assertEqual(parses.call_count, 1)
+                self.assertIn("/2026-01-29/", downloads.call_args.args[0])
+                metadata = json.loads(reused.metadata_path.read_text())
+                self.assertEqual(metadata["dump_samples"], 14)
+                self.assertEqual(metadata["daily_dump_selection_policy"], "unix-day-7-v1")
 
 
 if __name__ == "__main__":

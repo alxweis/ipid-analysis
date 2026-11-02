@@ -34,7 +34,7 @@ cross-interface strategy-consistency artifacts. When the protocol campaign also
 contains an OS measurement, the same ITDK roles are joined to resolved canonical
 OS groups and rendered as a second compact observed-role distribution.
 The same canonical IP-ID results are joined to observed roles extracted from
-the 28 complete UTC days of RIPE Atlas traceroutes preceding the campaign.
+the 14 complete UTC days of RIPE Atlas traceroutes preceding the campaign.
 Every available RT-base/fixed-interval-base pair is also compared with the
 three compact paper figures in :mod:`ipid_analysis.paper_figures`.
 """
@@ -108,7 +108,6 @@ from ipid_analysis.random_reproducibility_analysis import (
     evaluate_random_reproducibility,
 )
 from ipid_analysis.ripe_atlas import (
-    DEFAULT_DUMP_SAMPLES,
     DEFAULT_PREPROCESS_WORKERS,
     infer_campaign_start,
     parse_datetime,
@@ -228,12 +227,6 @@ def main(
         envvar="IPID_ANALYSIS_RIPE_CAMPAIGN_START",
         help="override campaign start (ISO-8601); normally inferred from the manifest",
     ),
-    ripe_dump_samples: int = typer.Option(
-        DEFAULT_DUMP_SAMPLES,
-        min=1,
-        envvar="IPID_ANALYSIS_RIPE_DUMP_SAMPLES",
-        help="evenly distributed hourly daily-dump files in the RIPE window",
-    ),
     ripe_preprocess_workers: int = typer.Option(
         DEFAULT_PREPROCESS_WORKERS,
         min=1,
@@ -335,7 +328,6 @@ def main(
                     source=ripe_source,
                     measurement_ids_file=ripe_measurement_ids,
                     input_dir=ripe_input_dir,
-                    dump_samples=ripe_dump_samples,
                     preprocess_workers=ripe_preprocess_workers,
                 )
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:

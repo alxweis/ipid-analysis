@@ -24,7 +24,6 @@ from ipid_analysis.plot_os_group_strategy import resolve_os_measurement_id
 from ipid_analysis.plot_ripe_atlas_os import render_ripe_atlas_os_analysis
 from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
 from ipid_analysis.ripe_atlas import (
-    DEFAULT_DUMP_SAMPLES,
     DEFAULT_PREPROCESS_WORKERS,
     DEFAULT_SOURCE,
     infer_campaign_start,
@@ -53,9 +52,6 @@ def main(
     ripe_input_dir: Path | None = typer.Option(None, envvar="IPID_ANALYSIS_RIPE_INPUT_DIR"),
     ripe_campaign_start: str | None = typer.Option(
         None, envvar="IPID_ANALYSIS_RIPE_CAMPAIGN_START"
-    ),
-    ripe_dump_samples: int = typer.Option(
-        DEFAULT_DUMP_SAMPLES, min=1, envvar="IPID_ANALYSIS_RIPE_DUMP_SAMPLES"
     ),
     ripe_preprocess_workers: int = typer.Option(
         DEFAULT_PREPROCESS_WORKERS, min=1, envvar="IPID_ANALYSIS_RIPE_WORKERS"
@@ -86,7 +82,6 @@ def main(
             source=ripe_source,
             measurement_ids_file=ripe_measurement_ids,
             input_dir=ripe_input_dir,
-            dump_samples=ripe_dump_samples,
             preprocess_workers=ripe_preprocess_workers,
         )
 

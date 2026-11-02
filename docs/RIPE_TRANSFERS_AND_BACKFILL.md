@@ -82,6 +82,10 @@ retained. Do not assume that this change repairs a particular RIPE server fault.
 
 ## Targeted AS backfill: commands for the operator, not executed by this PR
 
+These commands target the historical 28-day, twelve-dump cache from the run
+above. New campaigns use 14 complete UTC days with one hour per day selected by
+`(7 * unix_day) % 24`; their window key is `daily-dumps-unix-day-7-v1`.
+
 This does **not** run ZMap, IPID, classifiers, strategy merges, role-cache
 preparation, OS analysis, or full postprocessing. It reads the already complete
 RIPE/ITDK caches and four existing strategy tables: one merged table for each
@@ -181,7 +185,7 @@ for job in ids:
     evidence = status["manifest"][0]
     assert manifest_path.stat().st_size == evidence["size"]
     assert file_digest(manifest_path) == evidence["sha256"]
-    window = campaign_window(infer_campaign_start(manifest))
+    window = campaign_window(infer_campaign_start(manifest), lookback_days=28)
     assert window.label == "2026-10-01_2026-10-29"
     directory = PROCESSED_STORAGE_DIR / "ripe-atlas" / window.label / "daily-dumps-s12"
     dataset = RipeAtlasDataset("daily-dumps-s12", window, directory, directory / "ipv4-roles.pq", directory / "source.json")
