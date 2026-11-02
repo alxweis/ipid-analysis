@@ -1,0 +1,185 @@
+{
+  "accuracy_first_shortlist": [
+    "increment-pearson-gap-min-v4"
+  ],
+  "bin_rules": [],
+  "calibration": {
+    "increment-pearson-gap-min-v4": {
+      "false_rejection_by_condition": {
+        "ideal": 0.000376,
+        "lossy": 0.0003,
+        "lossy-reordered": 0.000256,
+        "reordered": 0.00046
+      },
+      "operating_points": {
+        "0.0001": {
+          "false_rejection_by_condition": {
+            "ideal": 6.8e-05,
+            "lossy": 7.6e-05,
+            "lossy-reordered": 6.8e-05,
+            "reordered": 0.0001
+          },
+          "target_random_false_rejection_rate": 0.0001,
+          "threshold": 5.887355583577647e-06,
+          "threshold_by_condition": {
+            "ideal": 1.0842800253541266e-05,
+            "lossy": 1.1116910041537445e-05,
+            "lossy-reordered": 9.923348099849384e-06,
+            "reordered": 5.887355583577647e-06
+          }
+        },
+        "0.00025": {
+          "false_rejection_by_condition": {
+            "ideal": 0.000164,
+            "lossy": 0.000176,
+            "lossy-reordered": 0.00014,
+            "reordered": 0.000248
+          },
+          "target_random_false_rejection_rate": 0.00025,
+          "threshold": 2.0109011888763435e-05,
+          "threshold_by_condition": {
+            "ideal": 2.7409656405101065e-05,
+            "lossy": 3.447571378896948e-05,
+            "lossy-reordered": 3.999996000004e-05,
+            "reordered": 2.0109011888763435e-05
+          }
+        },
+        "0.0005": {
+          "false_rejection_by_condition": {
+            "ideal": 0.000376,
+            "lossy": 0.0003,
+            "lossy-reordered": 0.000256,
+            "reordered": 0.00046
+          },
+          "target_random_false_rejection_rate": 0.0005,
+          "threshold": 4.0383019016847365e-05,
+          "threshold_by_condition": {
+            "ideal": 4.738685066543723e-05,
+            "lossy": 6.771137633885085e-05,
+            "lossy-reordered": 8.243157575444893e-05,
+            "reordered": 4.0383019016847365e-05
+          }
+        },
+        "0.001": {
+          "false_rejection_by_condition": {
+            "ideal": 0.000876,
+            "lossy": 0.000664,
+            "lossy-reordered": 0.000564,
+            "reordered": 0.001
+          },
+          "target_random_false_rejection_rate": 0.001,
+          "threshold": 9.678919715614243e-05,
+          "threshold_by_condition": {
+            "ideal": 0.00010845688549295929,
+            "lossy": 0.000145999854000146,
+            "lossy-reordered": 0.0001701175259502111,
+            "reordered": 9.678919715614243e-05
+          }
+        }
+      },
+      "threshold": 4.0383019016847365e-05,
+      "threshold_by_condition": {
+        "ideal": 4.738685066543723e-05,
+        "lossy": 6.771137633885085e-05,
+        "lossy-reordered": 8.243157575444893e-05,
+        "reordered": 4.0383019016847365e-05
+      }
+    }
+  },
+  "candidates": [
+    {
+      "gap_mode": "full",
+      "include_gap": true,
+      "include_increment": true,
+      "include_raw": false,
+      "increment_mode": "minimum",
+      "name": "increment-pearson-gap-min-v4",
+      "raw_bin_count": 16,
+      "rule_name": "production"
+    }
+  ],
+  "conditions": [
+    {
+      "loss_fraction": 0.0,
+      "loss_pattern": "random",
+      "name": "ideal",
+      "reorder_fraction": 0.0
+    },
+    {
+      "loss_fraction": 0.2,
+      "loss_pattern": "random",
+      "name": "lossy",
+      "reorder_fraction": 0.0
+    },
+    {
+      "loss_fraction": 0.0,
+      "loss_pattern": "random",
+      "name": "reordered",
+      "reorder_fraction": 0.2
+    },
+    {
+      "loss_fraction": 0.2,
+      "loss_pattern": "random",
+      "name": "lossy-reordered",
+      "reorder_fraction": 0.2
+    }
+  ],
+  "configuration": {
+    "batch_size": 10000,
+    "calibration_samples": 250000,
+    "heldout_samples": 100000,
+    "null_samples": 1000000,
+    "paper_samples": 100000
+  },
+  "evaluation_scope": "score compatibility before deterministic/MULTI rules",
+  "expected_calibration_tail_observations_by_target": {
+    "0.0001": 25.0,
+    "0.00025": 62.5,
+    "0.0005": 125.0,
+    "0.001": 250.0
+  },
+  "expected_calibration_tail_observations_per_condition": 125.0,
+  "experiment_version": "3",
+  "exploratory_tail_calibration": false,
+  "gap_views_computed": "full-only",
+  "generated_at": "2026-11-02T18:15:20.346628+00:00",
+  "independent_data_streams": {
+    "calibration": 101,
+    "calibration_impairment": 102,
+    "evaluation": 201,
+    "evaluation_impairment": 202
+  },
+  "mode": "production-only",
+  "preset": "confirmation",
+  "production_classifier_changed": false,
+  "production_score": {
+    "classifier_version": "8",
+    "components": [
+      "increment_uniformity",
+      "gap_uniformity"
+    ],
+    "current_provisional_threshold": 7.89999176049605e-05,
+    "decision": "S >= threshold",
+    "gap_null_table_samples": 1000000,
+    "gap_null_table_seed": 20260950,
+    "gap_null_table_version": "empirical-discrete-16bit-circular-cvm-v1",
+    "precision": "float64",
+    "score_version": "increment-pearson-gap-min-v4",
+    "threshold_updated": false
+  },
+  "raw_ablation_candidates": [],
+  "raw_bin_counts": [],
+  "score_parquet": "/mnt/data01/ipid-analysis/data/processed/classifier-validation/random-classifier-view-evaluation/production/confirmation/view-scores.pq",
+  "seeds": {
+    "base": 20261102,
+    "gap_null_tables": 20260950,
+    "increment_null_tables": null
+  },
+  "target_random_false_rejection_rate": 0.0005,
+  "target_random_false_rejection_rates": [
+    0.0001,
+    0.00025,
+    0.0005,
+    0.001
+  ]
+}

@@ -168,8 +168,11 @@ class RandomClassifierCalibrationTest(unittest.TestCase):
             self.assertEqual(metadata["seeds"]["gap_null_tables"], CANDIDATE_GAP_NULL_TABLE_SEED)
             self.assertFalse(metadata["production_score"]["threshold_updated"])
             self.assertEqual(
-                metadata["production_score"]["current_provisional_threshold"],
+                metadata["production_score"]["current_threshold"],
                 CANDIDATE_RANDOM_MIN_SCORE,
+            )
+            self.assertEqual(
+                metadata["production_score"]["current_threshold_status"], "empirically-calibrated"
             )
             scores = pq.read_table(output / "view-scores.pq")
             self.assertNotIn("RAW", scores.column_names)

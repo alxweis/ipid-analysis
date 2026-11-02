@@ -56,7 +56,7 @@ from ipid_analysis.runtime import batch_budget, connect, start_run, temporary_pa
 app = typer.Typer()
 
 MODULUS = 1 << 16  # IPIDs are 16-bit
-CLASSIFIER_VERSION = "8"
+CLASSIFIER_VERSION = "9"
 
 # --- classifier thresholds (tuning, measurement-independent) ---------------
 MIN_STEPS_BEFORE_WRAPAROUND = 3
@@ -69,8 +69,11 @@ CHI2_BINS = 4  # equal-width bins for the IPID-value uniformity test
 LEGACY_RANDOM_STRUCTURE_SCORE_VERSION = "raw-multiset-bounded-v2"
 LEGACY_RANDOM_STRUCTURE_MIN_SCORE = 0.000016313656391956604
 RANDOM_STRUCTURE_SCORE_VERSION = "increment-pearson-gap-min-v4"
-# Provisional v7 numeric cutoff, retained explicitly pending v8 calibration.
-RANDOM_STRUCTURE_MIN_SCORE = 7.89999176049605e-05
+# Seed-20261102 confirmation: empirical 0.05% true-RANDOM false-rejection target.
+# The score definition is unchanged; see the recorded independent evaluation.
+RANDOM_STRUCTURE_MIN_SCORE = 4.0383019016847365e-05
+RANDOM_STRUCTURE_THRESHOLD_STATUS = "empirically-calibrated"
+RANDOM_STRUCTURE_CALIBRATION_REPORT = "docs/random-classifier-calibration-20261102/summary.json"
 RANDOM_STRUCTURE_UNIFORMITY_BINS = 16
 RANDOM_STRUCTURE_MIN_TEST_SAMPLES = 2
 RANDOM_STRUCTURE_BOUNDED_INCREMENT_NULL_PROBABILITY = MAX_INC / MODULUS
@@ -154,7 +157,8 @@ OUTPUT_SCHEMA = pa.schema(
         b"classifier_version": CLASSIFIER_VERSION.encode(),
         b"random_structure_score_version": RANDOM_STRUCTURE_SCORE_VERSION.encode(),
         b"random_structure_min_score": str(RANDOM_STRUCTURE_MIN_SCORE).encode(),
-        b"random_threshold_status": b"provisional-uncalibrated",
+        b"random_threshold_status": RANDOM_STRUCTURE_THRESHOLD_STATUS.encode(),
+        b"random_threshold_calibration_report": RANDOM_STRUCTURE_CALIBRATION_REPORT.encode(),
     },
 )
 

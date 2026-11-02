@@ -44,11 +44,14 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_NULL_TABLE_SAMPLES,
     CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_NULL_TABLE_VERSION,
+    CANDIDATE_RANDOM_CALIBRATION_REPORT,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SCORE_VERSION,
+    CANDIDATE_RANDOM_SELECTION,
     CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
     CandidateNullTables,
+    candidate_random_threshold_status,
     create_candidate_null_tables,
 )
 from ipid_analysis.strategies import (
@@ -1542,7 +1545,15 @@ def validate_classifier(
             "validation_only": False,
             "production_classifier_changed": True,
             "scope": "fixed-interval mass classifier only",
-            "threshold_status": "provisional-uncalibrated",
+            "threshold_status": candidate_random_threshold_status(
+                candidate_threshold, candidate_null_table_samples, candidate_null_table_seed
+            ),
+            "threshold_selected_by": (
+                CANDIDATE_RANDOM_SELECTION
+                if candidate_threshold == CANDIDATE_RANDOM_MIN_SCORE
+                else "custom threshold override"
+            ),
+            "production_calibration_report": CANDIDATE_RANDOM_CALIBRATION_REPORT,
         }
     else:
         random_score_metadata = {

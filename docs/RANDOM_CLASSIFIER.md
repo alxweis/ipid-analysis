@@ -1,7 +1,9 @@
-# RANDOM classifier version 8
+# RANDOM classifier version 9
 
 The 4x25 mass classifier uses `S = min(p_inc, p_gap)` after the existing
 deterministic, CONSTANT and MULTI rules. Base classification is unchanged.
+Version 9 adopts the calibrated threshold for the score introduced in version 8;
+the score version remains `increment-pearson-gap-min-v4`.
 
 ## Increment component
 
@@ -30,17 +32,25 @@ IID discrete-uniform 16-bit configurations of the same observed length.
 The existing gap seed, one-million-simulation specification, and lazy cache
 are retained. The raw-IPID uniformity diagnostic is not part of the score.
 
-## Provisional decision threshold
+## Calibrated decision threshold
 
-The numeric cutoff `7.89999176049605e-05` is retained **only as a provisional,
-uncalibrated value**, as requested. The decision remains `S >= cutoff`, with
-at least two received values. The old classifier's calibration does not apply
-to this score, and no combined false-rejection rate is claimed. Overlapping
-view tests are not independent, and theoretical chi-square tails are approximate.
+The default cutoff is `tau = 4.0383019016847365e-05`. A sequence with at least
+two received values is RANDOM-compatible when `S >= tau`, subject to the
+preceding classification rules. The seed-20261102 confirmation selected this
+empirical operating point at a target 0.05% true-RANDOM false-rejection rate.
+The same default is used by production, classifier validation, score-CDF plots,
+and reproducibility analysis.
 
-This change does not select a new threshold, run scientific validation, or
-generate validation plots. Those steps must be performed separately before
-making accuracy claims. Historical experimental modules remain available;
+The independent per-condition point estimates range from 0.025% to 0.041%.
+Some 95% Wilson intervals extend above 0.05%, up to approximately 0.0556%; the
+target is not a guaranteed population-level upper bound. The calibration covers
+the four recorded 100/80-reply impairment conditions. Overlapping view tests
+are not independent, and theoretical chi-square tails are approximate.
+See the [calibration evidence and limitations](random-classifier-calibration-20261102/README.md).
+
+Metadata reports `empirically-calibrated` for the matching production threshold,
+gap-table sample count, and gap seed. Validation/CDF overrides of those parameters
+are marked `custom-uncalibrated`. Historical experimental modules remain available;
 production no longer calls their multiscale/Fisher implementation.
 
 ## Calibrating the current score
@@ -102,6 +112,12 @@ saved classifications, or source files. Review the independent results before
 adopting a threshold and regenerating the complete-classifier validation plots.
 
 Existing persisted `strategies.pq` labels are reused by default. An explicit
-`--reclassify` is needed to replace them with version-8 decisions; subsequent
+`--reclassify` is needed to replace them with version-9 decisions; subsequent
 derived analyses must then be rebuilt as appropriate. New strategy Parquet
-metadata records classifier/score versions and the provisional threshold status.
+metadata records classifier/score versions, threshold status, and calibration report.
+
+After adopting the threshold, regenerate full-classifier validation separately:
+
+```bash
+make validate-classifier ARGS="--samples-per-strategy 100000 --seed 42"
+```
