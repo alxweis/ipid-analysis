@@ -638,6 +638,17 @@ The old numeric cutoff is retained provisionally and is **not calibrated for
 version 8**. No new validation results or plots accompany this implementation.
 The existing commands below can be run separately; their report metadata now
 identifies the new method and provisional threshold.
+To calibrate this score with the existing evaluator and independently check the
+proposed thresholds, run:
+
+```bash
+make calibrate-random-classifier ARGS="--preset confirmation --seed 20261102"
+```
+
+This mode calls the exact production score and keeps its gap reference fixed.
+It writes separate `production/confirmation/` reports and does not update the
+production threshold. See [calibration details and output files](docs/RANDOM_CLASSIFIER.md#calibrating-the-current-score).
+
 The validation uses the same version, threshold, null-table sizes, and seeds as
 production. To reproduce the pre-v7 production baseline for a historical
 comparison instead, run:

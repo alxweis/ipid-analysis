@@ -1,7 +1,8 @@
 """Staged offline evaluation of view evidence for RANDOM classification.
 
-This module deliberately does not change classifier state. It compares the
-selected ``min(raw, increment, gap)`` production score with alternatives
+This module deliberately does not change classifier state. In production-only
+mode it calibrates the exact current production score. The historical mode
+compares the former ``min(raw, increment, gap)`` score with alternatives
 that aggregate independent destination/connection evidence, add circular-spacing
 subsequence views, and vary the increment bin rule.
 """
@@ -9,7 +10,7 @@ subsequence views, and vary the increment bin rule.
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import logging
@@ -58,7 +59,14 @@ from ipid_analysis.multiscale_increment_uniformity import (
 from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
     CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET,
+    CANDIDATE_NULL_TABLE_SAMPLES,
     CANDIDATE_NULL_TABLE_SEED,
+    CANDIDATE_NULL_TABLE_VERSION,
+    CANDIDATE_RANDOM_MIN_SCORE,
+    CANDIDATE_RANDOM_SCORE_VERSION,
+    CandidateNullTables,
+    candidate_random_score_components,
+    production_candidate_null_tables,
 )
 from ipid_analysis.random_classifier_evaluation import (
     ImpairmentCondition,
@@ -72,6 +80,7 @@ from ipid_analysis.random_classifier_evaluation_v2 import (
     generate_v2_sequences,
 )
 from ipid_analysis.strategies import (
+    CLASSIFIER_VERSION,
     MODULUS,
     RANDOM_STRUCTURE_MIN_TEST_SAMPLES,
 )
@@ -79,7 +88,7 @@ from ipid_analysis.strategies import (
 app = typer.Typer(add_completion=False)
 LOGGER = logging.getLogger(__name__)
 
-EXPERIMENT_VERSION = "2"
+EXPERIMENT_VERSION = "3"
 VIEW_NAMES = ("full", "dst0", "dst1", "con0", "con1", "con2", "con3")
 RAW_BIN_COUNTS = (8, 10, 12, 16)
 CORE_CONDITIONS = (
@@ -239,6 +248,9 @@ def _candidates() -> tuple[Candidate, ...]:
 ALL_CANDIDATES = _candidates()
 BASELINE_NAME = "raw+multiscale-e2:inc-minimum:gap-full"
 SELECTED_CANDIDATE_NAME = "raw+multiscale-e2:inc-aggregate:gap-full"
+PRODUCTION_CANDIDATE = Candidate(
+    CANDIDATE_RANDOM_SCORE_VERSION, "production", "minimum", "full", False, True, True
+)
 RAW_ABLATION_CANDIDATE_NAMES = tuple(
     f"raw{bin_count}+multiscale-e2:inc-aggregate:gap-full" for bin_count in RAW_BIN_COUNTS[:-1]
 ) + (SELECTED_CANDIDATE_NAME,)
@@ -371,11 +383,21 @@ def raw_uniformity_pvalues(
 def _primitive_scores(
     values: np.ndarray,
     present: np.ndarray,
-    increment_tables: IncrementBinNullTables,
+    increment_tables: IncrementBinNullTables | None,
     spacing_tables: EmpiricalNullTables,
     rules: tuple[IncrementBinRule, ...] = BIN_RULES,
     include_gap_aggregate: bool = True,
+    production_tables: CandidateNullTables | None = None,
 ) -> dict[str, np.ndarray]:
+    if production_tables is not None:
+        components = candidate_random_score_components(
+            values, present, production_tables, config=FIXED_CONFIG
+        )
+        return {
+            "production_increment": components.increment_uniformity,
+            "production_gap": components.gap_uniformity,
+            "production_score": components.score,
+        }
     result = {
         f"raw:{bin_count}": raw_uniformity_pvalues(values, present, bin_count)
         for bin_count in RAW_BIN_COUNTS
@@ -404,6 +426,11 @@ def _component_scores(
     primitive: dict[str, np.ndarray],
     candidate: Candidate,
 ) -> dict[str, np.ndarray]:
+    if candidate.rule_name == "production":
+        return {
+            "increment": primitive["production_increment"],
+            "gap": primitive["production_gap"],
+        }
     components = {}
     if candidate.include_increment:
         components["increment"] = primitive[
@@ -422,7 +449,9 @@ def candidate_scores(
 ) -> np.ndarray:
     return np.column_stack(
         [
-            np.minimum.reduce(tuple(_component_scores(primitive, item).values()))
+            primitive["production_score"]
+            if item.rule_name == "production"
+            else np.minimum.reduce(tuple(_component_scores(primitive, item).values()))
             for item in candidates
         ]
     )
@@ -456,11 +485,12 @@ def _calibrate(
     batch_size: int,
     seed: int,
     candidates: tuple[Candidate, ...],
-    increment_tables: IncrementBinNullTables,
+    increment_tables: IncrementBinNullTables | None,
     spacing_tables: EmpiricalNullTables,
     rules: tuple[IncrementBinRule, ...] | None = None,
     include_gap_aggregate: bool | None = None,
     target_rates: tuple[float, ...] = TARGET_RANDOM_FALSE_REJECTION_RATES,
+    production_tables: CandidateNullTables | None = None,
 ) -> dict[str, dict]:
     rules = rules if rules is not None else _required_rules(candidates)
     include_gap_aggregate = (
@@ -491,9 +521,12 @@ def _calibrate(
                 spacing_tables,
                 rules,
                 include_gap_aggregate,
+                production_tables,
             )
             by_condition[condition_index].append(
-                candidate_scores(primitive, candidates).astype(np.float32)
+                candidate_scores(primitive, candidates).astype(
+                    np.float64 if production_tables is not None else np.float32
+                )
             )
     arrays = [np.concatenate(parts) for parts in by_condition]
     calibrated = {}
@@ -530,6 +563,7 @@ def _calibrate(
 def _score_schema(
     rules: tuple[IncrementBinRule, ...] = BIN_RULES,
     include_gap_aggregate: bool = True,
+    production_only: bool = False,
 ) -> pa.Schema:
     fields = [
         ("PROFILE", pa.string()),
@@ -537,8 +571,10 @@ def _score_schema(
         ("GENERATOR_STRATEGY", pa.string()),
         ("SAMPLE_ID", pa.int64()),
         ("PRESENT_COUNT", pa.int16()),
-        ("RAW", pa.float32()),
     ]
+    if production_only:
+        return pa.schema(fields + [(name, pa.float64()) for name in ("INCREMENT", "GAP", "SCORE")])
+    fields.append(("RAW", pa.float32()))
     fields.extend(
         (f"RAW_{bin_count}", pa.float32()) for bin_count in RAW_BIN_COUNTS if bin_count != 16
     )
@@ -570,8 +606,16 @@ def _write_score_batch(
         "GENERATOR_STRATEGY": [strategy] * size,
         "SAMPLE_ID": np.arange(sample_offset, sample_offset + size, dtype=np.int64),
         "PRESENT_COUNT": present.sum(axis=1).astype(np.int16),
-        "RAW": primitive["raw"].astype(np.float32),
     }
+    if "production_score" in primitive:
+        columns.update(
+            INCREMENT=primitive["production_increment"],
+            GAP=primitive["production_gap"],
+            SCORE=primitive["production_score"],
+        )
+        writer.write_table(pa.Table.from_pydict(columns, schema=writer.schema))
+        return
+    columns["RAW"] = primitive["raw"].astype(np.float32)
     for bin_count in RAW_BIN_COUNTS:
         if bin_count != 16:
             columns[f"RAW_{bin_count}"] = primitive[f"raw:{bin_count}"].astype(np.float32)
@@ -591,11 +635,12 @@ def _evaluate(
     seed: int,
     candidates: tuple[Candidate, ...],
     calibrated: dict[str, dict],
-    increment_tables: IncrementBinNullTables,
+    increment_tables: IncrementBinNullTables | None,
     spacing_tables: EmpiricalNullTables,
     score_path: Path,
     rules: tuple[IncrementBinRule, ...] | None = None,
     include_gap_aggregate: bool | None = None,
+    production_tables: CandidateNullTables | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     rules = rules if rules is not None else _required_rules(candidates)
     include_gap_aggregate = (
@@ -606,7 +651,7 @@ def _evaluate(
     counts: dict[tuple[str, str, str, str], list[int]] = {}
     operating_counts: dict[tuple[str, str, str, str, str], list[int]] = {}
     catches: dict[tuple[str, str, str, str, str], int] = {}
-    schema = _score_schema(rules, include_gap_aggregate)
+    schema = _score_schema(rules, include_gap_aggregate, production_tables is not None)
     with (
         atomic_output(score_path) as score_temporary,
         pq.ParquetWriter(score_temporary, schema, compression="zstd") as writer,
@@ -642,6 +687,7 @@ def _evaluate(
                             spacing_tables,
                             rules,
                             include_gap_aggregate,
+                            production_tables,
                         )
                         _write_score_batch(
                             writer,
@@ -770,9 +816,10 @@ def _evaluate(
 def _benchmark(
     seed: int,
     candidates: tuple[Candidate, ...],
-    increment_tables: IncrementBinNullTables,
+    increment_tables: IncrementBinNullTables | None,
     spacing_tables: EmpiricalNullTables,
     sample_count: int = 2_000,
+    production_tables: CandidateNullTables | None = None,
 ) -> dict[str, float]:
     ideal = _stable_rng(seed, 301).integers(
         0,
@@ -783,6 +830,16 @@ def _benchmark(
     present = np.ones_like(ideal, dtype=bool)
     timings = {}
     for candidate in candidates:
+        if candidate.rule_name == "production":
+            if production_tables is None:
+                raise ValueError("production candidate requires production null tables")
+            candidate_random_score_components(ideal, present, production_tables, FIXED_CONFIG)
+            started = time.perf_counter()
+            candidate_random_score_components(ideal, present, production_tables, FIXED_CONFIG)
+            timings[candidate.name] = (
+                (time.perf_counter() - started) * 1000.0 * 10_000 / sample_count
+            )
+            continue
         rule = RULE_BY_NAME[candidate.rule_name]
 
         def calculate(
@@ -1077,6 +1134,23 @@ def _plot_final_tuning(operating_rows: list[dict], path: Path) -> None:
 
 
 def _recommendations(summary_rows: list[dict], path: Path, preset_name: str) -> list[str]:
+    if all(row["candidate"] == PRODUCTION_CANDIDATE.name for row in summary_rows):
+        write_text(
+            path,
+            "Current production RANDOM-score calibration\n"
+            f"Score version: {CANDIDATE_RANDOM_SCORE_VERSION}\n"
+            f"Preset: {preset_name}\n"
+            "Primary target RANDOM false rejection: 0.05%.\n"
+            "Read the proposed threshold from summary.json > calibration > "
+            f"{PRODUCTION_CANDIDATE.name} > threshold.\n"
+            "Check independent RANDOM error rates and confidence intervals in "
+            "operating-point-by-scenario.csv before adopting it.\n"
+            "Structured results measure score compatibility before deterministic/MULTI rules.\n"
+            "Calibration covers only the four recorded impairment conditions.\n"
+            "No production threshold or saved classification was changed.\n",
+            encoding="utf-8",
+        )
+        return [PRODUCTION_CANDIDATE.name]
     heldout = sorted(
         (row for row in summary_rows if row["profile"] == "heldout"),
         key=lambda row: (
@@ -1196,13 +1270,18 @@ def main(
     output_dir: Path = typer.Option(DEFAULT_OUTPUT_DIR),  # noqa: B008
     figure_dir: Path = typer.Option(DEFAULT_FIGURE_DIR),  # noqa: B008
     seed: int = typer.Option(CANDIDATE_NULL_TABLE_SEED),
+    production_only: bool = typer.Option(
+        False, "--production-only", help="Calibrate only the exact current production score"
+    ),
 ) -> None:
     """Run the staged, production-independent view-evidence experiment."""
     start_run()
     if preset not in PRESETS:
         raise typer.BadParameter(f"unknown preset {preset!r}; choose from {tuple(PRESETS)}")
-    selected = ALL_CANDIDATES
-    if variants.strip():
+    if production_only and variants.strip():
+        raise typer.BadParameter("--production-only cannot be combined with --variants")
+    selected = (PRODUCTION_CANDIDATE,) if production_only else ALL_CANDIDATES
+    if not production_only and variants.strip():
         requested = {name.strip() for name in variants.split(",") if name.strip()}
         requested.add(BASELINE_NAME)
         selected = tuple(candidate for candidate in ALL_CANDIDATES if candidate.name in requested)
@@ -1213,8 +1292,15 @@ def main(
         raise typer.BadParameter("at least one candidate is required")
 
     config = PRESETS[preset]
+    production_tables = production_candidate_null_tables() if production_only else None
+    if production_only:
+        # Screening changes data volume, never the production score's null reference.
+        config = replace(config, null_samples=CANDIDATE_NULL_TABLE_SAMPLES)
     required_rules = _required_rules(selected)
     include_gap_aggregate = _requires_gap_aggregate(selected)
+    if production_only:
+        output_dir = output_dir / "production"
+        figure_dir = figure_dir / "production"
     output_dir = output_dir / preset
     figure_dir = figure_dir / preset
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1229,7 +1315,12 @@ def main(
         ],
         force=True,
     )
-    LOGGER.info("Starting view-evidence evaluation preset=%s candidates=%d", preset, len(selected))
+    LOGGER.info(
+        "Starting %s preset=%s candidates=%d",
+        "production-score calibration" if production_only else "view-evidence evaluation",
+        preset,
+        len(selected),
+    )
     LOGGER.info(
         "Required increment rules=%s; gap views=%s",
         ",".join(rule.name for rule in required_rules),
@@ -1244,8 +1335,14 @@ def main(
         )
     increment_seed = seed + CANDIDATE_INCREMENT_NULL_TABLE_SEED_OFFSET
     gap_seed = seed + CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET
-    increment_tables = IncrementBinNullTables(config.null_samples, increment_seed)
-    spacing_tables = EmpiricalNullTables(config.null_samples, gap_seed)
+    increment_tables = (
+        None if production_only else IncrementBinNullTables(config.null_samples, increment_seed)
+    )
+    spacing_tables = (
+        production_tables.gap
+        if production_tables is not None
+        else EmpiricalNullTables(config.null_samples, gap_seed)
+    )
     calibrated = _calibrate(
         config.calibration_samples,
         config.batch_size,
@@ -1255,6 +1352,7 @@ def main(
         spacing_tables,
         required_rules,
         include_gap_aggregate,
+        production_tables=production_tables,
     )
     detail_rows, catch_rows, operating_detail_rows = _evaluate(
         config,
@@ -1266,8 +1364,11 @@ def main(
         output_dir / "view-scores.pq",
         required_rules,
         include_gap_aggregate,
+        production_tables=production_tables,
     )
-    runtimes = _benchmark(seed, selected, increment_tables, spacing_tables)
+    runtimes = _benchmark(
+        seed, selected, increment_tables, spacing_tables, production_tables=production_tables
+    )
     summary_rows = _summaries(detail_rows, calibrated, runtimes, selected)
     operating_rows = _operating_point_summaries(operating_detail_rows, selected)
     raw_ablation_rows = [
@@ -1293,13 +1394,14 @@ def main(
     shortlist = _recommendations(summary_rows, output_dir / "recommendations.txt", preset)
     metadata = {
         "experiment_version": EXPERIMENT_VERSION,
+        "mode": "production-only" if production_only else "historical-variants",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "preset": preset,
         "configuration": config.__dict__,
         "seeds": {
             "base": seed,
-            "increment_null_tables": increment_seed,
-            "gap_null_tables": gap_seed,
+            "increment_null_tables": None if production_only else increment_seed,
+            "gap_null_tables": spacing_tables.seed,
         },
         "target_random_false_rejection_rate": TARGET_RANDOM_FALSE_REJECTION_RATE,
         "target_random_false_rejection_rates": list(TARGET_RANDOM_FALSE_REJECTION_RATES),
@@ -1314,12 +1416,32 @@ def main(
         "gap_views_computed": "full+subsequences" if include_gap_aggregate else "full-only",
         "candidates": [candidate.__dict__ for candidate in selected],
         "calibration": calibrated,
-        "raw_bin_counts": list(RAW_BIN_COUNTS),
-        "raw_ablation_candidates": list(RAW_ABLATION_CANDIDATE_NAMES),
+        "raw_bin_counts": [] if production_only else list(RAW_BIN_COUNTS),
+        "raw_ablation_candidates": [] if production_only else list(RAW_ABLATION_CANDIDATE_NAMES),
         "accuracy_first_shortlist": shortlist,
         "production_classifier_changed": False,
         "score_parquet": str(output_dir / "view-scores.pq"),
     }
+    if production_only:
+        metadata["production_score"] = {
+            "classifier_version": CLASSIFIER_VERSION,
+            "score_version": CANDIDATE_RANDOM_SCORE_VERSION,
+            "components": ["increment_uniformity", "gap_uniformity"],
+            "gap_null_table_samples": spacing_tables.sample_count,
+            "gap_null_table_version": CANDIDATE_NULL_TABLE_VERSION,
+            "gap_null_table_seed": spacing_tables.seed,
+            "current_provisional_threshold": CANDIDATE_RANDOM_MIN_SCORE,
+            "threshold_updated": False,
+            "decision": "S >= threshold",
+            "precision": "float64",
+        }
+        metadata["evaluation_scope"] = "score compatibility before deterministic/MULTI rules"
+        metadata["independent_data_streams"] = {
+            "calibration": 101,
+            "calibration_impairment": 102,
+            "evaluation": 201,
+            "evaluation_impairment": 202,
+        }
     write_text(
         output_dir / "summary.json",
         json.dumps(metadata, indent=2, sort_keys=True),
@@ -1327,18 +1449,20 @@ def main(
     )
     bundle = _review_bundle(output_dir, figure_dir)
     LOGGER.info("Review bundle: %s", bundle)
-    for key, value in {
+    outputs = {
         "summary": output_dir / "summary.json",
         "results": output_dir / "variant-results.csv",
         "scenarios": output_dir / "variant-by-scenario.csv",
         "operating_points": output_dir / "operating-point-results.csv",
         "operating_point_scenarios": output_dir / "operating-point-by-scenario.csv",
-        "raw_bin_ablation": output_dir / "raw-bin-ablation.csv",
         "catch_attribution": output_dir / "catch-attribution.csv",
         "view_scores": output_dir / "view-scores.pq",
         "recommendations": output_dir / "recommendations.txt",
         "review_bundle": bundle,
-    }.items():
+    }
+    if not production_only:
+        outputs["raw_bin_ablation"] = output_dir / "raw-bin-ablation.csv"
+    for key, value in outputs.items():
         typer.echo(f"{key}: {value}")
 
 
