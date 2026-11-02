@@ -1,0 +1,9 @@
+profile,candidate,raw_bin_count,target_random_false_rejection_rate,threshold,observed_random_false_rejection_rate,structured_false_random_rate,structured_p95_false_random_rate,structured_worst_false_random_rate,structured_worst_scenario,per_bucket_lossy_reordered_false_random_rate,single_lossy_reordered_false_random_rate
+paper,increment-pearson-gap-min-v4,,0.0001,5.887355583577647e-06,9.25e-05,0.060082857142857146,0.38095299999999954,0.65595,lossy-reordered:PER_BUCKET,0.65595,0.06632
+paper,increment-pearson-gap-min-v4,,0.00025,2.0109011888763435e-05,0.00022,0.046715,0.28569549999999966,0.57236,lossy-reordered:PER_BUCKET,0.57236,0.03546
+paper,increment-pearson-gap-min-v4,,0.0005,4.0383019016847365e-05,0.0003775,0.03486642857142857,0.21458199999999972,0.44473,lossy-reordered:PER_BUCKET,0.44473,0.02343
+paper,increment-pearson-gap-min-v4,,0.001,9.678919715614243e-05,0.00084,0.025401785714285714,0.14154649999999983,0.36804,lossy-reordered:PER_BUCKET,0.36804,0.01294
+heldout,increment-pearson-gap-min-v4,,0.0001,5.887355583577647e-06,7.5e-05,0.12504366666666666,0.5159864999999998,0.68887,lossy-reordered:MULTI_COUNTER_16,0.42915,nan
+heldout,increment-pearson-gap-min-v4,,0.00025,2.0109011888763435e-05,0.0001825,0.11556116666666667,0.5055019999999998,0.65733,lossy-reordered:MULTI_COUNTER_16,0.3683,nan
+heldout,increment-pearson-gap-min-v4,,0.0005,4.0383019016847365e-05,0.0003325,0.10753483333333333,0.4940539999999999,0.62805,lossy-reordered:MULTI_COUNTER_16,0.30027,nan
+heldout,increment-pearson-gap-min-v4,,0.001,9.678919715614243e-05,0.00075,0.09945133333333334,0.48406399999999994,0.60231,lossy-reordered:MULTI_COUNTER_16,0.25185,nan

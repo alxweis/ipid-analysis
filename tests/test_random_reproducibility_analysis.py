@@ -21,7 +21,9 @@ class RandomReproducibilityAnalysisTest(unittest.TestCase):
     @staticmethod
     def _sequence(values: np.ndarray, missing: set[int] | None = None) -> str:
         missing = missing or set()
-        return ",".join("-" if index in missing else str(int(value)) for index, value in enumerate(values))
+        return ",".join(
+            "-" if index in missing else str(int(value)) for index, value in enumerate(values)
+        )
 
     @staticmethod
     def _write_measurement(
@@ -92,9 +94,7 @@ class RandomReproducibilityAnalysisTest(unittest.TestCase):
                 ),
                 zmap_dir / "zmap.pq",
             )
-            strategy_dir = (
-                processed_root / zmap_id / "no-connection" / "fixed-interval-mass"
-            )
+            strategy_dir = processed_root / zmap_id / "no-connection" / "fixed-interval-mass"
             strategy_dir.mkdir(parents=True)
             strategy_path = strategy_dir / "n-fi-m_strategies.pq"
             pq.write_table(
@@ -116,11 +116,7 @@ class RandomReproducibilityAnalysisTest(unittest.TestCase):
                     {
                         "icmp": {
                             "zmap": zmap_id,
-                            "ipid": {
-                                "no-connection": {
-                                    "fixed-interval": {"mass": baseline_id}
-                                }
-                            },
+                            "ipid": {"no-connection": {"fixed-interval": {"mass": baseline_id}}},
                         }
                     }
                 )
@@ -144,6 +140,7 @@ class RandomReproducibilityAnalysisTest(unittest.TestCase):
             self.assertEqual(target.column_names, ["IP_ADDR", "REPLY_TYPE"])
             self.assertEqual(target.num_rows, 2)
             prepare_metadata = json.loads(prepared["json"].read_text())
+            self.assertEqual(prepare_metadata["threshold_status"], "custom-uncalibrated")
             self.assertEqual(prepare_metadata["selection"]["maximum_targets"], 2)
             self.assertEqual(prepare_metadata["selection"]["unclassified_selected"], 1)
             self.assertEqual(prepare_metadata["selection"]["random_controls"], 1)
@@ -163,7 +160,9 @@ class RandomReproducibilityAnalysisTest(unittest.TestCase):
             self.assertIn("P_GAP", pq.read_schema(evaluated["repetitions"]).names)
             missing = [row for row in repetitions if not row["OBSERVED"]]
             self.assertEqual(len(missing), 2)
-            summary = {row["IP_ADDR"]: row for row in pq.read_table(evaluated["summary"]).to_pylist()}
+            summary = {
+                row["IP_ADDR"]: row for row in pq.read_table(evaluated["summary"]).to_pylist()
+            }
             self.assertEqual(summary[unclassified_ip]["OBSERVED_COUNT"], 1)
             self.assertEqual(summary[random_ip]["OBSERVED_COUNT"], 1)
             self.assertTrue(evaluated["pdf"].is_file())

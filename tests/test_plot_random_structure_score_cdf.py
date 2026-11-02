@@ -189,6 +189,11 @@ class RandomStructureScoreCDFTest(unittest.TestCase):
             reordered_metadata = json.loads(reordered_json.read_text())
             lossy_reordered_metadata = json.loads(lossy_reordered_json.read_text())
             self.assertEqual(metadata["threshold"]["tau"], CANDIDATE_RANDOM_MIN_SCORE)
+            self.assertEqual(metadata["threshold"]["status"], "custom-uncalibrated")
+            self.assertEqual(
+                metadata["threshold"]["production_calibration_report"],
+                "docs/random-classifier-calibration-20261102/summary.json",
+            )
             self.assertEqual(
                 metadata["threshold"]["selected_by"],
                 CANDIDATE_RANDOM_SELECTION,

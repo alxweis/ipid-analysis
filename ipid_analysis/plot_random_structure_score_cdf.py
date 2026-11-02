@@ -1,8 +1,8 @@
 """Plot the current production RANDOM-score CDFs when explicitly requested.
 
-Version 8 uses the minimum of adaptive Pearson increment-view p-values and
-empirical circular-spacing Cramer-von Mises compatibility. Its numeric cutoff
-is provisional pending a separate calibration and validation run.
+The score is the minimum of adaptive Pearson increment-view p-values and
+empirical circular-spacing Cramer-von Mises compatibility. The default cutoff
+is selected by the seed-20261102 production-score confirmation.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_NULL_TABLE_SAMPLES,
     CANDIDATE_NULL_TABLE_SEED,
     CANDIDATE_NULL_TABLE_VERSION,
+    CANDIDATE_RANDOM_CALIBRATION_REPORT,
     CANDIDATE_RANDOM_METRICS,
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SCORE_VERSION,
@@ -50,6 +51,7 @@ from ipid_analysis.random_classifier_candidate import (
     CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE,
     CandidateNullTables,
     candidate_random_scores,
+    candidate_random_threshold_status,
     create_candidate_null_tables,
 )
 from ipid_analysis.strategies import (
@@ -617,8 +619,15 @@ def render(
             "threshold": {
                 "tau": threshold,
                 "target_global_random_false_rejection_rate": (DEFAULT_RANDOM_FALSE_REJECTION_RATE),
-                "selected_by": CANDIDATE_RANDOM_SELECTION,
-                "status": "provisional-uncalibrated",
+                "selected_by": (
+                    CANDIDATE_RANDOM_SELECTION
+                    if threshold == CANDIDATE_RANDOM_MIN_SCORE
+                    else "custom threshold override"
+                ),
+                "status": candidate_random_threshold_status(
+                    threshold, null_table_samples, null_table_seed
+                ),
+                "production_calibration_report": CANDIDATE_RANDOM_CALIBRATION_REPORT,
             },
             "figure": str(pdf_path),
             "figure_axis": {

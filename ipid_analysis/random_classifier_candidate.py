@@ -24,7 +24,12 @@ from ipid_analysis.increment_uniformity import (
     MIN_TRANSITIONS,
     increment_uniformity_pvalues,
 )
-from ipid_analysis.strategies import RANDOM_STRUCTURE_MIN_SCORE, RANDOM_STRUCTURE_SCORE_VERSION
+from ipid_analysis.strategies import (
+    RANDOM_STRUCTURE_CALIBRATION_REPORT,
+    RANDOM_STRUCTURE_MIN_SCORE,
+    RANDOM_STRUCTURE_SCORE_VERSION,
+    RANDOM_STRUCTURE_THRESHOLD_STATUS,
+)
 
 if TYPE_CHECKING:
     from ipid_analysis.strategies import MeasurementConfig
@@ -35,12 +40,12 @@ CANDIDATE_RANDOM_METRICS = (
     "gap_uniformity",
 )
 
-# Deliberately retain the previous numeric cutoff as a provisional value.
-# No false-rejection guarantee or v8 threshold calibration is claimed.
 CANDIDATE_RANDOM_MIN_SCORE = RANDOM_STRUCTURE_MIN_SCORE
+CANDIDATE_RANDOM_THRESHOLD_STATUS = RANDOM_STRUCTURE_THRESHOLD_STATUS
+CANDIDATE_RANDOM_CALIBRATION_REPORT = RANDOM_STRUCTURE_CALIBRATION_REPORT
 CANDIDATE_RANDOM_TARGET_FALSE_REJECTION_RATE = 0.0005
 CANDIDATE_RANDOM_SELECTION = (
-    "previous numeric cutoff retained provisionally; new-score calibration pending"
+    "seed-20261102 production-score confirmation at 0.05% target true-RANDOM false-rejection"
 )
 CANDIDATE_NULL_TABLE_VERSION = "empirical-discrete-16bit-circular-cvm-v1"
 CANDIDATE_NULL_TABLE_SAMPLES = 1_000_000
@@ -58,6 +63,19 @@ CANDIDATE_INCREMENT_BIN_COUNTS = tuple(range(MIN_BINS, MAX_BINS + 1))
 CANDIDATE_INCREMENT_TARGET_EXPECTED_PER_BIN = MIN_EXPECTED_PER_BIN
 CANDIDATE_INCREMENT_MIN_TRANSITIONS = MIN_TRANSITIONS
 CANDIDATE_INCREMENT_SUBSEQUENCE_AGGREGATION = "minimum-available-views"
+
+
+def candidate_random_threshold_status(
+    threshold: float, null_table_samples: int, null_table_seed: int
+) -> str:
+    """Apply the calibration status only to the matching production specification."""
+    if (threshold, null_table_samples, null_table_seed) == (
+        CANDIDATE_RANDOM_MIN_SCORE,
+        CANDIDATE_NULL_TABLE_SAMPLES,
+        CANDIDATE_NULL_TABLE_SEED,
+    ):
+        return CANDIDATE_RANDOM_THRESHOLD_STATUS
+    return "custom-uncalibrated"
 
 
 @dataclass(frozen=True)
@@ -105,7 +123,7 @@ def candidate_random_score_components(
     null_tables: CandidateNullTables,
     config: MeasurementConfig | None = None,
 ) -> CandidateRandomScoreComponents:
-    """Calculate S=min(p_inc, p_gap); its cutoff remains provisional."""
+    """Calculate S=min(p_inc, p_gap) independently of the decision threshold."""
     # Historical validation callers omit the shape because all confirmation
     # data use the fixed 4x25 layout. Production always passes its snapshot
     # configuration explicitly and therefore has no validation dependency.

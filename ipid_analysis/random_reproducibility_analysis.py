@@ -50,10 +50,13 @@ from ipid_analysis.deterministic_transition_analysis import (
 from ipid_analysis.inspect_sequences import parse_sequence
 from ipid_analysis.manifest import IpidMeasurement, load_manifest, resolve
 from ipid_analysis.random_classifier_candidate import (
+    CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
+    CANDIDATE_RANDOM_CALIBRATION_REPORT,
     CANDIDATE_RANDOM_MIN_SCORE,
     CANDIDATE_RANDOM_SELECTION,
     CandidateNullTables,
     candidate_random_score_components,
+    candidate_random_threshold_status,
     production_candidate_null_tables,
 )
 from ipid_analysis.strategies import (
@@ -483,7 +486,13 @@ def prepare_random_reproducibility_paths(
         "target": target,
         "measurement_id": measurement_id,
         "threshold": CANDIDATE_RANDOM_MIN_SCORE,
-        "threshold_status": CANDIDATE_RANDOM_SELECTION,
+        "threshold_status": candidate_random_threshold_status(
+            CANDIDATE_RANDOM_MIN_SCORE,
+            tables.gap.sample_count,
+            tables.gap.seed - CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
+        ),
+        "threshold_selected_by": CANDIDATE_RANDOM_SELECTION,
+        "threshold_calibration_report": CANDIDATE_RANDOM_CALIBRATION_REPORT,
         "selection": {
             "maximum_targets": maximum_targets,
             "unclassified_population": sum(component_population.values()),
@@ -862,7 +871,13 @@ def evaluate_random_reproducibility(
         "target": target,
         "baseline_measurement_id": measurement.measurement_id,
         "threshold": CANDIDATE_RANDOM_MIN_SCORE,
-        "threshold_status": CANDIDATE_RANDOM_SELECTION,
+        "threshold_status": candidate_random_threshold_status(
+            CANDIDATE_RANDOM_MIN_SCORE,
+            tables.gap.sample_count,
+            tables.gap.seed - CANDIDATE_GAP_NULL_TABLE_SEED_OFFSET,
+        ),
+        "threshold_selected_by": CANDIDATE_RANDOM_SELECTION,
+        "threshold_calibration_report": CANDIDATE_RANDOM_CALIBRATION_REPORT,
         "cohort_size": len(cohort_ips),
         "repeat_count": len(repeat_ids),
         "repeats": repeat_metadata,

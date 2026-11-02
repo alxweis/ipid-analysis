@@ -219,14 +219,15 @@ class StrategyClassificationTest(unittest.TestCase):
 
         np.testing.assert_array_equal(actual, expected)
 
-    def test_provisional_threshold_includes_equality_and_excludes_lower_scores(self):
-        values = np.random.default_rng(71).integers(0, 65536, size=(2, 100)).tolist()
+    def test_calibrated_threshold_includes_equality_and_excludes_lower_scores(self):
+        values = np.random.default_rng(71).integers(0, 65536, size=(3, 100)).tolist()
         with patch(
             "ipid_analysis.strategies.random_structure_scores",
             return_value=np.array(
                 [
                     RANDOM_STRUCTURE_MIN_SCORE,
                     np.nextafter(RANDOM_STRUCTURE_MIN_SCORE, 0),
+                    6e-05,  # Accepted by the new cutoff; below the old 7.9e-05 cutoff.
                 ]
             ),
         ):
@@ -234,7 +235,8 @@ class StrategyClassificationTest(unittest.TestCase):
                 pa.array(values, type=pa.list_(pa.int64())), self.mass_config
             )
         self.assertEqual(
-            codes.tolist(), [int(IPIDStrategy.RANDOM), int(IPIDStrategy.UNCLASSIFIED)]
+            codes.tolist(),
+            [int(IPIDStrategy.RANDOM), int(IPIDStrategy.UNCLASSIFIED), int(IPIDStrategy.RANDOM)],
         )
 
     def test_mass_constant_and_multi_keep_priority_over_random_score(self):
@@ -321,7 +323,11 @@ class StrategyClassificationTest(unittest.TestCase):
             strategies = pq.read_table(output)["IPID_SELECTION_STRATEGY"].to_pylist()
             metadata = pq.ParquetFile(output).schema_arrow.metadata
             self.assertEqual(metadata[b"classifier_version"].decode(), CLASSIFIER_VERSION)
-            self.assertEqual(metadata[b"random_threshold_status"], b"provisional-uncalibrated")
+            self.assertEqual(metadata[b"random_threshold_status"], b"empirically-calibrated")
+            self.assertEqual(
+                metadata[b"random_threshold_calibration_report"].decode(),
+                "docs/random-classifier-calibration-20261102/summary.json",
+            )
             self.assertEqual(
                 metadata[b"random_structure_score_version"].decode(),
                 RANDOM_STRUCTURE_SCORE_VERSION,

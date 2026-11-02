@@ -349,6 +349,11 @@ class ClassifierValidationTest(unittest.TestCase):
             random_score = base_3_report["random_structure_score"]
             self.assertEqual(random_score["version"], CANDIDATE_RANDOM_SCORE_VERSION)
             self.assertEqual(random_score["threshold"], CANDIDATE_RANDOM_MIN_SCORE)
+            self.assertEqual(random_score["threshold_status"], "custom-uncalibrated")
+            self.assertEqual(
+                random_score["production_calibration_report"],
+                "docs/random-classifier-calibration-20261102/summary.json",
+            )
             self.assertEqual(random_score["metrics"], list(CANDIDATE_RANDOM_METRICS))
             self.assertEqual(random_score["combiner"], "minimum")
             self.assertEqual(

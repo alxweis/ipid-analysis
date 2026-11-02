@@ -496,7 +496,7 @@ as base measurements: `REFLECTION`, `CONSTANT`, `PER_DESTINATION`,
 `PER_CONNECTION`, `SINGLE`, and `PER_BUCKET`. The established
 position-independent `CONSTANT` and `MULTI` rules then handle residual rows,
 including rows with missing replies. Only the remaining sequences are tested
-for `RANDOM` using the provisional version-8 RANDOM-compatibility score described
+for `RANDOM` using the calibrated version-9 RANDOM-compatibility classifier described
 in [the classifier specification](docs/RANDOM_CLASSIFIER.md); all other sequences remain `UNCLASSIFIED`.
 
 The exact rules require all 100 positions. Missing-reply markers are never
@@ -625,7 +625,8 @@ make validate-classifier
 make validate-classifier ARGS="--samples-per-strategy 100000 --seed 42"
 ```
 
-The production mass classifier now uses version 8: `S = min(p_inc, p_gap)`.
+The production mass classifier uses version 9 with the version-8 score definition:
+`S = min(p_inc, p_gap)`.
 Each of the seven increment views uses one length-adaptive Pearson chi-square
 test with `k = min(16, floor(valid_transitions / 5))` bins; views with fewer
 than three bins are skipped. `p_inc` is the minimum available view p-value.
@@ -634,12 +635,13 @@ null model are unchanged. Raw-IPID uniformity, multiscale testing, Fisher
 aggregation, and increment null tables are absent from the production score.
 See [RANDOM classifier details](docs/RANDOM_CLASSIFIER.md).
 
-The old numeric cutoff is retained provisionally and is **not calibrated for
-version 8**. No new validation results or plots accompany this implementation.
-The existing commands below can be run separately; their report metadata now
-identifies the new method and provisional threshold.
-To calibrate this score with the existing evaluator and independently check the
-proposed thresholds, run:
+The default cutoff is `tau = 4.0383019016847365e-05`, selected by the
+seed-20261102 confirmation at a target 0.05% true-RANDOM false-rejection rate.
+Independent per-condition point estimates are 0.025%-0.041%; the target is an
+empirically calibrated operating point, not a guaranteed upper bound.
+See the [recorded calibration and independent results](docs/random-classifier-calibration-20261102/README.md).
+Full-classifier validation and final plots must be regenerated with this cutoff.
+To reproduce the calibration and independent score evaluation, run:
 
 ```bash
 make calibrate-random-classifier ARGS="--preset confirmation --seed 20261102"
@@ -719,9 +721,10 @@ The plotted score follows the production definition above:
 `S = min(increment_uniformity, gap_uniformity)`. Increment tests preserve the
 fixed missing-reply positions, and the gap component uses all received values
 including duplicates. Only gap null tables are generated, with the unchanged
-seed 20260950. The provisional cutoff is `tau = 7.89999176049605e-05`; a sequence
-is RANDOM-compatible when `S >= tau`. The former 0.05% calibration applies to
-the historical score only and is not an accuracy claim for version 8.
+seed 20260950. The calibrated default cutoff is `tau = 4.0383019016847365e-05`;
+a sequence is RANDOM-compatible when `S >= tau`. Production and standard
+validation use the same cutoff and gap reference. Overrides are identified in
+report metadata and do not inherit the production calibration status.
 
 By default, the plotted nontrivial strategies use 100,000 sequences;
 `REFLECTION` and `CONSTANT` remain fixed at 1,000. The exact complete-sequence
