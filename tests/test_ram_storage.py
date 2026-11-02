@@ -68,7 +68,6 @@ def prepare_in_ram(arguments):
     ):
         result = ripe.prepare_ripe_atlas(
             campaign_start=datetime(2026, 1, int(day), tzinfo=timezone.utc),
-            dump_samples=1,
             preprocess_workers=1,
             raw_root=Path(root) / "fake-s3-raw",
             processed_root=Path(root) / "fake-s3-processed",
@@ -254,7 +253,7 @@ class RamStorageTests(unittest.TestCase):
             patch.object(ripe, "_build_role_part", wraps=ripe._build_role_part) as parser,
         ):
             options = dict(
-                dump_samples=1,
+                lookback_days=1,
                 preprocess_workers=1,
                 raw_root=self.root / "s3-raw",
                 processed_root=self.root / "s3-processed",
@@ -275,7 +274,7 @@ class RamStorageTests(unittest.TestCase):
                 os.environ, {"IPID_ANALYSIS_RAM_JOB_DIR": str(self.ram / "another-job")}
             ):
                 ripe.prepare_ripe_atlas(
-                    campaign_start=datetime(2026, 1, 30, tzinfo=timezone.utc), **options
+                    campaign_start=datetime(2026, 1, 29, 12, tzinfo=timezone.utc), **options
                 )
             self.assertEqual(http.call_count, 1)
             self.assertEqual(parser.call_count, 1)
@@ -436,9 +435,9 @@ class LinuxRamIntegration(unittest.TestCase):
                     )
                 )
             self.assertEqual(results, [1, 1])
-            self.assertEqual(len((Path(root) / "http-calls").read_text().splitlines()), 1)
+            self.assertEqual(len((Path(root) / "http-calls").read_text().splitlines()), 15)
             self.assertEqual(
-                len(list((Path(root) / "fake-s3-processed/ripe-atlas/file-parts").glob("*.pq"))), 1
+                len(list((Path(root) / "fake-s3-processed/ripe-atlas/file-parts").glob("*.pq"))), 15
             )
             self.assertFalse(list((Path(root) / "control").rglob("*.pq")))
 

@@ -302,18 +302,22 @@ Artifacts are stored beside their source strategy result as:
 
 Normal manifest postprocessing also derives a second observed network-role
 lookup from public RIPE Atlas traceroutes. The campaign start is inferred from
-the timestamped ZMap ID. The lookup always covers the 28 complete UTC days
+the timestamped ZMap ID. The lookup covers the 14 complete UTC days
 immediately before that start; it never waits for data collected after the
 IP-ID campaign:
 
 ```text
-[UTC-day(campaign start) - 28 days, UTC-day(campaign start))
+[UTC-day(campaign start) - 14 days, UTC-day(campaign start))
 ```
 
-The default `daily-dumps` source downloads twelve reproducibly and evenly
-distributed hourly traceroute archives from that fixed window. Current hourly
-archives are commonly 2--3 GB each; downloading all 672 hours would otherwise
-exceed 1.5 TB for one campaign. Up to four worker processes parse independent
+The default `daily-dumps` source selects exactly one hourly traceroute archive
+per day. Let `d` be the number of UTC calendar days since 1970-01-01; the selected
+hour is `(7 * d) % 24`, at `HH:00 UTC` on that date. The current campaign day is
+excluded. Selection depends only on the dump date, so every protocol and site
+uses the same hours. A campaign one day later reuses 13 processed hourly parts
+and needs only one new part; two days later it reuses 12. The hours cycle every
+24 days. Current hourly archives are commonly 2--3 GB each. Up to four worker
+processes parse independent
 dumps, with at most two downloads ahead of the bounded parser queue. BZip2 is
 decompressed as a stream; no uncompressed JSON copy is written. Each parser
 uses three full IPv4 bitmaps (SEEN/T/D, 1.5 GiB of address space per worker).
@@ -340,14 +344,16 @@ parts/windows and raw objects remain reusable. See the RAM processing guide for
 override requirements and read-only reuse of old complete ext4 downloads.
 Existing raw files below the following directory are reused and never removed:
 
-RIPE exposes these dumps as a rolling archive. Preparation reads the public
-directory index before selecting files. When retention has removed the start
-of the requested window but some days still overlap it, the samples are spread
-over the available overlap, a warning reports the reduced day coverage, and
-the exact available days and selected hours are recorded in `source.json`.
-No dump at or after the campaign start is substituted. If no archived day
-overlaps the requested window, use the API with an explicit measurement-ID
-file or import previously retained files with `--input-dir`.
+RIPE exposes these dumps as a rolling archive. Selection does not depend on its
+directory index or current retention. Each selected hour first checks the local
+and S3 processed caches, then retained raw data, before downloading. If a required
+hour is unavailable in all of these places, preparation fails visibly; no other
+day or hour is substituted and no incomplete window cache is published. Use the
+API with an explicit measurement-ID file or import retained files with
+`--input-dir` when required inputs are unavailable. `source.json` records the
+selection policy, exact selected timestamps, and observation-window boundaries.
+RIPE remains an optional stage in normal manifest postprocessing; inspect its
+status there if preparation fails.
 
 ```text
 data/raw/ripe-atlas/daily-dumps/YYYY-MM-DD/
@@ -356,7 +362,7 @@ data/raw/ripe-atlas/daily-dumps/YYYY-MM-DD/
 The compact reusable lookup and complete source metadata are stored below:
 
 ```text
-data/processed/ripe-atlas/<window>/daily-dumps-s12/
+data/processed/ripe-atlas/<window>/daily-dumps-unix-day-7-v1/
 ```
 
 The worker automatically publishes both hourly parts and window lookups to
@@ -369,11 +375,15 @@ prefix uses local caching only.
 S3 Parquet objects are addressed by SHA-256 under `objects/`. Hour/window
 manifests are uploaded last and contain the checksum and provenance. Restores
 verify the checksum before publishing local files. A window cache is checked
-before accessing the RIPE archive index; each hourly cache is checked before
-requesting the raw dump. Thus the same window works after raw dumps expire,
-and selected overlapping hours need not be downloaded or parsed again. New
-windows still require the available-day index to select their hours. Cache v4
-invalidates previous role semantics; old files are left untouched.
+before accessing the RIPE archive; each hourly cache is checked before requesting
+the raw dump. Thus the same window works after raw dumps expire, and selected
+overlapping hours need not be downloaded or parsed again. The new selection
+policy versions the window key, so previous window aggregates cannot be mistaken
+for the new 14-day selection. Existing v4 S3 caches and v2 hourly part identities
+remain reusable whenever their exact date/hour is selected. Old files are left
+untouched. The previous `--dump-samples` / `--ripe-dump-samples` options and
+`IPID_ANALYSIS_RIPE_DUMP_SAMPLES` setting have been removed; the number of dumps
+now follows the number of days.
 
 Resource controls (also available in manifest postprocessing):
 
@@ -429,7 +439,7 @@ make prepare-ripe-atlas ARGS="--campaign-start 2026-09-21T02:09:12Z \
 Previously downloaded or privately supplied RIPE JSONL/BZip2 files can be
 imported with `--input-dir`. Automatic postprocessing reads the corresponding
 `IPID_ANALYSIS_RIPE_SOURCE`, `IPID_ANALYSIS_RIPE_MEASUREMENT_IDS`,
-`IPID_ANALYSIS_RIPE_INPUT_DIR`, `IPID_ANALYSIS_RIPE_DUMP_SAMPLES`, and
+`IPID_ANALYSIS_RIPE_INPUT_DIR`, and
 `IPID_ANALYSIS_RIPE_WORKERS`
 settings. Set `IPID_ANALYSIS_SKIP_RIPE=1`
 only when deliberately omitting the analysis.

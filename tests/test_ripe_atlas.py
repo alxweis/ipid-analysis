@@ -1,6 +1,6 @@
 import bz2
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -11,6 +11,7 @@ import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -27,10 +28,9 @@ from ipid_analysis.ripe_atlas import (
     _open_json_lines,
     build_role_lookup,
     campaign_window,
+    daily_dump_slots,
     infer_campaign_start,
     prepare_ripe_atlas,
-    sampled_available_dump_slots,
-    sampled_dump_slots,
 )
 
 
@@ -132,38 +132,45 @@ class RipeAtlasTest(unittest.TestCase):
                 raise RuntimeError("failed work")
             self.assertFalse(lock.exists())
 
-    def test_campaign_window_prefers_zmap_and_samples_evenly(self):
+    def test_campaign_window_prefers_zmap_and_selects_14_complete_utc_days(self):
         manifest = {
-            "icmp": {
-                "zmap": "icmp_2026-09-21_02-09-12",
-                "ipid": {"no-connection": {"rt-based": {"base": "icmp_2026-09-21_04-00-00"}}},
-            }
+            "icmp": {"zmap": "icmp_2026-11-02_01-00-00", "ipid": "icmp_2026-11-02_02-00-00"}
         }
         start = infer_campaign_start(manifest)
-        self.assertEqual(start, datetime(2026, 9, 21, 2, 9, 12, tzinfo=timezone.utc))
+        self.assertEqual(start, datetime(2026, 11, 2, 1, tzinfo=timezone.utc))
         window = campaign_window(start)
-        self.assertEqual(window.start.date().isoformat(), "2026-08-24")
-        self.assertEqual(window.end.date().isoformat(), "2026-09-21")
-        slots = sampled_dump_slots(window, 4)
-        self.assertEqual(len(slots), 4)
-        self.assertEqual(len(set(slots)), 4)
-        self.assertTrue(all(window.start <= slot < window.end for slot in slots))
-        self.assertEqual([slot.hour for slot in slots], [0, 7, 14, 21])
-
-    def test_daily_dump_slots_use_available_overlap_only(self):
-        window = campaign_window(datetime(2026, 9, 21, 2, 9, 12, tzinfo=timezone.utc))
-        available = [date(2026, 9, day) for day in range(9, 21)]
-        slots = sampled_available_dump_slots(window, 4, available)
+        self.assertEqual(window.start, datetime(2026, 10, 19, tzinfo=timezone.utc))
+        self.assertEqual(window.end, datetime(2026, 11, 2, tzinfo=timezone.utc))
+        slots = daily_dump_slots(window)
+        self.assertEqual(len(slots), 14)
+        self.assertEqual(len({slot.hour for slot in slots}), 14)
         self.assertEqual(
-            [slot.isoformat() for slot in slots],
-            [
-                "2026-09-10T00:00:00+00:00",
-                "2026-09-13T07:00:00+00:00",
-                "2026-09-16T14:00:00+00:00",
-                "2026-09-19T21:00:00+00:00",
-            ],
+            [slot.date() for slot in slots],
+            [window.start.date() + timedelta(days=i) for i in range(14)],
         )
         self.assertTrue(all(window.start <= slot < window.end for slot in slots))
+
+    def test_daily_hour_uses_absolute_unix_day(self):
+        window = campaign_window(datetime(1970, 1, 3, tzinfo=timezone.utc), lookback_days=4)
+        self.assertEqual(
+            [slot.isoformat() for slot in daily_dump_slots(window)],
+            [
+                "1969-12-30T10:00:00+00:00",
+                "1969-12-31T17:00:00+00:00",
+                "1970-01-01T00:00:00+00:00",
+                "1970-01-02T07:00:00+00:00",
+            ],
+        )
+
+    def test_neighboring_campaigns_keep_identical_hours_for_shared_days(self):
+        start = datetime(2026, 11, 2, 1, tzinfo=timezone.utc)
+        slots = set(daily_dump_slots(campaign_window(start)))
+        for offset, overlap in ((0, 14), (1, 13), (2, 12)):
+            other = daily_dump_slots(campaign_window(start + timedelta(days=offset, hours=5)))
+            self.assertEqual(len(slots.intersection(other)), overlap)
+        # UTC date, not the local date, defines the window across a year boundary.
+        local = datetime(2027, 1, 1, 1, tzinfo=timezone(timedelta(hours=2)))
+        self.assertEqual(campaign_window(local).end, datetime(2026, 12, 31, tzinfo=timezone.utc))
 
     def test_daily_dump_directory_index_is_parsed(self):
         response = MagicMock()
@@ -176,6 +183,65 @@ class RipeAtlasTest(unittest.TestCase):
         with patch("ipid_analysis.ripe_atlas.urlopen", return_value=response):
             days = _available_dump_days("https://example.invalid/dumps")
         self.assertEqual(days, (date(2026, 9, 9), date(2026, 9, 10)))
+
+    def test_missing_selected_hour_fails_without_substitution_or_window_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            start = datetime(1970, 1, 3, tzinfo=timezone.utc)
+            url = f"{ripe_atlas_module.DEFAULT_DUMP_BASE_URL}/1970-01-02/traceroute-1970-01-02T0700.bz2"
+            with (
+                patch.dict(os.environ, {"IPID_ANALYSIS_RIPE_CACHE_S3": ""}),
+                patch.object(
+                    ripe_atlas_module,
+                    "_available_dump_days",
+                    side_effect=AssertionError("selection must not depend on the index"),
+                ),
+                patch.object(
+                    ripe_atlas_module,
+                    "_remote_file_size",
+                    side_effect=HTTPError(url, 404, "missing hour", {}, None),
+                ) as heads,
+                self.assertRaises(HTTPError),
+            ):
+                prepare_ripe_atlas(
+                    campaign_start=start,
+                    lookback_days=1,
+                    raw_root=root / "raw",
+                    processed_root=root / "processed",
+                )
+            heads.assert_called_once_with(url)
+            self.assertFalse(list((root / "processed").rglob("source.json")))
+            self.assertFalse(list((root / "processed").rglob("ipv4-roles.pq")))
+
+    def test_legacy_window_cache_cannot_bypass_new_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            start = datetime(2026, 11, 2, tzinfo=timezone.utc)
+            window = campaign_window(start)
+            key = "daily-dumps-s14"
+            dataset = ripe_atlas_module._dataset_paths(window, key, processed_root=root)
+            dataset.directory.mkdir(parents=True)
+            pq.write_table(
+                pa.table({"IP_V4": pa.array([1], type=pa.uint32()), "T": [False], "D": [True]}),
+                dataset.roles_path,
+            )
+            identity = hashlib.sha256(
+                f"{window.label}|{key}|{ripe_atlas_module.DEFAULT_DUMP_BASE_URL}|{ripe_atlas_module.DEFAULT_API_BASE_URL}".encode()
+            ).hexdigest()
+            dataset.metadata_path.write_text(
+                json.dumps({"cache_version": "4", "cache_identity": identity, "addresses": 1})
+            )
+            with (
+                patch.dict(os.environ, {"IPID_ANALYSIS_RIPE_CACHE_S3": ""}),
+                patch.object(
+                    ripe_atlas_module,
+                    "_daily_dump_files",
+                    side_effect=FileNotFoundError("new selection requested"),
+                ),
+                self.assertRaisesRegex(FileNotFoundError, "new selection requested"),
+            ):
+                prepare_ripe_atlas(campaign_start=start, processed_root=root)
+            self.assertTrue(dataset.roles_path.is_file())
 
     def test_download_retains_and_resumes_incomplete_stream(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -271,11 +337,6 @@ class RipeAtlasTest(unittest.TestCase):
                 output.write(json.dumps(record) + "\n")
             with _open_json_lines(source) as input_file:
                 self.assertEqual(list(_iter_json_lines(input_file)), [record])
-
-    def test_daily_dump_slots_reject_missing_overlap(self):
-        window = campaign_window(datetime(2026, 9, 21, 2, 9, 12, tzinfo=timezone.utc))
-        with self.assertRaisesRegex(FileNotFoundError, "--source api"):
-            sampled_available_dump_slots(window, 4, [date(2026, 10, 1)])
 
     def _dataset(self, root: Path) -> RipeAtlasDataset:
         campaign_start = datetime(2026, 1, 29, 12, tzinfo=timezone.utc)
@@ -677,7 +738,7 @@ class RipeAtlasTest(unittest.TestCase):
             self.assertTrue(first.roles_path.is_file())
             metadata = json.loads(first.metadata_path.read_text())
             self.assertEqual(metadata["source_kind"], "local-files")
-            self.assertEqual(metadata["lookback_days"], 28)
+            self.assertEqual(metadata["lookback_days"], 14)
             self.assertEqual(metadata["addresses"], 2)
             copied = Path(metadata["files"][0]["path"])
             self.assertTrue(copied.is_file())

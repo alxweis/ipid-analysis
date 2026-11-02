@@ -17,7 +17,7 @@ from ipid_analysis import ripe_atlas as ripe
 from ipid_analysis.runtime import cleanup_work, directory_bytes, ripe_transfer_root
 
 DAY = date(2026, 1, 15)
-START = datetime(2026, 1, 29, tzinfo=timezone.utc)
+START = datetime(2026, 1, 16, tzinfo=timezone.utc)
 BODY = bz2.compress(
     (
         json.dumps(
@@ -69,7 +69,6 @@ def concurrent_prepare(arguments):
     ):
         result = ripe.prepare_ripe_atlas(
             campaign_start=START.replace(day=day),
-            dump_samples=1,
             preprocess_workers=1,
             raw_root=root / "raw",
             processed_root=root / "processed",
@@ -97,8 +96,7 @@ class SharedTransfersTest(unittest.TestCase):
 
     def inputs(self, samples=1):
         return ripe._daily_dump_files(
-            ripe.campaign_window(START),
-            samples=samples,
+            ripe.campaign_window(START, lookback_days=samples),
             raw_root=self.root / "raw",
             base_url=ripe.DEFAULT_DUMP_BASE_URL,
             parts_root=self.root / "processed/ripe-atlas/file-parts",
@@ -107,7 +105,7 @@ class SharedTransfersTest(unittest.TestCase):
     def prepare(self):
         return ripe.prepare_ripe_atlas(
             campaign_start=START,
-            dump_samples=1,
+            lookback_days=1,
             preprocess_workers=1,
             raw_root=self.root / "raw",
             processed_root=self.root / "processed",
@@ -184,7 +182,7 @@ class SharedTransfersTest(unittest.TestCase):
         real_download = ripe._download
 
         def fetch(url, destination, **kwargs):
-            if "T0000" in url:
+            if "2026-01-14T" in url:
                 self.assertTrue(ready.wait(5))
                 raise OSError("failed earlier slot")
             result = real_download(url, destination, **kwargs)
@@ -230,9 +228,13 @@ class SharedTransfersTest(unittest.TestCase):
                             ],
                         )
                     )
-                self.assertEqual(len((root / "http-calls.txt").read_text().splitlines()), 1)
                 self.assertEqual(
-                    len(list((root / "processed/ripe-atlas/file-parts").glob("*.pq"))), 1
+                    len((root / "http-calls.txt").read_text().splitlines()),
+                    14 if days[0] == days[1] else 15,
+                )
+                self.assertEqual(
+                    len(list((root / "processed/ripe-atlas/file-parts").glob("*.pq"))),
+                    14 if days[0] == days[1] else 15,
                 )
                 self.assertTrue(all(Path(path).is_file() for path in paths))
                 self.assertEqual(paths[0] == paths[1], days[0] == days[1])
@@ -285,7 +287,7 @@ class SharedTransfersTest(unittest.TestCase):
 
     def test_invalid_retained_raw_file_is_neither_overwritten_nor_used_for_new_transfer(self):
         original = (
-            self.root / "raw/ripe-atlas/daily-dumps/2026-01-15/traceroute-2026-01-15T0000.bz2"
+            self.root / "raw/ripe-atlas/daily-dumps/2026-01-15/traceroute-2026-01-15T2000.bz2"
         )
         original.parent.mkdir(parents=True)
         original.write_bytes(b"old partial, keep for inspection")
