@@ -36,6 +36,8 @@ Per protocol the durable queues below `sites/<site>/protocols/<protocol>/` are:
 * `role-jobs/<zmap>/`: separate optional CAIDA/RIPE preparation and role analysis.
 * `os-jobs/<zmap>/`: shared-OS coverage and OS strategy plots as soon as this
   core and the central OS scan are ready.
+* `measurement-os-jobs/<id>/`: per-measurement OS plots as soon as that one
+  measurement and shared OS are ready, even while its protocol sweep continues.
 * `os-role-jobs/<zmap>/`: OS/role joins after both OS and role inputs exist.
 * `analysis-jobs/<zmap>/done.json`: verifies that all required stages and
   streaming measurement reports completed. Optional role availability/errors
@@ -70,3 +72,10 @@ Synthetic tests cover independent readiness, incremental union/integrity,
 publication order, and stage failure isolation. Real 18-VM/S3/FUSE load and
 interruption tests still require an isolated operational test prefix; unit
 tests never start Internet scans or access production S3 data.
+
+Empty frozen RANDOM cohorts are valid: their streaming coverage is explicitly
+zero and their OS stage records `not_applicable_empty_population`. A measured
+population with no resolved OS matches records `no_resolved_os_matches`.
+Canonical optional OS/role plots retain their existing warning semantics;
+warnings are preserved in stage completion records. Source integrity and
+required scientific artifacts still fail their own task on errors.
