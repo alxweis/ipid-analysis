@@ -110,6 +110,8 @@ def tasks_from_objects(objects: set[str], prefix: str) -> list[Task]:
         tasks.append(Task(kind, uri, site_prefix, scope, priority))
 
     for campaign, campaign_prefix in sorted(campaigns.items()):
+        if campaign_prefix + "/parallel.json" in objects:
+            continue
         if (
             campaign_prefix + "/done.json" in objects
             or campaign_prefix + "/failed.json" in objects
@@ -175,6 +177,8 @@ def tasks_from_objects(objects: set[str], prefix: str) -> list[Task]:
     from ipid_analysis.os_enrichment import tasks as enrichment_tasks
 
     tasks.extend(enrichment_tasks(objects, prefix))
+    from ipid_analysis.parallel import tasks as parallel_tasks
+    tasks.extend(parallel_tasks(objects, prefix))
     return tasks
 
 
@@ -258,9 +262,14 @@ class Scheduler:
             )
         self.total = Cost(cpus, memory, scratch)
         critical_cpu = max(1, cpus // 6)
+        self.background_slots = int(os.environ.get("IPID_ANALYSIS_BACKGROUND_SLOTS", "1"))
+        if not 1 <= self.background_slots <= cpus - 2 * critical_cpu:
+            raise ValueError("background slots must fit the reserved background CPU budget")
         self.critical = Cost(min(critical_cpu, threads or critical_cpu), memory // 8, scratch // 8)
         self.background = Cost(
-            min(cpus - 2 * critical_cpu, threads or cpus), memory * 3 // 4, scratch * 3 // 4
+            min((cpus - 2 * critical_cpu) // self.background_slots, threads or cpus),
+            memory * 3 // (4 * self.background_slots),
+            scratch * 3 // (4 * self.background_slots),
         )
         self.reserve = reserve
         self.active: dict[str, Active] = {}
@@ -291,13 +300,13 @@ class Scheduler:
             return False
         if (
             critical
-            and task.kind != "handoff"
+            and task.kind not in {"handoff", "parallel-handoff"}
             and any(
-                a.task.priority < 10 and a.task.kind != "handoff" for a in self.active.values()
+                a.task.priority < 10 and a.task.kind not in {"handoff", "parallel-handoff"} for a in self.active.values()
             )
         ):
             return False
-        if any(a.task.priority >= 10 for a in self.active.values()) and not critical:
+        if sum(a.task.priority >= 10 for a in self.active.values()) >= getattr(self, "background_slots", 1) and not critical:
             return False
         cost = self.cost(task)
         used = Cost(

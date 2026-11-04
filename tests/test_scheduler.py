@@ -72,6 +72,20 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertLessEqual(self.scheduler.total.scratch + self.scheduler.transfer_limit, 200 * s.GIB)
 
+    def test_parallel_handoff_retains_reserved_slot_beside_support_job(self):
+        support=s.Task('parallel-discovery','s3://bucket/discovery.json','s3://bucket',priority=1)
+        handoff=s.Task('parallel-handoff','s3://bucket/jobs/parallel/request.json','s3://bucket',priority=0)
+        self.scheduler.active[support.key]=self.active(support)
+        self.assertTrue(self.scheduler.admitted(handoff))
+
+    def test_background_slots_divide_existing_reservation(self):
+        with patch.dict(os.environ,{'IPID_ANALYSIS_BACKGROUND_SLOTS':'2'}):
+            scheduler=s.Scheduler(self.client,'s3://bucket/workflow',self.root/'two')
+        self.addCleanup(scheduler.close)
+        self.assertEqual(scheduler.background_slots,2)
+        for field in ('cpus','memory','scratch'):
+            self.assertLessEqual(2*getattr(scheduler.background,field),getattr(self.scheduler.background,field))
+
     def test_unused_shared_transfer_capacity_is_reserved_before_job_admission(self):
         task = s.Task("handoff", "s3://bucket/jobs/new/request.json", "s3://bucket")
         cost = self.scheduler.cost(task)

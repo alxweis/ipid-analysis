@@ -60,7 +60,10 @@ def execute(spec):
     try:
         start_run()
         options = (spec["batch_size"], spec["cost"]["cpus"])
-        if task.kind == "handoff":
+        if task.kind.startswith("parallel-"):
+            from ipid_analysis.parallel import execute
+            execute(client, task, work, *options)
+        elif task.kind == "handoff":
             if task.scope:
                 from ipid_analysis.continental import descriptor, read_json, source_measurement
                 from ipid_analysis.s3_workflow import Request

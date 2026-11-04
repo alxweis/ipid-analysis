@@ -1429,6 +1429,9 @@ changes the production classifier.
 
 ### Six-site campaigns
 
+For asynchronous analysis of 18 protocol-specific VMs, see
+[parallel geographic campaigns](docs/parallel-geographic.md).
+
 The additive continental workflow and the worker's reserved critical/background
 scheduling are described in [docs/continental-workflow.md](docs/continental-workflow.md).
 
