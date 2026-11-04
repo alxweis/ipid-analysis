@@ -346,6 +346,7 @@ class InterprotocolTargetRequest:
     done_uri: str
     failed_uri: str
     created_at: str
+    local_references: bool = False
 
     @classmethod
     def parse(cls, data: dict, s3_prefix: str) -> InterprotocolTargetRequest:
@@ -357,6 +358,8 @@ class InterprotocolTargetRequest:
             raise ValueError(
                 f"unsupported inter-protocol target request version {request.version}"
             )
+        if type(request.local_references) is not bool:
+            raise ValueError("local_references must be a boolean")
         if not JOB_ID_RE.fullmatch(request.job_id) or not JOB_ID_RE.fullmatch(request.campaign_id):
             raise ValueError("invalid inter-protocol target job or campaign id")
         if set(request.manifests) != {"icmp", "tcp", "udp"}:
@@ -1147,6 +1150,10 @@ def process_interprotocol_target_request(
                 output_root=output_root,
                 figures_root=figures_root,
             )
+            if request.local_references:
+                from ipid_analysis.local_references import binding, build_targets
+                binding(client, s3_prefix, work_dir)
+                build_targets(output_dir)
 
         figure_dir = figures_root / request.campaign_id
         inventory = []

@@ -36,6 +36,8 @@ Per protocol the durable queues below `sites/<site>/protocols/<protocol>/` are:
 * `role-jobs/<zmap>/`: separate optional CAIDA/RIPE preparation and role analysis.
 * `os-jobs/<zmap>/`: shared-OS coverage and OS strategy plots as soon as this
   core and the central OS scan are ready.
+* `measurement-os-jobs/<id>/`: additive OS strategy plots as soon as this
+  individual measurement and shared OS are ready, even during its protocol sweep.
 * `os-role-jobs/<zmap>/`: OS/role joins after both OS and role inputs exist.
 * `analysis-jobs/<zmap>/done.json`: verifies that all required stages and
   streaming measurement reports completed. Optional role availability/errors
@@ -70,3 +72,42 @@ Synthetic tests cover independent readiness, incremental union/integrity,
 publication order, and stage failure isolation. Real 18-VM/S3/FUSE load and
 interruption tests still require an isolated operational test prefix; unit
 tests never start Internet scans or access production S3 data.
+
+## Local interprotocol controls
+
+The companion reference producer pins `local_references: true` in the parallel
+layout. Its explicit `local_references` target request adds six target files to
+the existing target artifact inventory. The four original target files and
+their original analyses keep their contents and definitions.
+
+Within `sites/<site>/`, `reference-jobs/reference-<icmp|tcp|udp>-<base|mass>/`
+contains `request.json`, `done.json` or `failed.json`. Each available reference
+is independently eligible for background analysis; no OS or foreign continent
+dependency exists. The worker verifies source commit markers and target hashes,
+validates the single-protocol snapshot, and uses the **same classifier and
+sample eligibility rules as interleaved outcomes**, including all TCP positions.
+Normal TCP baseline analysis keeps its original first-sample treatment.
+
+Additive scientific outputs below the site's processed root are:
+
+* `interprotocol/local-references/reference-<protocol>-<sample>/strategies.pq`
+  with baseline strategy, local strategy, expected and received samples for
+  every original control target, including missing observations.
+* `interprotocol/local-references/comparison.pq` and `comparison.json`, joining
+  original baseline, local control and interleaved strategy for every original
+  IP/protocol/group. The JSON contains bounded aggregated transition counts.
+
+The comparison runs after the six controls and that continent's existing
+interprotocol analysis finish. It checks the reference result digests and
+source-address/probe-configuration agreement against the interleaved snapshots.
+No missing control silently removes an interleaved target. Shared targets can
+occur in several groups, so report counts explicitly use IP/protocol/group as
+their unit. These sequential controls expose vantage/time differences; they
+do not establish that interleaving alone caused any observed change.
+
+`reference-comparison/{request,done,failed}.json` has an independent lifecycle.
+The site's `final/done.json` additionally requires its comparison completion
+when the campaign's `local-references.json` marker exists. Other continents,
+individual measurement analyses and shared OS work continue independently.
+Both reference kinds support the existing explicit `--retry-request-uri`,
+archiving only their own failure marker and preserving successful science.
