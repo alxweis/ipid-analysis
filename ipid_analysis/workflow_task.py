@@ -34,6 +34,7 @@ def execute(spec):
         prepare_strategies,
         publish_json,
         publish_task_failure,
+        success_uri,
         submit_site,
         union_discovery,
         verify_shared_os,
@@ -59,6 +60,10 @@ def execute(spec):
         return 75
     try:
         start_run()
+        # An in-flight S3 listing can still offer a job that just finished.
+        # Recheck under its lease before any producer rewrites committed output.
+        if client.exists(success_uri(task)):
+            return 0
         options = (spec["batch_size"], spec["cost"]["cpus"])
         if task.kind.startswith("parallel-"):
             from ipid_analysis.parallel import execute
@@ -133,8 +138,6 @@ def execute(spec):
             publish_json(client, campaign_prefix + "/done.json", completed, work)
         else:
             raise ValueError(f"unknown workflow task {task.kind}")
-        from ipid_analysis.continental import success_uri
-
         if not client.exists(success_uri(task)):
             raise RuntimeError("task exited without its required completion marker")
         return 0
