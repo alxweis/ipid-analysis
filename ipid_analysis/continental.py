@@ -601,6 +601,9 @@ def finish_site(client, site_prefix, work):
 
 
 def failure_uri(task):
+    if task.kind.startswith("parallel-"):
+        from ipid_analysis.parallel import failure_uri as parallel_failure
+        return parallel_failure(task)
     if task.kind == "union":
         return task.uri.rsplit("/", 1)[0] + "/failed.json"
     if task.kind in {"submit", "site-done"}:
@@ -611,6 +614,9 @@ def failure_uri(task):
 
 
 def success_uri(task):
+    if task.kind.startswith("parallel-"):
+        from ipid_analysis.parallel import success_uri as parallel_success
+        return parallel_success(task)
     job = task.uri.rsplit("/", 1)[0]
     if task.kind == "os-enrichment-prepare":
         return job + "/scan/request.json"

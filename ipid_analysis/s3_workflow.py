@@ -362,7 +362,13 @@ class InterprotocolTargetRequest:
         if set(request.manifests) != {"icmp", "tcp", "udp"}:
             raise ValueError("inter-protocol target request requires icmp, tcp, and udp manifests")
         for protocol, uri in request.manifests.items():
-            if SCOPE and not uri.startswith(join_s3(s3_prefix,"analysis-jobs")+"/"):
+            allowed = [join_s3(s3_prefix, "analysis-jobs") + "/"]
+            # A parallel continent owns three separate protocol queues, while
+            # their canonical scientific artifacts retain the same site scope.
+            if "/continental/" in s3_prefix and "/sites/" in s3_prefix:
+                owner = "udp-dns" if protocol == "udp" else protocol
+                allowed.append(join_s3(s3_prefix, "protocols", owner, "analysis-jobs") + "/")
+            if SCOPE and not any(uri.startswith(value) for value in allowed):
                 raise ValueError("target request crosses campaign/site boundaries")
             parts = uri.rstrip("/").split("/")
             if (
@@ -832,6 +838,7 @@ def download_analysis_inputs(
     request: AnalysisRequest,
     manifest: dict,
     raw_root: Path = RAW_DATA_DIR,
+    include_os: bool = True,
 ) -> None:
     section = manifest[request.protocol]
     zmap_id = section["zmap"]
@@ -862,7 +869,7 @@ def download_analysis_inputs(
             ),
             raw_root / "zmap" / zmap_id / FIXED_BASE_TARGET_METADATA_NAME,
         )
-    if not os_scan_requested(section):
+    if not include_os or not os_scan_requested(section):
         pass
     elif os_id == "shared-os" and SCOPE:
         for name in ("os.pq", "os-coverage.json"):
@@ -1355,6 +1362,9 @@ def run_interprotocol_pending(
 
 def retry_failed_request(client: S3Client, request_uri: str, s3_prefix: str) -> None:
     """Explicit recovery only: archive the terminal failure before removing it."""
+    from ipid_analysis.parallel import retry as retry_parallel
+    if retry_parallel(client, request_uri, s3_prefix):
+        return
     from ipid_analysis.os_enrichment import retry as retry_enrichment
 
     if "/enrichments/os/" in request_uri:

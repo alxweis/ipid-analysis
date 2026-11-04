@@ -41,10 +41,12 @@ def write_coverage(
     manifest: dict,
     raw_root: Path = RAW_DATA_DIR,
     processed_root: Path = PROCESSED_DATA_DIR,
+    target_path: Path | None = None,
+    allow_empty: bool = False,
 ) -> Path:
     measurement_dir = raw_root / m.input_key
     ipid_path = measurement_dir / "ipid.pq"
-    zmap_path = _target_path(m, manifest, raw_root)
+    zmap_path = target_path if target_path is not None else _target_path(m, manifest, raw_root)
 
     for path in (ipid_path, zmap_path):
         if not path.is_file():
@@ -65,7 +67,7 @@ def write_coverage(
             {"ipid": str(ipid_path), "zmap": str(zmap_path)},
         ).fetchone()
 
-    if zmap_count == 0:
+    if zmap_count == 0 and not allow_empty:
         raise ValueError(f"{zmap_path}: measurement target is empty")
     if outside_target_count:
         raise ValueError(

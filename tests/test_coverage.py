@@ -11,6 +11,25 @@ from ipid_analysis.manifest import IpidMeasurement
 
 
 class CoverageTest(unittest.TestCase):
+    def test_empty_repeat_coverage_requires_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            m = IpidMeasurement(
+                "icmp", "no-connection", "fixed-interval", "mass", "repeat", "repeat"
+            )
+            for path in (root / m.input_key / "ipid.pq", root / "target.pq"):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                pq.write_table(pa.table({"IP_ADDR": pa.array([], type=pa.string())}), path)
+            with self.assertRaisesRegex(ValueError, "empty"):
+                write_coverage(m, {}, root, root / "out", root / "target.pq")
+            result = write_coverage(
+                m, {}, root, root / "out", root / "target.pq", allow_empty=True
+            )
+            self.assertEqual(
+                json.loads(result.read_text()),
+                dict(zmap_ip_count=0, ipid_ip_count=0, coverage_percent=0),
+            )
+
     def test_connection_target_is_explicit_and_shared_by_both_modes(self):
         for interval in ("rt-based", "fixed-interval"):
             with self.subTest(interval=interval), tempfile.TemporaryDirectory() as directory:

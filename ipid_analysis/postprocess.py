@@ -239,7 +239,12 @@ def main(
         envvar="IPID_ANALYSIS_SKIP_RIPE",
         help="skip automatic RIPE Atlas analysis",
     ),
+    phase: str = typer.Option("all", help="all (legacy default) or core (defer OS/external roles)"),
 ) -> None:
+    if phase not in {"all", "core"}:
+        raise ValueError("phase must be all or core")
+    if phase == "core":
+        skip_itdk = skip_ripe = True
     start_run()
     validate_storage()
     warnings = []
@@ -444,7 +449,7 @@ def main(
                 logger.warning(
                     f"[{connection.target}] missing CAIDA ITDK analysis input ({exc}) -- skipped"
                 )
-        os_measurement_id = resolve_os_measurement_id(manifest, "tcp")
+        os_measurement_id = resolve_os_measurement_id(manifest, "tcp") if phase == "all" else None
         if os_measurement_id is not None:
             try:
                 with record_stage(
@@ -566,7 +571,7 @@ def main(
                 os_pdf = None
                 itdk_os_pdf = None
                 ripe_os_pdf = None
-                os_measurement_id = resolve_os_measurement_id(manifest, merge.protocol)
+                os_measurement_id = resolve_os_measurement_id(manifest, merge.protocol) if phase == "all" else None
                 if os_measurement_id is not None:
                     try:
                         with record_stage(
@@ -752,6 +757,7 @@ def main(
     )
     report = {
         "version": 1,
+        "phase": phase,
         "required_complete": required_complete,
         "manifest": fingerprints([manifest_path]),
         "artifacts": [str(path.resolve()) for path in dict.fromkeys(required) if path.is_file()],
