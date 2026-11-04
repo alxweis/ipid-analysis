@@ -62,7 +62,12 @@ def stage_prefix(task):
         return task.prefix + "/union"
     if task.kind == "parallel-site":
         return task.prefix + "/final"
-    if task.kind in {"parallel-handoff", "parallel-measurement"}:
+    if task.kind in {
+        "parallel-handoff",
+        "parallel-measurement",
+        "parallel-reference",
+        "parallel-reference-comparison",
+    }:
         return task.uri.rsplit("/", 1)[0]
     job = task.uri.rsplit("/", 2)[-2]
     category = {
@@ -110,6 +115,9 @@ def tasks(objects, prefix):
         for site in SITES:
             site_prefix = f"{campaign}/sites/{site}"
             scope = f"continental/{name}/{site}"
+            from ipid_analysis.local_references import tasks as reference_tasks
+
+            result.extend(reference_tasks(objects, site_prefix, scope))
             for protocol in PROTOCOLS:
                 flow = f"{site_prefix}/protocols/{protocol}"
                 if flow + "/discovery.json" in objects:
@@ -182,6 +190,10 @@ def tasks(objects, prefix):
                 len(completions) == 3
                 and site_prefix + "/final/request.json" in objects
                 and site_prefix + "/interprotocol-jobs/interprotocol/done.json" in objects
+                and (
+                    campaign + "/local-references.json" not in objects
+                    or site_prefix + "/reference-comparison/done.json" in objects
+                )
             ):
                 add("parallel-site", site_prefix + "/final/request.json", site_prefix, scope)
         if (
@@ -737,6 +749,10 @@ def finish_site(client, task, work):
         if completed[p].get("manifest_uri") != protocol_done["manifest_uri"]:
             raise ValueError("site analysis binding mismatch")
     inter = read_json(client, task.prefix + "/interprotocol-jobs/interprotocol/done.json", work)
+    layout = read_json(client, campaign + "/parallel.json", work)
+    references = {}
+    if layout.get("local_references") is True:
+        references = read_json(client, task.prefix + "/reference-comparison/done.json", work)
     publish_json(
         client,
         success_uri(task),
@@ -746,12 +762,19 @@ def finish_site(client, task, work):
             site=site,
             protocols=completed,
             interprotocol=inter,
+            local_references=references,
         ),
         work,
     )
 
 
 def execute(client, task, work, batch_size, threads):
+    if task.kind in {"parallel-reference", "parallel-reference-comparison"}:
+        from ipid_analysis.local_references import analyze, compare
+
+        if task.kind == "parallel-reference":
+            return analyze(client, task, work, batch_size)
+        return compare(client, task, work)
     if task.kind == "parallel-measurement-os":
         return measurement_os(client, task, work, threads)
     if task.kind == "parallel-discovery":
@@ -871,6 +894,10 @@ def retry(client, uri, workflow):
 
     from ipid_analysis.runtime import cleanup_work, control_root, work_path
     from ipid_analysis.scheduler import Task
+    from ipid_analysis.local_references import retry as retry_reference
+
+    if retry_reference(client, uri, workflow):
+        return True
 
     pattern = rf"({re.escape(workflow.rstrip('/'))}/continental/{ID}/sites/(?:eu|as|af|na|sa|au)/protocols/(?:icmp|tcp|udp-dns))/(.+)"
     match = re.fullmatch(pattern, uri)
