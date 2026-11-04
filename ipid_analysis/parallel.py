@@ -427,7 +427,7 @@ def measurement(client, task, work, batch_size, threads):
     persisted = f"{raw}/ipid/{mid}/strategies.pq"
     if client.exists(persisted):
         client.download(persisted, RAW_DATA_DIR / "ipid" / mid / "strategies.pq")
-    write_coverage(m, {}, target_path=target)
+    write_coverage(m, {}, target_path=target, allow_empty=variant == "repeat")
     classify_measurement(m, batch_size=batch_size, threads=threads)
     extract_probing_intervals(m, threads=threads)
     extract_increments(m, batch_size=batch_size, threads=threads)
@@ -614,6 +614,7 @@ def os_analysis(client, task, work, threads, role_only=False):
     request, manifest = protocol_request(client, task.uri, task.prefix, work)
     campaign = flow_parts(task.prefix)[0]
     shared, done = verify_shared_os(client, campaign, work)
+    optional_errors = []
     zmap, evidence = source_measurement(
         client, request.zmap_prefix, request.job_id, "zmap.pq", work
     )
@@ -631,7 +632,10 @@ def os_analysis(client, task, work, threads, role_only=False):
         )
         for source in sources(manifest):
             renderer = render if hasattr(source, "base") else render_measurement
-            renderer(source, "shared-os", threads=threads)
+            try:
+                renderer(source, "shared-os", threads=threads)
+            except (FileNotFoundError, ValueError) as exc:
+                optional_errors.append(dict(target=source.target, error=str(exc)))
     else:
         # Reuse the original persisted role joins; no external downloads in this stage.
         from datetime import datetime
@@ -673,14 +677,22 @@ def os_analysis(client, task, work, threads, role_only=False):
                         value["source"], window, joined.parent, joined, Path(value["metadata"])
                     )
                     kwargs["role_matches_path"] = joined
-                renderer(source, dataset, "shared-os", **kwargs)
+                try:
+                    renderer(source, dataset, "shared-os", **kwargs)
+                except (FileNotFoundError, ValueError) as exc:
+                    optional_errors.append(dict(target=source.target, error=str(exc)))
     publish_json(
-        client, success_uri(task), dict(version=1, job_id=request.job_id, shared_os=done), work
+        client,
+        success_uri(task),
+        dict(version=1, job_id=request.job_id, shared_os=done, optional_errors=optional_errors),
+        work,
     )
 
 
 def finish(client, task, work):
-    request, _ = protocol_request(client, task.uri, task.prefix, work)
+    from ipid_analysis.manifest import iter_ipid_measurements, iter_random_reproducibility
+
+    request, manifest = protocol_request(client, task.uri, task.prefix, work)
     campaign = flow_parts(task.prefix)[0]
     disabled = descriptor(client, campaign, work).get("os_mode") == "disabled"
     stages = ["core-jobs", "role-jobs"] + ([] if disabled else ["os-jobs", "os-role-jobs"])
@@ -690,6 +702,19 @@ def finish(client, task, work):
     }
     if any(v.get("job_id") != request.job_id for v in values.values()):
         raise ValueError("analysis completion binding mismatch")
+    ids = [m.measurement_id for m in iter_ipid_measurements(manifest)]
+    ids.extend(mid for spec in iter_random_reproducibility(manifest) for mid in spec.repeat_ids)
+    if len(ids) != (10 if request.protocol == "tcp" else 8) or len(set(ids)) != len(ids):
+        raise ValueError(
+            "parallel protocol completion requires the full original measurement inventory"
+        )
+    for mid in ids:
+        for category in (
+            ["measurement-jobs"] if disabled else ["measurement-jobs", "measurement-os-jobs"]
+        ):
+            done = read_json(client, f"{task.prefix}/{category}/{mid}/done.json", work)
+            if done.get("measurement_id") != mid:
+                raise ValueError("streaming completion identity mismatch")
     publish_json(
         client,
         success_uri(task),
@@ -817,14 +842,41 @@ def measurement_os(client, task, work, threads):
         p, connection, interval, "mass" if variant in {"fi-mass", "repeat"} else "base", mid, mid
     )
     shared, done = verify_shared_os(client, campaign, work)
+    strategies = m.artifact_path(PROCESSED_DATA_DIR, "strategies")
+    assert_complete(strategies)
+    if pq.read_metadata(strategies).num_rows == 0:
+        publish_json(
+            client,
+            success_uri(task),
+            dict(
+                version=1,
+                measurement_id=mid,
+                shared_os=done,
+                status="not_applicable_empty_population",
+            ),
+            work,
+        )
+        return
     groups = PROCESSED_DATA_DIR / "os" / "shared-os" / "os-groups.pq"
     with exclusive_lock("parallel-os-groups:" + str(groups)):
         write_os_groups(shared / "os.pq", groups, threads=threads)
+    with connect() as con:
+        con.read_parquet(str(strategies)).create_view("strategies")
+        con.read_parquet(str(groups)).create_view("groups")
+        matched = con.sql("SELECT count(*) FROM strategies JOIN groups USING(IP_ADDR)").fetchone()[
+            0
+        ]
+    if not matched:
+        publish_json(
+            client,
+            success_uri(task),
+            dict(version=1, measurement_id=mid, shared_os=done, status="no_resolved_os_matches"),
+            work,
+        )
+        return
     kind = "operating-system-group-by-strategy"
     aggregate = m.artifact_path(PROCESSED_DATA_DIR, kind)
-    stats = aggregate_os_groups(
-        m.artifact_path(PROCESSED_DATA_DIR, "strategies"), groups, aggregate, threads=threads
-    )
+    stats = aggregate_os_groups(strategies, groups, aggregate, threads=threads)
     pdf = m.artifact_path(FIGURES_DIR, kind, "pdf")
     plot_os_groups(aggregate, pdf)
     write_text(

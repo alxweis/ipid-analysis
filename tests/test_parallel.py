@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pyarrow as pa
@@ -207,6 +208,40 @@ class ParallelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             p.retry(self.client, task.uri, ROOT)
         self.assertIn(failed, self.client.values)
+
+    def test_protocol_finish_rechecks_every_streaming_completion(self):
+        request = SimpleNamespace(
+            job_id="icmp_job",
+            protocol="icmp",
+            manifest_uri=FLOW + "/analysis-jobs/icmp_job/manifest.json",
+        )
+        task = Task("parallel-finish", FLOW + "/strategy-jobs/icmp_job/request.json", FLOW)
+        ids = ["icmp_" + str(i) for i in range(8)]
+        for category in ("core-jobs", "role-jobs"):
+            self.client.json(FLOW + f"/{category}/icmp_job/done.json", dict(job_id=request.job_id))
+        for mid in ids[:-1]:
+            self.client.json(FLOW + f"/measurement-jobs/{mid}/done.json", dict(measurement_id=mid))
+        with (
+            patch.object(p, "protocol_request", return_value=(request, {})),
+            patch.object(p, "descriptor", return_value=dict(os_mode="disabled")),
+            patch(
+                "ipid_analysis.manifest.iter_ipid_measurements",
+                return_value=[SimpleNamespace(measurement_id=mid) for mid in ids],
+            ),
+            patch("ipid_analysis.manifest.iter_random_reproducibility", return_value=[]),
+        ):
+            with self.assertRaises(KeyError):
+                p.finish(self.client, task, self.work)
+            self.client.json(
+                FLOW + f"/measurement-jobs/{ids[-1]}/done.json", dict(measurement_id="wrong")
+            )
+            with self.assertRaisesRegex(ValueError, "identity"):
+                p.finish(self.client, task, self.work)
+            self.client.json(
+                FLOW + f"/measurement-jobs/{ids[-1]}/done.json", dict(measurement_id=ids[-1])
+            )
+            p.finish(self.client, task, self.work)
+            self.assertTrue(self.client.exists(p.success_uri(task)))
 
 
 if __name__ == "__main__":

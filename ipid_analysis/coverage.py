@@ -42,6 +42,7 @@ def write_coverage(
     raw_root: Path = RAW_DATA_DIR,
     processed_root: Path = PROCESSED_DATA_DIR,
     target_path: Path | None = None,
+    allow_empty: bool = False,
 ) -> Path:
     measurement_dir = raw_root / m.input_key
     ipid_path = measurement_dir / "ipid.pq"
@@ -66,7 +67,7 @@ def write_coverage(
             {"ipid": str(ipid_path), "zmap": str(zmap_path)},
         ).fetchone()
 
-    if zmap_count == 0:
+    if zmap_count == 0 and not allow_empty:
         raise ValueError(f"{zmap_path}: measurement target is empty")
     if outside_target_count:
         raise ValueError(
