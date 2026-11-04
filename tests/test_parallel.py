@@ -1,4 +1,6 @@
 import os
+from contextlib import contextmanager
+from dataclasses import asdict
 from pathlib import Path
 import tempfile
 import unittest
@@ -130,6 +132,67 @@ class ParallelTests(unittest.TestCase):
         self.assertEqual(self.client.writes[-1], CAMPAIGN + "/os/request.json")
         missing = objects - {CAMPAIGN + "/sites/au/protocols/tcp/discovery-ready.json"}
         self.assertNotIn("parallel-union", {t.kind for t in tasks_from_objects(missing, ROOT)})
+
+    def test_stale_listing_cannot_rewrite_committed_discovery(self):
+        from ipid_analysis import s3_workflow, workflow_task
+
+        task = self.event("eu", "icmp")
+        stale_objects = set(self.client.values)
+        spec = dict(task=asdict(task), batch_size=10, cost={"cpus": 1})
+        with patch.object(s3_workflow, "S3Client", return_value=self.client):
+            self.assertEqual(workflow_task.execute(spec), 0)
+            original = dict(self.client.values)
+            original_writes = list(self.client.writes)
+            partition = Path(self.client.value(p.success_uri(task))["partition"])
+            original_bytes = partition.read_bytes()
+            original_mtime = partition.stat().st_mtime_ns
+            # A listing started before publication can still offer this job.
+            offered = next(t for t in tasks_from_objects(stale_objects, ROOT)
+                           if t.kind == "parallel-discovery")
+            self.assertEqual(offered.key, task.key)
+            with patch.object(p, "discovery", side_effect=AssertionError("discovery repeated")):
+                self.assertEqual(workflow_task.execute(spec), 0)
+        self.assertEqual(self.client.values, original)
+        self.assertEqual(self.client.writes, original_writes)
+        self.assertEqual(partition.read_bytes(), original_bytes)
+        self.assertEqual(partition.stat().st_mtime_ns, original_mtime)
+
+    def test_completion_is_rechecked_after_acquiring_the_job_lease(self):
+        from ipid_analysis import runtime, s3_workflow, workflow_task
+
+        task = self.event("eu", "icmp")
+        acquire = runtime.exclusive_lock
+
+        @contextmanager
+        def completed_while_acquiring(identity, **kwargs):
+            with acquire(identity, **kwargs):
+                self.client.json(p.success_uri(task), {"version": 1})
+                yield
+
+        with (
+            patch.object(s3_workflow, "S3Client", return_value=self.client),
+            patch.object(runtime, "exclusive_lock", completed_while_acquiring),
+            patch.object(p, "execute", side_effect=AssertionError("completed task executed")),
+        ):
+            self.assertEqual(workflow_task.execute(
+                dict(task=asdict(task), batch_size=10, cost={"cpus": 1})
+            ), 0)
+
+    def test_completed_legacy_handoff_is_not_repeated(self):
+        from ipid_analysis import s3_workflow, workflow_task
+
+        uri = ROOT + "/jobs/icmp_2026-10-25_01-00-00/request.json"
+        task = Task("handoff", uri, ROOT)
+        self.client.json(uri.replace("request.json", "done.json"), {"version": 1})
+        original = dict(self.client.values)
+        with (
+            patch.object(s3_workflow, "S3Client", return_value=self.client),
+            patch.object(s3_workflow, "process_request", side_effect=AssertionError("handoff repeated")),
+        ):
+            self.assertEqual(workflow_task.execute(
+                dict(task=asdict(task), batch_size=10, cost={"cpus": 1})
+            ), 0)
+        self.assertEqual(self.client.values, original)
 
     def test_corrupt_partition_or_upload_cannot_start_os(self):
         for site in p.SITES:
