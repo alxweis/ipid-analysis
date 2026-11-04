@@ -391,12 +391,15 @@ def retry(client, uri, workflow):
     )
     if match is None:
         return False
-    site = uri.split("/reference-", 1)[0]
     kind = (
         "parallel-reference-comparison"
         if "/reference-comparison/" in uri
         else "parallel-reference"
     )
+    category = (
+        "/reference-comparison/" if kind == "parallel-reference-comparison" else "/reference-jobs/"
+    )
+    site = uri.rsplit(category, 1)[0]
     task = Task(kind, uri, site)
     root = work_path(uri, category="retry")
     try:

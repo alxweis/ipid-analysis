@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 from pathlib import Path
 import unittest
@@ -335,6 +336,36 @@ class LocalReferenceTests(unittest.TestCase):
             client.json(uri, event)
             with self.assertRaisesRegex(ValueError, "ownership"):
                 r.analyze(client, task, self.root / "work2", 32)
+
+    def test_reference_retry_archives_its_failure_and_preserves_success(self):
+        workflow = "s3://bucket/reference-workflow"
+        site = workflow + "/continental/round/sites/eu"
+        env = dict(
+            IPID_ANALYSIS_STORAGE_MODE="local",
+            IPID_ANALYSIS_CONTROL_ROOT=str(self.root / "control"),
+            IPID_ANALYSIS_TMP_DIR=str(self.root / "scratch"),
+        )
+        for relative in ("reference-jobs/reference-tcp-base", "reference-comparison"):
+            client = FakeClient()
+            uri = site + "/" + relative + "/request.json"
+            failed = uri.replace("request.json", "failed.json")
+            done = uri.replace("request.json", "done.json")
+            client.json(uri, dict(version=1))
+            client.json(failed, dict(error="upload failed"))
+            old = client.values[failed]
+            with patch.dict(os.environ, env), patch.object(r, "binding") as check:
+                self.assertTrue(r.retry(client, uri, workflow))
+                check.assert_called_once()
+                self.assertEqual(check.call_args.args[1], site)
+                self.assertNotIn(failed, client.values)
+                archives = [u for u in client.values if "/attempts/" in u]
+                self.assertEqual(len(archives), 1)
+                self.assertEqual(client.values[archives[0]], old)
+                client.json(done, dict(version=1))
+                client.json(failed, dict(error="keep"))
+                with self.assertRaises(ValueError):
+                    r.retry(client, uri, workflow)
+                self.assertIn(failed, client.values)
 
 
 if __name__ == "__main__":
