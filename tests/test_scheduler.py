@@ -15,6 +15,38 @@ from ipid_analysis import scheduler as s
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_real_listing_filter_preserves_parallel_dependencies(self):
+        prefix = "s3://bucket/workflow"
+        campaign = prefix + "/continental/round"
+        expected = {
+            campaign + "/parallel.json",
+            campaign + "/local-references.json",
+            campaign + "/campaign.json",
+        }
+        for site in s.SITES:
+            for protocol in ("icmp", "tcp", "udp-dns"):
+                flow = f"{campaign}/sites/{site}/protocols/{protocol}"
+                expected.update((flow + "/discovery.json", flow + "/discovery-ready.json"))
+        client = Mock()
+        client.objects.return_value = sorted(
+            expected
+            | {
+                campaign + "/sites/eu/results/request.json",
+                campaign + "/attempts/old/failed.json",
+                campaign + "/sites/eu/reports/done.json",
+                campaign + "/bulk.pq",
+            }
+        )
+        listed = set(s.list_control_objects(client, prefix))
+        self.assertEqual(listed, expected)
+        tasks = s.tasks_from_objects(listed, prefix)
+        self.assertEqual(sum(t.kind == "parallel-discovery" for t in tasks), 0)
+        self.assertEqual(sum(t.kind == "parallel-union" for t in tasks), 1)
+        listed.remove(campaign + "/sites/eu/protocols/tcp/discovery-ready.json")
+        tasks = s.tasks_from_objects(listed, prefix)
+        self.assertEqual(sum(t.kind == "parallel-discovery" for t in tasks), 1)
+        self.assertEqual(sum(t.kind == "parallel-union" for t in tasks), 0)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -70,21 +102,29 @@ class SchedulerTests(unittest.TestCase):
                 getattr(self.scheduler.total, field),
             )
 
-        self.assertLessEqual(self.scheduler.total.scratch + self.scheduler.transfer_limit, 200 * s.GIB)
+        self.assertLessEqual(
+            self.scheduler.total.scratch + self.scheduler.transfer_limit, 200 * s.GIB
+        )
 
     def test_parallel_handoff_retains_reserved_slot_beside_support_job(self):
-        support=s.Task('parallel-discovery','s3://bucket/discovery.json','s3://bucket',priority=1)
-        handoff=s.Task('parallel-handoff','s3://bucket/jobs/parallel/request.json','s3://bucket',priority=0)
-        self.scheduler.active[support.key]=self.active(support)
+        support = s.Task(
+            "parallel-discovery", "s3://bucket/discovery.json", "s3://bucket", priority=1
+        )
+        handoff = s.Task(
+            "parallel-handoff", "s3://bucket/jobs/parallel/request.json", "s3://bucket", priority=0
+        )
+        self.scheduler.active[support.key] = self.active(support)
         self.assertTrue(self.scheduler.admitted(handoff))
 
     def test_background_slots_divide_existing_reservation(self):
-        with patch.dict(os.environ,{'IPID_ANALYSIS_BACKGROUND_SLOTS':'2'}):
-            scheduler=s.Scheduler(self.client,'s3://bucket/workflow',self.root/'two')
+        with patch.dict(os.environ, {"IPID_ANALYSIS_BACKGROUND_SLOTS": "2"}):
+            scheduler = s.Scheduler(self.client, "s3://bucket/workflow", self.root / "two")
         self.addCleanup(scheduler.close)
-        self.assertEqual(scheduler.background_slots,2)
-        for field in ('cpus','memory','scratch'):
-            self.assertLessEqual(2*getattr(scheduler.background,field),getattr(self.scheduler.background,field))
+        self.assertEqual(scheduler.background_slots, 2)
+        for field in ("cpus", "memory", "scratch"):
+            self.assertLessEqual(
+                2 * getattr(scheduler.background, field), getattr(self.scheduler.background, field)
+            )
 
     def test_unused_shared_transfer_capacity_is_reserved_before_job_admission(self):
         task = s.Task("handoff", "s3://bucket/jobs/new/request.json", "s3://bucket")
@@ -96,18 +136,30 @@ class SchedulerTests(unittest.TestCase):
 
     def test_late_os_uses_reserved_admission_without_blocking_handoffs(self):
         root = "s3://bucket/workflow/continental/round/enrichments/os"
-        background = s.Task("os-enrichment-analysis", root + "/request.json", self.scheduler.prefix, priority=10)
-        prepare = s.Task("os-enrichment-prepare", root + "/request.json", self.scheduler.prefix, priority=2)
-        handoff = s.Task("handoff", "s3://bucket/workflow/jobs/critical/request.json", self.scheduler.prefix)
+        background = s.Task(
+            "os-enrichment-analysis", root + "/request.json", self.scheduler.prefix, priority=10
+        )
+        prepare = s.Task(
+            "os-enrichment-prepare", root + "/request.json", self.scheduler.prefix, priority=2
+        )
+        handoff = s.Task(
+            "handoff", "s3://bucket/workflow/jobs/critical/request.json", self.scheduler.prefix
+        )
         self.scheduler.active[background.key] = self.active(background)
         self.assertTrue(self.scheduler.admitted(prepare))
         self.scheduler.active[prepare.key] = self.active(prepare)
         self.assertTrue(self.scheduler.admitted(handoff))
-        self.assertFalse(self.scheduler.admitted(s.Task("analysis", "other", self.scheduler.prefix, priority=10)))
+        self.assertFalse(
+            self.scheduler.admitted(
+                s.Task("analysis", "other", self.scheduler.prefix, priority=10)
+            )
+        )
         self.scheduler.active[handoff.key] = self.active(handoff)
         for field in ("cpus", "memory", "scratch"):
-            self.assertLessEqual(sum(getattr(a.cost, field) for a in self.scheduler.active.values()),
-                                 getattr(self.scheduler.total, field))
+            self.assertLessEqual(
+                sum(getattr(a.cost, field) for a in self.scheduler.active.values()),
+                getattr(self.scheduler.total, field),
+            )
 
     def test_dispatch_prioritizes_handoffs_without_blocking_background(self):
         background = s.Task(

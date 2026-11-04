@@ -38,6 +38,30 @@ GIB = 1 << 30
 SITES = ("eu", "as", "af", "na", "sa", "au")
 
 
+def list_control_objects(client, prefix):
+    """Keep every dependency marker used by task derivation, excluding bulk/history."""
+    suffixes = (
+        "/request.json",
+        "/done.json",
+        "/failed.json",
+        "/discovery.json",
+        "/submitted.json",
+        "/campaign.json",
+        "/not-requested.json",
+        "/parallel.json",
+        "/discovery-ready.json",
+        "/local-references.json",
+    )
+    return [
+        uri
+        for uri in client.objects(prefix)
+        if uri.endswith(suffixes)
+        and not any(
+            part in uri[len(prefix) :].split("/") for part in ("attempts", "results", "reports")
+        )
+    ]
+
+
 @dataclass(frozen=True)
 class Cost:
     cpus: int
@@ -178,6 +202,7 @@ def tasks_from_objects(objects: set[str], prefix: str) -> list[Task]:
 
     tasks.extend(enrichment_tasks(objects, prefix))
     from ipid_analysis.parallel import tasks as parallel_tasks
+
     tasks.extend(parallel_tasks(objects, prefix))
     return tasks
 
@@ -302,11 +327,16 @@ class Scheduler:
             critical
             and task.kind not in {"handoff", "parallel-handoff"}
             and any(
-                a.task.priority < 10 and a.task.kind not in {"handoff", "parallel-handoff"} for a in self.active.values()
+                a.task.priority < 10 and a.task.kind not in {"handoff", "parallel-handoff"}
+                for a in self.active.values()
             )
         ):
             return False
-        if sum(a.task.priority >= 10 for a in self.active.values()) >= getattr(self, "background_slots", 1) and not critical:
+        if (
+            sum(a.task.priority >= 10 for a in self.active.values())
+            >= getattr(self, "background_slots", 1)
+            and not critical
+        ):
             return False
         cost = self.cost(task)
         used = Cost(
@@ -583,27 +613,7 @@ class Scheduler:
                         raise RuntimeError("; ".join(self.errors))
                     return
                 if future is None and now >= next_poll:
-                    future = executor.submit(
-                        lambda: [
-                            u
-                            for u in self.client.objects(self.prefix)
-                            if u.endswith(
-                                (
-                                    "/request.json",
-                                    "/done.json",
-                                    "/failed.json",
-                                    "/discovery.json",
-                                    "/submitted.json",
-                                    "/campaign.json",
-                                    "/not-requested.json",
-                                )
-                            )
-                            and not any(
-                                part in u[len(self.prefix) :].split("/")
-                                for part in ("attempts", "results", "reports")
-                            )
-                        ]
-                    )
+                    future = executor.submit(list_control_objects, self.client, self.prefix)
                 time.sleep(1)
         finally:
             self.close()
