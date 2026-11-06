@@ -302,7 +302,7 @@ Artifacts are stored beside their source strategy result as:
 
 Normal manifest postprocessing also derives a second observed network-role
 lookup from public RIPE Atlas traceroutes. The campaign start is inferred from
-the timestamped ZMap ID. The lookup covers the 14 complete UTC days
+the timestamped ZMap ID. By default, the lookup covers the 14 complete UTC days
 immediately before that start; it never waits for data collected after the
 IP-ID campaign:
 
@@ -385,11 +385,19 @@ untouched. The previous `--dump-samples` / `--ripe-dump-samples` options and
 `IPID_ANALYSIS_RIPE_DUMP_SAMPLES` setting have been removed; the number of dumps
 now follows the number of days.
 
+Set `IPID_ANALYSIS_RIPE_LOOKBACK_DAYS=28` in preparation and worker environments
+to use 28 days. The preparation CLI accepts `--lookback-days`; postprocessing
+and network-role analysis accept `--ripe-lookback-days`. Existing 14-day caches
+remain valid for their own windows; matching hourly parts are shared. See
+[preparing RIPE roles before a campaign](docs/RIPE_PREPARATION.md) for window
+alignment, prefetching and deployment instructions.
+
 Resource controls (also available in manifest postprocessing):
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `IPID_ANALYSIS_RIPE_WORKERS` | 4 | Requested parser processes, further capped by CPU and memory budget |
+| `IPID_ANALYSIS_RIPE_LOOKBACK_DAYS` | 14 | Complete preceding UTC days; set 28 consistently for preparation and analysis |
 | `IPID_ANALYSIS_RIPE_DOWNLOADS` | 2 | Concurrent downloads, constrained to 1–2 |
 | `IPID_ANALYSIS_RIPE_TRANSFER_BYTES` | 8 GiB | Shared transfer cap; the scheduler further caps/reserves it within the global scratch budget |
 | `IPID_ANALYSIS_RIPE_MEMORY_GIB` | 16 | Parser budget estimate: 2 GiB reserve plus 2 GiB per worker; minimum 4 |
