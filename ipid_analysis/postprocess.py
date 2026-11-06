@@ -108,6 +108,7 @@ from ipid_analysis.random_reproducibility_analysis import (
     evaluate_random_reproducibility,
 )
 from ipid_analysis.ripe_atlas import (
+    DEFAULT_LOOKBACK_DAYS,
     DEFAULT_PREPROCESS_WORKERS,
     infer_campaign_start,
     parse_datetime,
@@ -233,6 +234,12 @@ def main(
         envvar="IPID_ANALYSIS_RIPE_WORKERS",
         help="parallel RIPE Atlas preprocessing processes",
     ),
+    ripe_lookback_days: int = typer.Option(
+        DEFAULT_LOOKBACK_DAYS,
+        min=1,
+        envvar="IPID_ANALYSIS_RIPE_LOOKBACK_DAYS",
+        help="complete UTC days preceding the RIPE campaign window",
+    ),
     skip_ripe: bool = typer.Option(
         False,
         "--skip-ripe",
@@ -330,6 +337,7 @@ def main(
                 )
                 ripe = prepare_ripe_atlas(
                     campaign_start=campaign_start,
+                    lookback_days=ripe_lookback_days,
                     source=ripe_source,
                     measurement_ids_file=ripe_measurement_ids,
                     input_dir=ripe_input_dir,

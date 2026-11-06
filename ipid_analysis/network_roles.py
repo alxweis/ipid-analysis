@@ -24,6 +24,7 @@ from ipid_analysis.plot_os_group_strategy import resolve_os_measurement_id
 from ipid_analysis.plot_ripe_atlas_os import render_ripe_atlas_os_analysis
 from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
 from ipid_analysis.ripe_atlas import (
+    DEFAULT_LOOKBACK_DAYS,
     DEFAULT_PREPROCESS_WORKERS,
     DEFAULT_SOURCE,
     infer_campaign_start,
@@ -56,6 +57,9 @@ def main(
     ripe_preprocess_workers: int = typer.Option(
         DEFAULT_PREPROCESS_WORKERS, min=1, envvar="IPID_ANALYSIS_RIPE_WORKERS"
     ),
+    ripe_lookback_days: int = typer.Option(
+        DEFAULT_LOOKBACK_DAYS, min=1, envvar="IPID_ANALYSIS_RIPE_LOOKBACK_DAYS"
+    ),
     skip_itdk: bool = typer.Option(False, "--skip-itdk"),
     skip_ripe: bool = typer.Option(False, "--skip-ripe"),
 ) -> None:
@@ -79,6 +83,7 @@ def main(
         )
         ripe = prepare_ripe_atlas(
             campaign_start=campaign_start,
+            lookback_days=ripe_lookback_days,
             source=ripe_source,
             measurement_ids_file=ripe_measurement_ids,
             input_dir=ripe_input_dir,

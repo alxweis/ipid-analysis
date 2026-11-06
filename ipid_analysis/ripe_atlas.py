@@ -1,6 +1,7 @@
 """Prepare a reproducible RIPE Atlas IPv4 traceroute role lookup.
 
-The lookup covers the 14 complete UTC days preceding an IP-ID campaign.  Two
+The lookup defaults to the 14 complete UTC days preceding an IP-ID campaign.
+The lookback can be configured consistently for preparation and analysis. Two
 input modes are supported:
 
 * sampled hourly files from the public RIPE Atlas daily dumps; and
@@ -1321,6 +1322,12 @@ def parse_datetime(value: str) -> datetime:
 @app.command()
 def main(
     campaign_start: str = typer.Option(..., help="IP-ID campaign start (ISO-8601, UTC)"),
+    lookback_days: int = typer.Option(
+        DEFAULT_LOOKBACK_DAYS,
+        min=1,
+        envvar="IPID_ANALYSIS_RIPE_LOOKBACK_DAYS",
+        help="complete UTC days preceding the campaign (one sampled hour per day)",
+    ),
     source: str = typer.Option(
         DEFAULT_SOURCE,
         envvar="IPID_ANALYSIS_RIPE_SOURCE",
@@ -1350,6 +1357,7 @@ def main(
     try:
         dataset = prepare_ripe_atlas(
             campaign_start=parse_datetime(campaign_start),
+            lookback_days=lookback_days,
             source=source,
             measurement_ids_file=measurement_ids_file,
             input_dir=input_dir,
