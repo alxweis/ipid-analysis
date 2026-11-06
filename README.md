@@ -1264,6 +1264,10 @@ python ipid_analysis/paper_figures.py \
 
 If no MaxMind database is configured, the increment and intersection figures
 are still produced and only the continent figure is skipped with a warning.
+For production S3/RAM inputs with a pinned version and checksum, see
+[MaxMind S3/RAM setup](docs/maxmind-storage.md). Local paths and CLI overrides
+remain supported. Continent-figure JSON reports record the database SHA-256,
+type and build epoch, plus the configured S3 source and version when staged.
 For a connection-mode comparison, the artifacts are written as:
 
 ```text
