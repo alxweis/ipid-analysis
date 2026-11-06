@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import matplotlib.pyplot as plt
 import pyarrow as pa
@@ -152,6 +153,30 @@ class PaperFiguresTest(unittest.TestCase):
             ["no-connection", "connection"],
         )
 
+    def test_maxmind_identity_is_persisted_in_figure_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            processed, figures = root / "processed", root / "figures"
+            self._write_inputs(processed)
+            database = root / "fixture.mmdb"
+            database.write_bytes(b"fixture")
+            identity = {"source_uri": "s3://example/raw/maxmind/v1/db.mmdb",
+                        "version": "v1", "sha256": "a" * 64,
+                        "database_type": "GeoLite2-Country", "build_epoch": 123}
+            with (
+                patch("ipid_analysis.maxmind.database_provenance", return_value=identity),
+                patch("ipid_analysis.paper_figures.MaxMindContinentLookup") as reader,
+            ):
+                reader.return_value.__enter__.return_value = lambda ip: ("EU", "Europe")
+                _, report, _ = render_probing_interval_comparison(
+                    self.comparison, maxmind_database=database,
+                    processed_root=processed, figures_root=figures,
+                )
+            metadata = json.loads(report.read_text())
+            self.assertEqual(metadata["maxmind_provenance"], identity)
+            self.assertEqual(metadata["maxmind_database"], str(database))
+            self.assertEqual(metadata["mapped_ip_count"], 4)
+
     def test_all_aggregates_and_renderers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -201,6 +226,7 @@ class PaperFiguresTest(unittest.TestCase):
             interval_report = json.loads(interval_json.read_text())
             self.assertEqual(interval_report["mapped_ip_count"], 3)
             self.assertEqual(interval_report["unmapped_ip_count"], 1)
+            self.assertIsNone(interval_report["maxmind_provenance"])
             self.assertEqual(
                 interval_report["methodology"]["per_ip_statistic"],
                 "median of consecutive probing intervals",

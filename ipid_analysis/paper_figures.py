@@ -341,20 +341,10 @@ def configure_compact_validation_style() -> None:
 
 
 def default_maxmind_database() -> Path | None:
-    """Resolve a MaxMind country/city database from env or ``references/``."""
-    configured = os.getenv("IPID_MAXMIND_DB")
-    candidates = []
-    if configured:
-        candidates.append(Path(configured).expanduser())
-    candidates.extend(
-        [
-            REFERENCES_DIR / "GeoLite2-Country.mmdb",
-            REFERENCES_DIR / "GeoLite2-City.mmdb",
-            REFERENCES_DIR / "GeoIP2-Country.mmdb",
-            REFERENCES_DIR / "GeoIP2-City.mmdb",
-        ]
-    )
-    return next((path for path in candidates if path.is_file()), None)
+    """Resolve a local database or stage a pinned S3 database in job RAM."""
+    from ipid_analysis.maxmind import default_database
+
+    return default_database()
 
 
 class MaxMindContinentLookup:
@@ -934,6 +924,7 @@ def render_probing_interval_comparison(
     pdf_path = comparison.artifact_path(figures_root, PROBING_INTERVAL_KIND, "pdf")
     json_path = comparison.artifact_path(figures_root, PROBING_INTERVAL_KIND, "json")
 
+    database_info = None
     if continent_lookup is not None:
         map_stats = build_continent_map(
             (rt_path, fixed_path),
@@ -947,6 +938,9 @@ def render_probing_interval_comparison(
         database = maxmind_database or default_maxmind_database()
         if database is None or not database.is_file():
             raise FileNotFoundError(maxmind_database or REFERENCES_DIR / "GeoLite2-Country.mmdb")
+        from ipid_analysis.maxmind import database_provenance
+
+        database_info = database_provenance(database)
         with MaxMindContinentLookup(database) as lookup:
             map_stats = build_continent_map(
                 (rt_path, fixed_path),
@@ -974,6 +968,7 @@ def render_probing_interval_comparison(
         "figure": PROBING_INTERVAL_KIND,
         "aggregate": str(aggregate_path),
         "maxmind_database": database_label,
+        "maxmind_provenance": database_info,
         "methodology": {
             "per_ip_statistic": "median of consecutive probing intervals",
             "input_unit": "microseconds",
