@@ -242,6 +242,9 @@ class Scheduler:
         self.bulk_root = ram_root() / "workflow" / "scheduled" if self.ram else self.root
         self.bulk_root.mkdir(parents=True, exist_ok=True)
         self.batch_size = batch_size
+        self.resource_policy = os.environ.get("IPID_ANALYSIS_RESOURCE_POLICY", "legacy")
+        if self.resource_policy not in {"legacy", "geographic"}:
+            raise ValueError("resource policy must be legacy or geographic")
         cpus = min(int(os.environ.get("IPID_ANALYSIS_WORKER_CPUS", cpu_budget())), cpu_budget())
         if cpus < 3:
             raise ValueError("scheduled worker needs at least three CPUs (critical + background)")
@@ -296,6 +299,16 @@ class Scheduler:
             memory * 3 // (4 * self.background_slots),
             scratch * 3 // (4 * self.background_slots),
         )
+        small_cpu = max(1, cpus // 12)
+        self.profiles = {
+            "small": Cost(small_cpu, memory // 16, scratch // 16),
+            "medium": Cost(max(small_cpu, cpus // 3), memory // 4, scratch // 4),
+            "large": Cost(
+                max(1, (cpus - 2 * small_cpu) // self.background_slots),
+                memory * 7 // (8 * self.background_slots),
+                scratch * 7 // (8 * self.background_slots),
+            ),
+        }
         self.reserve = reserve
         self.active: dict[str, Active] = {}
         self.first_seen = {}
@@ -310,8 +323,30 @@ class Scheduler:
             S3Client(client._run, timeout=30) if isinstance(client, S3Client) else client
         )
 
+    def resource_profile(self, task):
+        if self.resource_policy == "legacy":
+            return "critical" if task.priority < 10 else "background"
+        if task.kind in {"parallel-finish", "parallel-site", "site-done", "campaign-done"}:
+            return "small"
+        if task.kind == "parallel-roles" and all(
+            os.environ.get(name, "0").lower() in {"1", "true"}
+            for name in ("IPID_ANALYSIS_SKIP_ITDK", "IPID_ANALYSIS_SKIP_RIPE")
+        ):
+            return "small"
+        if task.kind in {
+            "parallel-discovery", "parallel-handoff", "parallel-strategies",
+            "parallel-measurement", "parallel-core",
+        } and "/protocols/udp-dns/" in task.uri:
+            return "medium"
+        # Cross-protocol targets/unions/references can join the large ICMP/TCP
+        # populations even when the controller happens to run on a UDP VM.
+        # Unknown work is deliberately large rather than guessed to be cheap.
+        return "large"
+
     def cost(self, task):
-        return self.critical if task.priority < 10 else self.background
+        if self.resource_policy == "legacy":
+            return self.critical if task.priority < 10 else self.background
+        return self.profiles[self.resource_profile(task)]
 
     def scratch_directory(self, task, control_directory=None):
         directory = (
@@ -321,22 +356,27 @@ class Scheduler:
 
     def admitted(self, task):
         critical = task.priority < 10
-        if sum(a.task.priority < 10 for a in self.active.values()) >= 2 and critical:
-            return False
-        if (
-            critical
-            and task.kind not in {"handoff", "parallel-handoff"}
-            and any(
-                a.task.priority < 10 and a.task.kind not in {"handoff", "parallel-handoff"}
-                for a in self.active.values()
-            )
-        ):
-            return False
-        if (
-            sum(a.task.priority >= 10 for a in self.active.values())
-            >= getattr(self, "background_slots", 1)
-            and not critical
-        ):
+        if self.resource_policy == "legacy":
+            if sum(a.task.priority < 10 for a in self.active.values()) >= 2 and critical:
+                return False
+            if (
+                critical
+                and task.kind not in {"handoff", "parallel-handoff"}
+                and any(
+                    a.task.priority < 10 and a.task.kind not in {"handoff", "parallel-handoff"}
+                    for a in self.active.values()
+                )
+            ):
+                return False
+            if (
+                sum(a.task.priority >= 10 for a in self.active.values())
+                >= self.background_slots
+                and not critical
+            ):
+                return False
+        elif self.resource_profile(task) == "large" and sum(
+            self.resource_profile(a.task) == "large" for a in self.active.values()
+        ) >= self.background_slots:
             return False
         cost = self.cost(task)
         used = Cost(
@@ -391,6 +431,7 @@ class Scheduler:
         cpu_ids = tuple(cpu for cpu in allowed if cpu not in allocated)[: cost.cpus]
         spec = dict(
             cpu_ids=cpu_ids,
+            resource_profile=self.resource_profile(task),
             task=asdict(task),
             cost=asdict(cost),
             batch_size=self.batch_size,
@@ -440,7 +481,8 @@ class Scheduler:
             task, cost, process, directory, log, time.monotonic(), cpu_ids
         )
         logger.info(
-            f"started {task.kind}: {task.uri}; CPUs={cost.cpus}, RAM={cost.memory / GIB:.1f}GiB, scratch={cost.scratch / GIB:.1f}GiB"
+            f"started {task.kind}: {task.uri}; profile={self.resource_profile(task)}, "
+            f"CPUs={cost.cpus}, RAM={cost.memory / GIB:.1f}GiB, scratch={cost.scratch / GIB:.1f}GiB"
         )
 
     @staticmethod
@@ -508,7 +550,9 @@ class Scheduler:
                 )
             if code == 0 and not active.failure:
                 logger.success(
-                    f"task finished: {active.task.kind}: {active.task.uri}; log={active.directory / 'supervisor.log'}"
+                    f"task finished: {active.task.kind}: {active.task.uri}; "
+                    f"elapsed={time.monotonic() - active.started:.1f}s; "
+                    f"log={active.directory / 'supervisor.log'}"
                 )
             if code != 75:
                 self.release_scratch(active)
@@ -569,6 +613,10 @@ class Scheduler:
                 continue
             if self.admitted(task):
                 self.start(task)
+            elif self.resource_policy == "geographic" and task.priority < 10:
+                # Do not continually backfill cheaper work ahead of a waiting
+                # large handoff/union. Running jobs finish without preemption.
+                break
 
     def close(self):
         for active in self.active.values():
