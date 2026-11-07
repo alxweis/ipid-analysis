@@ -42,7 +42,7 @@ from loguru import logger
 import pyarrow.parquet as pq
 import typer
 
-from ipid_analysis.artifacts import assert_complete, file_digest, publish_file
+from ipid_analysis.artifacts import assert_complete, completion_path, file_digest, publish_file
 from ipid_analysis.downloads import download as download_http
 from ipid_analysis.runtime import (
     available_memory,
@@ -70,7 +70,7 @@ from ipid_analysis.config import PROCESSED_STORAGE_DIR as PROCESSED_DATA_DIR
 from ipid_analysis.config import PROJ_ROOT
 from ipid_analysis.config import RAW_STORAGE_DIR as RAW_DATA_DIR
 from ipid_analysis.ripe_bitmaps import ROLE_SCHEMA, RoleBitmaps, trace_roles
-from ipid_analysis.ripe_cache import RoleCache, read_metadata, validate_roles
+from ipid_analysis.ripe_cache import RoleCache, digest, read_metadata, validate_roles
 
 app = typer.Typer()
 
@@ -78,6 +78,7 @@ DEFAULT_SOURCE = "daily-dumps"
 DEFAULT_LOOKBACK_DAYS = 14
 # Version the window selection without invalidating reusable per-hour parts.
 DAILY_DUMP_SELECTION_POLICY = "unix-day-7-v1"
+DAILY_DUMP_AVAILABILITY_POLICY = "available-selected-hours-v1"
 DEFAULT_PREPROCESS_WORKERS = 4
 DEFAULT_DOWNLOAD_ATTEMPTS = 5
 DEFAULT_DUMP_BASE_URL = "https://data-store.ripe.net/datasets/atlas-daily-dumps"
@@ -117,6 +118,16 @@ class RipeAtlasDataset:
     directory: Path
     roles_path: Path
     metadata_path: Path
+
+
+@dataclass
+class _DailyDumpInputs:
+    files: Iterable
+    available_slots: list[datetime]
+    missing_slots: list[dict]
+
+    def __iter__(self):
+        return iter(self.files)
 
 
 def _parse_measurement_timestamp(value: str) -> datetime | None:
@@ -882,7 +893,7 @@ def _parse_measurement_ids(path: Path | None) -> tuple[int, ...]:
 
 def _source_key(source: str, *, measurement_ids: tuple[int, ...]) -> str:
     if source == "daily-dumps":
-        return f"daily-dumps-{DAILY_DUMP_SELECTION_POLICY}"
+        return f"daily-dumps-{DAILY_DUMP_SELECTION_POLICY}-{DAILY_DUMP_AVAILABILITY_POLICY}"
     digest = hashlib.sha256(",".join(map(str, measurement_ids)).encode()).hexdigest()[:12]
     return f"api-{digest}"
 
@@ -981,9 +992,8 @@ def _daily_dump_files(
     base_url: str,
     parts_root: Path,
 ) -> tuple[Iterable, tuple[datetime, ...], tuple[date, ...]]:
-    # Select before consulting the archive: retained/S3 parts remain usable
-    # even after RIPE's rolling index drops their date. Missing selected hours
-    # fail via HTTP; never substitute a different date or hour.
+    # Selection never moves outside the fixed window. Prefer retained/S3 parts
+    # and raw files; an explicitly unavailable archive slot is reported/skipped.
     slots = daily_dump_slots(window)
     days_in_window = tuple(slot.date() for slot in slots)
     urls = {
@@ -995,6 +1005,7 @@ def _daily_dump_files(
         for slot, url in urls.items()
     }
     transfers = _TransferBudget(identities.values())
+    available_slots, missing_slots = [], []
     def fetch(slot):
         day = slot.date().isoformat()
         filename = f"traceroute-{slot:%Y-%m-%dT%H00}.bz2"
@@ -1015,6 +1026,27 @@ def _daily_dump_files(
                 return part
         raw_destination = Path(raw_root) / "ripe-atlas" / "daily-dumps" / day / filename
         existing = raw_destination
+        if raw_destination.is_file():
+            # Canonical S3 raw objects survive rolling archive expiry. Do not
+            # require a remote HEAD to read a locally mounted durable object.
+            assert_complete(raw_destination)
+            if raw_destination.stat().st_size <= 0:
+                raise ValueError(f"empty RIPE raw artifact: {raw_destination}")
+            marker = completion_path(raw_destination)
+            with raw_destination.open("rb") as retained:
+                header = retained.read(4)
+            if marker.is_file():
+                expected = json.loads(marker.read_text(encoding="utf-8")).get("sha256")
+                if digest(raw_destination) != expected:
+                    raise ValueError(f"RIPE raw artifact checksum mismatch: {raw_destination}")
+            if marker.is_file() or (
+                len(header) == 4 and header[:3] == b"BZh" and header[3] in b"123456789"
+            ):
+                logger.info(f"reusing retained RIPE raw hour: {filename}")
+                return raw_destination, identity, False
+            # Preserve invalid markerless legacy input; stage a replacement
+            # rather than accepting it or overwriting it during download.
+            existing = transfers.root / "downloads" / identity / filename
         # Keep the explicitly configured legacy download directory usable, but
         # new transfers always use the bounded, job-independent local area.
         legacy = (
@@ -1085,27 +1117,43 @@ def _daily_dump_files(
         concurrency = max(1, min(2, int(os.environ.get("IPID_ANALYSIS_RIPE_DOWNLOADS", "2"))))
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             remaining = iter(slots)
-            pending = {pool.submit(fetch, slot) for slot in list(slots)[:concurrency]}
+            pending = {pool.submit(fetch, slot): slot for slot in slots[:concurrency]}
             error = None
             for _ in range(min(concurrency, len(slots))):
                 next(remaining)
             while pending:
-                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
                 for future in done:
+                    completed_slot = pending.pop(future)
                     try:
                         result = future.result()
+                    except HTTPError as exc:
+                        if exc.code in {404, 410}:
+                            missing_slots.append({
+                                "slot": completed_slot.isoformat(),
+                                "url": urls[completed_slot],
+                                "http_status": exc.code,
+                            })
+                            logger.warning(
+                                f"RIPE sampled hour unavailable; skipping within fixed window: "
+                                f"{completed_slot.isoformat()} (HTTP {exc.code})"
+                            )
+                        else:
+                            error = error or exc
+                            transfers.failed.set()
                     except Exception as exc:
                         error = error or exc
                         transfers.failed.set()
                     else:
+                        available_slots.append(completed_slot)
                         yield result
                     slot = next(remaining, None) if error is None else None
                     if slot is not None:
-                        pending.add(pool.submit(fetch, slot))
+                        pending[pool.submit(fetch, slot)] = slot
             if error is not None:
                 raise error
 
-    return inputs(), slots, days_in_window
+    return _DailyDumpInputs(inputs(), available_slots, missing_slots), slots, days_in_window
 
 
 def _api_files(
@@ -1241,12 +1289,11 @@ def prepare_ripe_atlas(
             logger.info(f"restored RIPE role cache from S3: {dataset.roles_path}")
             return dataset
         dump_slots: tuple[datetime, ...] = ()
-        dump_days: tuple[date, ...] = ()
         if input_dir is not None:
             files = _local_files(input_dir, raw_root, window)
             source_kind = "local-files"
         elif source == "daily-dumps":
-            files, dump_slots, dump_days = _daily_dump_files(
+            files, dump_slots, _ = _daily_dump_files(
                 window,
                 raw_root=raw_root,
                 base_url=dump_base_url,
@@ -1269,6 +1316,14 @@ def prepare_ripe_atlas(
             source=key,
             workers=preprocess_workers,
         )
+        used_slots = (
+            tuple(sorted(files.available_slots)) if source_kind == "public-daily-dumps" else ()
+        )
+        missing_slots = (
+            sorted(files.missing_slots, key=lambda item: item["slot"])
+            if source_kind == "public-daily-dumps"
+            else []
+        )
         info = {
             "cache_version": RIPE_CACHE_VERSION,
             "cache_identity": identity,
@@ -1278,7 +1333,12 @@ def prepare_ripe_atlas(
             "window_start": window.start.isoformat(),
             "window_end": window.end.isoformat(),
             "lookback_days": lookback_days,
-            "dump_samples": len(dump_slots) if source_kind == "public-daily-dumps" else None,
+            "dump_samples": len(used_slots) if source_kind == "public-daily-dumps" else None,
+            "requested_dump_samples": len(dump_slots) if source_kind == "public-daily-dumps" else None,
+            "daily_dump_availability_policy": (
+                DAILY_DUMP_AVAILABILITY_POLICY if source_kind == "public-daily-dumps" else None
+            ),
+            "missing_dump_slots": missing_slots,
             "daily_dump_selection_policy": (
                 DAILY_DUMP_SELECTION_POLICY if source_kind == "public-daily-dumps" else None
             ),
@@ -1286,11 +1346,25 @@ def prepare_ripe_atlas(
             "dump_base_url": dump_base_url if source == "daily-dumps" else None,
             "api_base_url": api_base_url if source == "api" else None,
             "sampled_dump_slots": (
-                [slot.isoformat() for slot in dump_slots]
+                [slot.isoformat() for slot in used_slots]
                 if source == "daily-dumps" and input_dir is None
                 else []
             ),
-            "daily_dump_selected_days": [day.isoformat() for day in dump_days],
+            "requested_dump_slots": [slot.isoformat() for slot in dump_slots],
+            "daily_dump_selected_days": [slot.date().isoformat() for slot in used_slots],
+            "daily_dump_available_day_count": (
+                len(used_slots) if source_kind == "public-daily-dumps" else None
+            ),
+            "daily_dump_missing_day_count": (
+                len(missing_slots) if source_kind == "public-daily-dumps" else None
+            ),
+            "daily_dump_complete": (
+                not missing_slots if source_kind == "public-daily-dumps" else None
+            ),
+            "daily_dump_coverage_percentage": (
+                100.0 * len(used_slots) / len(dump_slots)
+                if source_kind == "public-daily-dumps" else None
+            ),
             "daily_dump_requested_day_count": (
                 (window.end.date() - window.start.date()).days
                 if source == "daily-dumps" and input_dir is None
@@ -1310,6 +1384,11 @@ def prepare_ripe_atlas(
             f"prepared RIPE Atlas {window.label}: {stats['addresses']:,} public IPv4 "
             f"addresses from {stats['traces']:,} traceroutes"
         )
+        if source_kind == "public-daily-dumps":
+            logger.info(
+                f"RIPE temporal coverage: {len(used_slots)}/{len(dump_slots)} sampled days; "
+                f"{len(missing_slots)} unavailable"
+            )
     return dataset
 
 

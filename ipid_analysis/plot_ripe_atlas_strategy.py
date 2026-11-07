@@ -32,6 +32,7 @@ from ipid_analysis.network_role_utils import (
 )
 from ipid_analysis.paper_figures import configure_paper_style
 from ipid_analysis.ripe_atlas import RipeAtlasDataset
+from ipid_analysis.ripe_cache import read_metadata
 from ipid_analysis.strategies import (
     PAPER_STRATEGY_ORDER,
     STRATEGY_COLORS,
@@ -419,6 +420,10 @@ def render_ripe_atlas_analysis(
         with_caida=itdk is not None,
     )
     cache_inputs = [strategies, dataset.roles_path]
+    dataset_info = {}
+    if dataset.metadata_path.is_file():
+        dataset_info = read_metadata(dataset.metadata_path)
+        cache_inputs.append(dataset.metadata_path)
     if itdk is not None:
         cache_inputs.append(itdk.interfaces_path)
     if output_cache_is_current(
@@ -631,6 +636,15 @@ def render_ripe_atlas_analysis(
                 "window_end": dataset.window.end.isoformat(),
                 "roles": str(dataset.roles_path),
                 "metadata": str(dataset.metadata_path),
+                "temporal_coverage": {
+                    key: dataset_info.get(key)
+                    for key in (
+                        "lookback_days", "requested_dump_samples", "dump_samples",
+                        "daily_dump_availability_policy", "daily_dump_complete",
+                        "daily_dump_coverage_percentage", "sampled_dump_slots",
+                        "missing_dump_slots",
+                    )
+                },
             },
             "role_definition": {
                 TRANSIT_ROLE: "RIPE observation with T=true; D arbitrary",
