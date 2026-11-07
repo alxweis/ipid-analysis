@@ -550,7 +550,12 @@ def roles(client, task, work, threads):
     from ipid_analysis.caida_itdk import prepare_itdk
     from ipid_analysis.plot_itdk_strategy import render_itdk_analysis
     from ipid_analysis.plot_ripe_atlas_strategy import render_ripe_atlas_analysis
-    from ipid_analysis.ripe_atlas import infer_campaign_start, parse_datetime, prepare_ripe_atlas
+    from ipid_analysis.ripe_atlas import (
+        DEFAULT_LOOKBACK_DAYS,
+        infer_campaign_start,
+        parse_datetime,
+        prepare_ripe_atlas,
+    )
 
     request, manifest = protocol_request(client, task.uri, task.prefix, work)
     errors = []
@@ -575,6 +580,9 @@ def roles(client, task, work, threads):
                 campaign_start=parse_datetime(os.environ["IPID_ANALYSIS_RIPE_CAMPAIGN_START"])
                 if os.environ.get("IPID_ANALYSIS_RIPE_CAMPAIGN_START")
                 else infer_campaign_start(manifest),
+                lookback_days=int(
+                    os.environ.get("IPID_ANALYSIS_RIPE_LOOKBACK_DAYS", DEFAULT_LOOKBACK_DAYS)
+                ),
                 source=os.environ.get("IPID_ANALYSIS_RIPE_SOURCE", "daily-dumps"),
                 measurement_ids_file=Path(os.environ["IPID_ANALYSIS_RIPE_MEASUREMENT_IDS"])
                 if os.environ.get("IPID_ANALYSIS_RIPE_MEASUREMENT_IDS")
@@ -892,9 +900,9 @@ def retry(client, uri, workflow):
     """Archive exactly one failed parallel stage, preserving all source/success data."""
     import time
 
+    from ipid_analysis.local_references import retry as retry_reference
     from ipid_analysis.runtime import cleanup_work, control_root, work_path
     from ipid_analysis.scheduler import Task
-    from ipid_analysis.local_references import retry as retry_reference
 
     if retry_reference(client, uri, workflow):
         return True

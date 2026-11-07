@@ -1,11 +1,13 @@
-import os
 from contextlib import contextmanager
 from dataclasses import asdict
+import json
+import os
 from pathlib import Path
 import tempfile
-import unittest
 from types import SimpleNamespace
+import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -23,6 +25,42 @@ RAW = "s3://bucket/raw"
 
 
 class ParallelTests(unittest.TestCase):
+    def test_geographic_roles_forward_ripe_lookback(self):
+        for days, expected in ((None, 14), ("28", 28)):
+            with self.subTest(days=days):
+                task = Task("parallel-roles", FLOW + "/strategy-jobs/run/request.json", FLOW, "continental/round/eu", 10)
+                env = dict(IPID_ANALYSIS_SKIP_ITDK="1", IPID_ANALYSIS_SKIP_RIPE="0", IPID_ANALYSIS_RIPE_CAMPAIGN_START="2026-11-07T01:00:00Z")
+                with (
+                    patch.dict(os.environ, env),
+                    patch.object(p, "protocol_request", return_value=(SimpleNamespace(job_id="run"), {})),
+                    patch.object(p, "sources", return_value=[]),
+                    patch("ipid_analysis.ripe_atlas.prepare_ripe_atlas") as prepare,
+                ):
+                    if days is None:
+                        os.environ.pop("IPID_ANALYSIS_RIPE_LOOKBACK_DAYS", None)
+                    else:
+                        os.environ["IPID_ANALYSIS_RIPE_LOOKBACK_DAYS"] = days
+                    p.roles(self.client, task, self.work, 4)
+                self.assertEqual(prepare.call_args.kwargs["lookback_days"], expected)
+                self.assertEqual(json.loads(self.client.values[p.success_uri(task)])["optional_errors"], [])
+
+    def test_missing_ripe_dump_is_reported_as_optional_geo_error(self):
+        task = Task("parallel-roles", FLOW + "/strategy-jobs/run/request.json", FLOW, "continental/round/eu", 10)
+        core = FLOW + "/core-jobs/run/done.json"
+        self.client.json(core, {"finished": True})
+        with (
+            patch.dict(os.environ, dict(IPID_ANALYSIS_SKIP_ITDK="1", IPID_ANALYSIS_SKIP_RIPE="0", IPID_ANALYSIS_RIPE_LOOKBACK_DAYS="28", IPID_ANALYSIS_RIPE_CAMPAIGN_START="2026-11-07T01:00:00Z")),
+            patch.object(p, "protocol_request", return_value=(SimpleNamespace(job_id="run"), {})),
+            patch.object(p, "sources", return_value=[]),
+            patch("ipid_analysis.ripe_atlas.prepare_ripe_atlas", side_effect=HTTPError("https://example.invalid/dump", 404, "Not Found", None, None)),
+        ):
+            p.roles(self.client, task, self.work, 4)
+        result = json.loads(self.client.values[p.success_uri(task)])
+        self.assertEqual(len(result["optional_errors"]), 1)
+        self.assertIn("404", result["optional_errors"][0])
+        self.assertEqual(json.loads(self.client.values[core]), {"finished": True})
+        self.assertNotIn(p.success_uri(task).replace("done.json", "failed.json"), self.client.values)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
