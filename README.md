@@ -346,14 +346,18 @@ Existing raw files below the following directory are reused and never removed:
 
 RIPE exposes these dumps as a rolling archive. Selection does not depend on its
 directory index or current retention. Each selected hour first checks the local
-and S3 processed caches, then retained raw data, before downloading. If a required
-hour is unavailable in all of these places, preparation fails visibly; no other
-day or hour is substituted and no incomplete window cache is published. Use the
-API with an explicit measurement-ID file or import retained files with
-`--input-dir` when required inputs are unavailable. `source.json` records the
-selection policy, exact selected timestamps, and observation-window boundaries.
-RIPE remains an optional stage in normal manifest postprocessing; inspect its
-status there if preparation fails.
+and S3 processed caches, then retained raw data, before downloading. HTTP 404/410
+for a selected hour is recorded and skipped; the lookup and plots use the
+available hours inside the same window. No different day or hour is substituted.
+For example, a 28-day window with 27 available sampled hours remains a 28-day
+window with 27/28 temporal coverage. `source.json` and plot JSON reports record
+requested/used slots, missing slots, coverage and window boundaries. Other HTTP,
+transport and integrity failures remain errors; zero usable inputs do not
+produce an empty reference. API/import modes retain their existing semantics.
+Prepared aggregates, including those with missing slots, are reused as a fixed
+reference snapshot. Use preparation `--force` before the campaign to explicitly
+recheck missing hours, while retaining reusable per-hour parts. RIPE remains an
+optional stage in normal manifest postprocessing; inspect its status on failure.
 
 ```text
 data/raw/ripe-atlas/daily-dumps/YYYY-MM-DD/
@@ -362,7 +366,7 @@ data/raw/ripe-atlas/daily-dumps/YYYY-MM-DD/
 The compact reusable lookup and complete source metadata are stored below:
 
 ```text
-data/processed/ripe-atlas/<window>/daily-dumps-unix-day-7-v1/
+data/processed/ripe-atlas/<window>/daily-dumps-unix-day-7-v1-available-selected-hours-v1/
 ```
 
 The worker automatically publishes both hourly parts and window lookups to

@@ -184,7 +184,7 @@ class RipeAtlasTest(unittest.TestCase):
             days = _available_dump_days("https://example.invalid/dumps")
         self.assertEqual(days, (date(2026, 9, 9), date(2026, 9, 10)))
 
-    def test_missing_selected_hour_fails_without_substitution_or_window_publication(self):
+    def test_no_available_selected_hour_fails_without_substitution_or_window_publication(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             start = datetime(1970, 1, 3, tzinfo=timezone.utc)
@@ -201,7 +201,7 @@ class RipeAtlasTest(unittest.TestCase):
                     "_remote_file_size",
                     side_effect=HTTPError(url, 404, "missing hour", {}, None),
                 ) as heads,
-                self.assertRaises(HTTPError),
+                self.assertRaisesRegex(ValueError, "input list is empty"),
             ):
                 prepare_ripe_atlas(
                     campaign_start=start,

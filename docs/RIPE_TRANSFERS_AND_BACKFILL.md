@@ -45,9 +45,13 @@ Thus retained failures cannot grow the raw staging area without bound. Resume
 of an old evicted transfer necessarily starts again; valid persistent parts are
 always checked first. This remains a single Analysis VM coordination model.
 
-Successful prefetches are delivered in completion order. If one download fails,
+Successful prefetches are delivered in completion order. Unavailable selected
+hours (HTTP 404/410 after cache lookup) are skipped and recorded in the fixed
+window's temporal coverage. They do not stop later available inputs. If another download fails,
 already submitted successful downloads are still processed and checkpointed
-before the error is propagated. No partial window is marked complete. Download
+before the error is propagated. A transport/integrity failure never commits a
+window lookup. An aggregate of available hours may be committed with explicit
+`daily_dump_complete=false`; it is a usable reference with reduced coverage. Download
 errors now record attempt, status, offset, received/expected bytes and validator;
 credentials and URL query strings are excluded from diagnostics. HTTP size,
 validator, range and incomplete-body checks remain in force.
@@ -57,7 +61,9 @@ Oversized response bodies are rejected before they exceed the reserved size;
 their prefixes cannot be promoted as completed downloads on a subsequent call.
 
 Hourly part version 2, window version 4, schemas, sample selection, role rules,
-existing cache keys, S3 prefixes and manifest-last publication are unchanged.
+hourly cache keys, S3 prefixes and manifest-last publication are unchanged.
+Available-hour window keys include their availability policy to distinguish
+them from old strict-window aggregates.
 Local caches and restored caches validate identity where available, typed schema,
 row count, metadata markers and checksums before reuse.
 Cache checksums are calculated from the actual bytes, including when a completion
