@@ -502,13 +502,21 @@ class Scheduler:
             except subprocess.TimeoutExpired:
                 if os.name != "posix":
                     active.process.kill()
-                    active.process.wait(timeout=5)
+                    try:
+                        active.process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"job still stopping; retaining resources: {active.task.uri}")
         if os.name == "posix":
             try:
                 os.killpg(active.process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            active.process.wait(timeout=5)
+            try:
+                active.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                # A process in kernel I/O may not reap within five seconds even
+                # after SIGKILL. Keep supervising and reserving its resources.
+                logger.warning(f"job still stopping; retaining resources: {active.task.uri}")
 
     def reap(self):
         from ipid_analysis.continental import publish_task_failure
@@ -518,14 +526,21 @@ class Scheduler:
                 memory = process_group_usage(active.process.pid) if os.name == "posix" else 0
                 scratch = directory_bytes(self.scratch_directory(active.task, active.directory))
                 timeout = int(os.environ.get("IPID_ANALYSIS_JOB_TIMEOUT", "172800"))
-                if (
+                if active.failure or (
                     memory > active.cost.memory
                     or scratch > active.cost.scratch
                     or time.monotonic() - active.started > timeout
                     or (self.ram and directory_bytes(ram_root()) > self.ram_bytes)
                 ):
-                    active.failure = f"job resource limit exceeded: RSS={memory}, scratch={scratch}, timeout={timeout}"
+                    if not active.failure:
+                        active.failure = (
+                            f"job resource limit exceeded: RSS={memory}/{active.cost.memory}, "
+                            f"scratch={scratch}/{active.cost.scratch}, timeout={timeout}"
+                        )
+                        logger.error(f"stopping {active.task.kind}: {active.task.uri}: {active.failure}")
                     self.terminate(active)
+                    if active.process.poll() is None:
+                        continue
                 else:
                     continue
             code = active.process.returncode

@@ -231,6 +231,55 @@ class SchedulerTests(unittest.TestCase):
         failure.assert_not_called()
         self.assertGreater(self.scheduler.retry_after[task.key], time.monotonic())
 
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group termination")
+    def test_sigkill_wait_timeout_keeps_worker_and_job_reservation_alive(self):
+        task = s.Task("handoff", "s3://bucket/jobs/slow/request.json", "s3://bucket")
+        active = self.active(task)
+        active.process.poll.return_value = None
+        active.process.returncode = None
+        active.process.wait.side_effect = subprocess.TimeoutExpired("job", 5)
+        self.scheduler.active[task.key] = active
+        with (
+            patch.object(s.os, "killpg", create=True) as killpg,
+            patch.object(s, "directory_bytes", return_value=active.cost.scratch + 1),
+            patch.object(self.scheduler, "release_scratch") as cleanup,
+            patch("ipid_analysis.continental.publish_task_failure") as failure,
+        ):
+            self.scheduler.reap()
+            self.assertIs(self.scheduler.active[task.key], active)
+            self.assertFalse(active.log.closed)
+            self.assertTrue(active.failure)
+            cleanup.assert_not_called()
+            failure.assert_not_called()
+            self.assertIn(unittest.mock.call(active.process.pid, signal.SIGKILL),
+                          killpg.call_args_list)
+            # Reap only after the kernel has actually reported termination.
+            active.process.poll.return_value = -9
+            active.process.returncode = -9
+            self.scheduler.reap()
+            for future in self.scheduler.failure_futures.values():
+                future.result(timeout=5)
+            cleanup.assert_called_once_with(active)
+            failure.assert_called_once()
+            self.assertFalse(self.scheduler.active)
+
+    def test_stopping_job_is_retried_even_if_usage_falls_below_limit(self):
+        task = s.Task("handoff", "s3://bucket/jobs/slow/request.json", "s3://bucket")
+        active = self.active(task)
+        active.process.poll.return_value = None
+        active.failure = "original resource limit"
+        self.scheduler.active[task.key] = active
+        with (
+            patch.object(s, "process_group_usage", return_value=0),
+            patch.object(s, "directory_bytes", return_value=0),
+            patch.object(self.scheduler, "terminate") as terminate,
+        ):
+            self.scheduler.reap()
+            self.scheduler.reap()
+            self.assertEqual(terminate.call_count, 2)
+            self.assertEqual(active.failure, "original resource limit")
+            self.assertIn(task.key, self.scheduler.active)
+
     def test_once_performs_listing_even_for_empty_queue(self):
         self.client.objects.return_value = []
         self.scheduler.run(once=True, poll_interval=1)
