@@ -298,6 +298,8 @@ def discovery(client, task, work):
 
 
 def union(client, task, work):
+    from ipid_analysis.ipv4_union import write_union
+
     config = descriptor(client, task.prefix, work)
     members, inputs = [], []
     for site in SITES:
@@ -331,8 +333,8 @@ def union(client, task, work):
             members.append(ready["member"])
             inputs.append(str(path))
     output = work / "targets.pq"
-    with connect() as con, atomic_output(output, inputs=map(Path, inputs)) as temporary:
-        con.read_parquet(inputs).distinct().write_parquet(str(temporary), compression="zstd")
+    with atomic_output(output, inputs=map(Path, inputs)) as temporary:
+        write_union(inputs, temporary)
     rows = pq.read_metadata(output).num_rows
     if rows == 0:
         raise ValueError("empty discovery union")
