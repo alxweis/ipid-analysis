@@ -1,5 +1,17 @@
 # ipid-analysis
 
+Export geographic measurement results for LaTeX with
+`make paper-values CAMPAIGN_ID=geo-full-20261107-r1`.
+The default export contains only the current manuscript's selected values and
+paper-relative PDF paths, with separate measurement keys for all six VPs.
+The reviewed selection and its paper references live in
+`paper_values/selection.json`; `ARGS="--profile full"` enables the
+complete diagnostic catalog. Only `tmp/values.tex` is written. Missing results remain empty; sources and
+denominator definitions are included as LaTeX comments. Existing analysis is
+never imported or run.
+See [Paper values](docs/PAPER_VALUES.md)
+for the key schema, EU archive export, and limitations.
+
 Deployment, scratch storage, completion/recovery rules, compatibility changes,
 and the outstanding benchmark matrix are documented in
 [docs/storage-runtime.md](docs/storage-runtime.md). The worker now defaults to

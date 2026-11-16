@@ -1,0 +1,2482 @@
+{
+  "schema_version": 1,
+  "name": "current-imc-paper",
+  "source_revision": null,
+  "source_files": {
+    "main.tex": "97d4366ff0358a897c38522e42725206621f6de3dfd451bf759f7ce853da5e3c",
+    "sections/abstract.tex": "dc20f6acc5458fb28ad27263d1b609c86f8e2ed2144a3dab332dd3cd2e9b5319",
+    "sections/introduction.tex": "1115cefbe41ec437c3e4fe194527a287089aed6636e5da7b19259f2eab76bfff",
+    "sections/background.tex": "84d5c909d5de8bfef0c87458a3e79cf8e92ef9406d83b0952ebe097710919f8b",
+    "sections/method.tex": "1499203dbe07ea912959800c92c1ea968a75add87617634f2ccf762dbcd7f0d3",
+    "sections/correctness.tex": "89eff972a8e874112b129dc46b4da6cc67f530b0c60373597766cabd694a0f29",
+    "sections/results.tex": "148ef865bf25a1d818906dad33436750f210400a4481a960f9083f98df4cf718",
+    "sections/guidelines.tex": "b058f27c4aa097f7eb7a367f6392b43429da9d2f5cf9442076bcac9052bc848e",
+    "sections/discussion.tex": "8d97adc88b4f907ad061a68345faffc98ae5b9c5c1c1ca7309c67078f4309908",
+    "sections/conclusion.tex": "a106869db39e2d56684e52a0b867179df3eb5c12068cec83d95fd92f2abd3c38",
+    "sections/appendix.tex": "09288e408d4de5cabbbd97400e58d2bac9ec16ad8f7d950f64205a191e0a8fa6"
+  },
+  "scope": "Active empirical prose/captions, their measurement parameters and generated figures; excludes commented text, literature/layout constants and static diagrams.",
+  "os_families": {
+    "rpm": [
+      "rhel",
+      "centos",
+      "fedora"
+    ],
+    "deb-rpm": [
+      "debian",
+      "ubuntu",
+      "rhel",
+      "centos",
+      "fedora"
+    ],
+    "mikrotik-zyxel": [
+      "mikrotik",
+      "zyxel"
+    ],
+    "deb": [
+      "debian",
+      "ubuntu"
+    ]
+  },
+  "entries": [
+    {
+      "key": "artifacts.required-disk-gib",
+      "unit": "GiB",
+      "definition": "Measured disk requirement of the published artifact workflow",
+      "paper_references": [
+        "sections/appendix.tex:26"
+      ],
+      "missing_reason": "requires a resource benchmark report; the old paper estimate is not a measurement result"
+    },
+    {
+      "key": "artifacts.required-memory-gib",
+      "unit": "GiB",
+      "definition": "Measured RAM requirement of the published artifact workflow",
+      "paper_references": [
+        "sections/appendix.tex:29"
+      ],
+      "missing_reason": "requires a resource benchmark report; do not substitute VM capacity"
+    },
+    {
+      "key": "campaign.vp-{vp}.end-month",
+      "unit": "",
+      "definition": "Actual final probing month; terminal timing evidence required",
+      "paper_references": [
+        "sections/method.tex:172"
+      ]
+    },
+    {
+      "key": "campaign.vp-{vp}.start-month",
+      "unit": "",
+      "definition": "Month of earliest original ZMap identifier; all three protocols required",
+      "paper_references": [
+        "sections/method.tex:172"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.all-protocols.classified-min.share-pct",
+      "unit": "percent",
+      "definition": "Minimum classified fraction across ICMP/TCP/UDP; denominator: retained RT-result population",
+      "paper_references": [
+        "sections/introduction.tex:34"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.fi-mass.recovered.rt-outliers-1.share-pct",
+      "unit": "percent",
+      "definition": "RT outliers among deterministic classes recovered in FI-MASS",
+      "paper_references": [
+        "sections/results.tex:42"
+      ],
+      "missing_reason": "requires a paired RT-sequence/outlier analysis of the recovered cohort"
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.fi-mass.recovered.rt-outliers-2.share-pct",
+      "unit": "percent",
+      "definition": "RT outliers among deterministic classes recovered in FI-MASS",
+      "paper_references": [
+        "sections/results.tex:42"
+      ],
+      "missing_reason": "requires a paired RT-sequence/outlier analysis of the recovered cohort"
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.fi-mass.single-per-destination-per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "SINGLE + PER_DESTINATION + PER_BUCKET / successful FI-MASS IPs",
+      "paper_references": [
+        "sections/results.tex:41"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.centos.share-pct",
+      "unit": "percent",
+      "definition": "centos / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.deb.share-pct",
+      "unit": "percent",
+      "definition": "deb / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.rhel.share-pct",
+      "unit": "percent",
+      "definition": "rhel / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.windows.share-pct",
+      "unit": "percent",
+      "definition": "windows / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-os.transit-observed.cisco.share-pct",
+      "unit": "percent",
+      "definition": "cisco / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-os.transit-observed.deb.share-pct",
+      "unit": "percent",
+      "definition": "deb / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-os.transit-observed.huawei.share-pct",
+      "unit": "percent",
+      "definition": "huawei / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-os.transit-observed.windows.share-pct",
+      "unit": "percent",
+      "definition": "windows / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk.transit-observed.count",
+      "unit": "ips",
+      "definition": "Transit-observed address count in the ITDK report population",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk.transit-observed.share-pct",
+      "unit": "percent",
+      "definition": "Transit-observed / all retained report result IPs, including unmatched IPs",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.os.matched-of-results.share-pct",
+      "unit": "percent",
+      "definition": "Resolved matched OS groups / source strategy result population",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.os.matched.count",
+      "unit": "ips",
+      "definition": "Resolved OS groups joined to sufficient-sample strategy rows",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.os.rpm.per-bucket.max-share-pct",
+      "unit": "percent",
+      "definition": "max per-bucket share over the explicitly defined rpm OS group members",
+      "paper_references": [
+        "sections/results.tex:91"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.os.rpm.per-bucket.min-share-pct",
+      "unit": "percent",
+      "definition": "min per-bucket share over the explicitly defined rpm OS group members",
+      "paper_references": [
+        "sections/results.tex:91"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.os.rpm.per-destination.max-share-pct",
+      "unit": "percent",
+      "definition": "max per-destination share over the explicitly defined rpm OS group members",
+      "paper_references": [
+        "sections/results.tex:91"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.icmp.no-connection.rt-fi-merged.os.rpm.per-destination.min-share-pct",
+      "unit": "percent",
+      "definition": "min per-destination share over the explicitly defined rpm OS group members",
+      "paper_references": [
+        "sections/results.tex:91"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.flags.constant.syn-ack-relative-to-rst.gain-pct",
+      "unit": "percent",
+      "definition": "Relative CONSTANT-share increase: (SYN-ACK − RST) / RST",
+      "paper_references": [
+        "sections/results.tex:243"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.flags.rst.single-per-bucket-random.share-pct",
+      "unit": "percent",
+      "definition": "SINGLE + PER_BUCKET + RANDOM / this ZMap response-class bar",
+      "paper_references": [
+        "sections/results.tex:244"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.flags.syn-ack.single-per-bucket-random.share-pct",
+      "unit": "percent",
+      "definition": "SINGLE + PER_BUCKET + RANDOM / this ZMap response-class bar",
+      "paper_references": [
+        "sections/results.tex:244"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.centos.share-pct",
+      "unit": "percent",
+      "definition": "centos / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.deb.share-pct",
+      "unit": "percent",
+      "definition": "deb / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.rhel.share-pct",
+      "unit": "percent",
+      "definition": "rhel / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.windows.share-pct",
+      "unit": "percent",
+      "definition": "windows / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-os.transit-observed.cisco.share-pct",
+      "unit": "percent",
+      "definition": "cisco / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-os.transit-observed.deb.share-pct",
+      "unit": "percent",
+      "definition": "deb / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-os.transit-observed.windows.share-pct",
+      "unit": "percent",
+      "definition": "windows / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk.transit-observed.count",
+      "unit": "ips",
+      "definition": "Transit-observed address count in the ITDK report population",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk.transit-observed.share-pct",
+      "unit": "percent",
+      "definition": "Transit-observed / all retained report result IPs, including unmatched IPs",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.os.deb-rpm.constant.max-share-pct",
+      "unit": "percent",
+      "definition": "max constant share over the explicitly defined deb-rpm OS group members",
+      "paper_references": [
+        "sections/results.tex:321"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.os.deb-rpm.constant.min-share-pct",
+      "unit": "percent",
+      "definition": "min constant share over the explicitly defined deb-rpm OS group members",
+      "paper_references": [
+        "sections/results.tex:321"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.os.matched-of-results.share-pct",
+      "unit": "percent",
+      "definition": "Resolved matched OS groups / source strategy result population",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.os.matched.count",
+      "unit": "ips",
+      "definition": "Resolved OS groups joined to sufficient-sample strategy rows",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.os.mikrotik-zyxel.constant.max-share-pct",
+      "unit": "percent",
+      "definition": "max constant share over the explicitly defined mikrotik-zyxel OS group members",
+      "paper_references": [
+        "sections/results.tex:332"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.tcp.no-connection.rt-fi-merged.os.mikrotik-zyxel.constant.min-share-pct",
+      "unit": "percent",
+      "definition": "min constant share over the explicitly defined mikrotik-zyxel OS group members",
+      "paper_references": [
+        "sections/results.tex:332"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.centos.share-pct",
+      "unit": "percent",
+      "definition": "centos / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.deb.share-pct",
+      "unit": "percent",
+      "definition": "deb / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.rhel.share-pct",
+      "unit": "percent",
+      "definition": "rhel / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-os.no-transit-evidence.windows.share-pct",
+      "unit": "percent",
+      "definition": "windows / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-os.transit-observed.deb.share-pct",
+      "unit": "percent",
+      "definition": "deb / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-os.transit-observed.huawei.share-pct",
+      "unit": "percent",
+      "definition": "huawei / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-os.transit-observed.rhel.share-pct",
+      "unit": "percent",
+      "definition": "rhel / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
+      "paper_references": [
+        "sections/appendix.tex:192-209"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk.transit-observed.count",
+      "unit": "ips",
+      "definition": "Transit-observed address count in the ITDK report population",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.itdk.transit-observed.share-pct",
+      "unit": "percent",
+      "definition": "Transit-observed / all retained report result IPs, including unmatched IPs",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.os.deb-rpm.per-bucket.max-share-pct",
+      "unit": "percent",
+      "definition": "max per-bucket share over the explicitly defined deb-rpm OS group members",
+      "paper_references": [
+        "sections/results.tex:181"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.os.deb-rpm.per-bucket.min-share-pct",
+      "unit": "percent",
+      "definition": "min per-bucket share over the explicitly defined deb-rpm OS group members",
+      "paper_references": [
+        "sections/results.tex:181"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.os.matched-of-results.share-pct",
+      "unit": "percent",
+      "definition": "Resolved matched OS groups / source strategy result population",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "claims.vp-{vp}.udp.no-connection.rt-fi-merged.os.matched.count",
+      "unit": "ips",
+      "definition": "Resolved OS groups joined to sufficient-sample strategy rows",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "classifier.multi.maximum-clusters",
+      "unit": "",
+      "definition": "Production classifier parameter, gated by recorded classifier version",
+      "paper_references": [
+        "sections/method.tex:98-110"
+      ]
+    },
+    {
+      "key": "classifier.multi.maximum-increment",
+      "unit": "",
+      "definition": "Production classifier parameter, gated by recorded classifier version",
+      "paper_references": [
+        "sections/method.tex:98-110"
+      ]
+    },
+    {
+      "key": "classifier.per-bucket.maximum-increment",
+      "unit": "",
+      "definition": "Production classifier parameter, gated by recorded classifier version",
+      "paper_references": [
+        "sections/method.tex:98-110"
+      ]
+    },
+    {
+      "key": "classifier.single.maximum-increment",
+      "unit": "",
+      "definition": "Production classifier parameter, gated by recorded classifier version",
+      "paper_references": [
+        "sections/method.tex:98-110"
+      ]
+    },
+    {
+      "key": "classifier.vp-{vp}.icmp.random.threshold",
+      "unit": "",
+      "definition": "Actual production RANDOM score threshold from the measurement evaluation report",
+      "paper_references": [
+        "sections/method.tex:110; sections/appendix.tex:94"
+      ]
+    },
+    {
+      "key": "classifier.vp-{vp}.tcp.random.threshold",
+      "unit": "",
+      "definition": "Actual production RANDOM score threshold from the measurement evaluation report",
+      "paper_references": [
+        "sections/method.tex:110; sections/appendix.tex:94"
+      ]
+    },
+    {
+      "key": "classifier.vp-{vp}.udp.random.threshold",
+      "unit": "",
+      "definition": "Actual production RANDOM score threshold from the measurement evaluation report",
+      "paper_references": [
+        "sections/method.tex:110; sections/appendix.tex:94"
+      ]
+    },
+    {
+      "key": "constant.vp-{vp}.tcp.connection.rt-base.zero.share-pct",
+      "unit": "percent",
+      "definition": "Constant-zero IPs / all CONSTANT IPs in the specified population",
+      "paper_references": [
+        "sections/results.tex:252"
+      ],
+      "missing_reason": "requires constant-value sequence analysis, respecting the classifier configuration"
+    },
+    {
+      "key": "constant.vp-{vp}.tcp.no-connection.rt-fi-merged.zero.share-pct",
+      "unit": "percent",
+      "definition": "Constant-zero IPs / all CONSTANT IPs in the specified population",
+      "paper_references": [
+        "sections/results.tex:252"
+      ],
+      "missing_reason": "requires constant-value sequence analysis, respecting the classifier configuration"
+    },
+    {
+      "key": "increments.vp-{vp}.icmp.no-connection.fi-base.per-bucket.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
+      "paper_references": [
+        "sections/appendix.tex:286-295"
+      ],
+      "missing_reason": "requires complete counts around the percentile, not sampled CDF points"
+    },
+    {
+      "key": "increments.vp-{vp}.icmp.no-connection.fi-base.per-connection.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive strategy-selected increments below 2000",
+      "paper_references": [
+        "sections/appendix.tex:281"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.icmp.no-connection.fi-base.per-destination.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive strategy-selected increments below 2000",
+      "paper_references": [
+        "sections/appendix.tex:281"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.icmp.no-connection.fi-base.single.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:281-295"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.icmp.no-connection.rt-base.per-bucket.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
+      "paper_references": [
+        "sections/appendix.tex:286-295"
+      ],
+      "missing_reason": "requires complete counts around the percentile, not sampled CDF points"
+    },
+    {
+      "key": "increments.vp-{vp}.icmp.no-connection.rt-base.per-connection.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive strategy-selected increments below 2000",
+      "paper_references": [
+        "sections/appendix.tex:281"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.icmp.no-connection.rt-base.per-destination.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive strategy-selected increments below 2000",
+      "paper_references": [
+        "sections/appendix.tex:281"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.icmp.no-connection.rt-base.single.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:281-295"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.connection.fi-base.per-bucket.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
+      "paper_references": [
+        "sections/appendix.tex:286-295"
+      ],
+      "missing_reason": "requires complete counts around the percentile, not sampled CDF points"
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.connection.fi-base.single.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:281-295"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.connection.rt-base.per-bucket.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
+      "paper_references": [
+        "sections/appendix.tex:286-295"
+      ],
+      "missing_reason": "requires complete counts around the percentile, not sampled CDF points"
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.connection.rt-base.single.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:281-295"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.no-connection.fi-base.per-bucket.below-1000.share-pct",
+      "unit": "percent",
+      "definition": "Positive per-bucket increments < 1000 / all positive increments",
+      "paper_references": [
+        "sections/correctness.tex:166-170"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.no-connection.fi-base.per-bucket.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
+      "paper_references": [
+        "sections/appendix.tex:286-295"
+      ],
+      "missing_reason": "requires complete counts around the percentile, not sampled CDF points"
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.no-connection.fi-base.single.below-1000.share-pct",
+      "unit": "percent",
+      "definition": "Positive single increments < 1000 / all positive increments",
+      "paper_references": [
+        "sections/correctness.tex:166-170"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.no-connection.fi-base.single.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:281-295"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.no-connection.rt-base.per-bucket.below-1000.share-pct",
+      "unit": "percent",
+      "definition": "Positive per-bucket increments < 1000 / all positive increments",
+      "paper_references": [
+        "sections/correctness.tex:166-170"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.no-connection.rt-base.per-bucket.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
+      "paper_references": [
+        "sections/appendix.tex:286-295"
+      ],
+      "missing_reason": "requires complete counts around the percentile, not sampled CDF points"
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.no-connection.rt-base.single.below-1000.share-pct",
+      "unit": "percent",
+      "definition": "Positive single increments < 1000 / all positive increments",
+      "paper_references": [
+        "sections/correctness.tex:166-170"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.tcp.no-connection.rt-base.single.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:281-295"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.udp.no-connection.fi-base.per-bucket.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
+      "paper_references": [
+        "sections/appendix.tex:286-295"
+      ],
+      "missing_reason": "requires complete counts around the percentile, not sampled CDF points"
+    },
+    {
+      "key": "increments.vp-{vp}.udp.no-connection.fi-base.single.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:281-295"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.udp.no-connection.fi-base.single.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive FI-BASE UDP SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:291"
+      ]
+    },
+    {
+      "key": "increments.vp-{vp}.udp.no-connection.rt-base.per-bucket.p99",
+      "unit": "increments",
+      "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
+      "paper_references": [
+        "sections/appendix.tex:286-295"
+      ],
+      "missing_reason": "requires complete counts around the percentile, not sampled CDF points"
+    },
+    {
+      "key": "increments.vp-{vp}.udp.no-connection.rt-base.single.below-2000.share-pct",
+      "unit": "percent",
+      "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
+      "paper_references": [
+        "sections/appendix.tex:281-295"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.icmp.no-connection.fi-mass.configured-sequence-length.count",
+      "unit": "probes",
+      "definition": "Configured requests per IP: connections × requests per connection",
+      "paper_references": [
+        "sections/method.tex:61-62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.icmp.no-connection.fi-mass.fixed-interval.request-interval",
+      "unit": "",
+      "definition": "Configured FI request spacing",
+      "paper_references": [
+        "sections/method.tex:61; sections/correctness.tex:148-155"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.icmp.no-connection.fi-mass.maximum-tolerated-rtt",
+      "unit": "",
+      "definition": "Configured reply timeout",
+      "paper_references": [
+        "sections/method.tex:60"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.icmp.no-connection.fi-mass.minimum-required-replies.count",
+      "unit": "replies",
+      "definition": "Configured minimum accepted FI-MASS replies",
+      "paper_references": [
+        "sections/method.tex:62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.icmp.no-connection.rt-base.configured-sequence-length.count",
+      "unit": "probes",
+      "definition": "Configured requests per IP: connections × requests per connection",
+      "paper_references": [
+        "sections/method.tex:61-62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.icmp.no-connection.rt-base.maximum-tolerated-rtt",
+      "unit": "",
+      "definition": "Configured reply timeout",
+      "paper_references": [
+        "sections/method.tex:60"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.source-addresses.common-prefix-length",
+      "unit": "",
+      "definition": "Common IPv4 prefix length of the actual probing source addresses",
+      "paper_references": [
+        "sections/method.tex:141,171"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.tcp.connection.rt-base.connection-count",
+      "unit": "connections",
+      "definition": "Configured number of simultaneous TCP connections",
+      "paper_references": [
+        "sections/method.tex:44"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.tcp.no-connection.fi-mass.configured-sequence-length.count",
+      "unit": "probes",
+      "definition": "Configured requests per IP: connections × requests per connection",
+      "paper_references": [
+        "sections/method.tex:61-62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.tcp.no-connection.fi-mass.fixed-interval.request-interval",
+      "unit": "",
+      "definition": "Configured FI request spacing",
+      "paper_references": [
+        "sections/method.tex:61; sections/correctness.tex:148-155"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.tcp.no-connection.fi-mass.maximum-tolerated-rtt",
+      "unit": "",
+      "definition": "Configured reply timeout",
+      "paper_references": [
+        "sections/method.tex:60"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.tcp.no-connection.fi-mass.minimum-required-replies.count",
+      "unit": "replies",
+      "definition": "Configured minimum accepted FI-MASS replies",
+      "paper_references": [
+        "sections/method.tex:62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.tcp.no-connection.rt-base.configured-sequence-length.count",
+      "unit": "probes",
+      "definition": "Configured requests per IP: connections × requests per connection",
+      "paper_references": [
+        "sections/method.tex:61-62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.tcp.no-connection.rt-base.maximum-tolerated-rtt",
+      "unit": "",
+      "definition": "Configured reply timeout",
+      "paper_references": [
+        "sections/method.tex:60"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.udp.no-connection.fi-mass.configured-sequence-length.count",
+      "unit": "probes",
+      "definition": "Configured requests per IP: connections × requests per connection",
+      "paper_references": [
+        "sections/method.tex:61-62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.udp.no-connection.fi-mass.fixed-interval.request-interval",
+      "unit": "",
+      "definition": "Configured FI request spacing",
+      "paper_references": [
+        "sections/method.tex:61; sections/correctness.tex:148-155"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.udp.no-connection.fi-mass.maximum-tolerated-rtt",
+      "unit": "",
+      "definition": "Configured reply timeout",
+      "paper_references": [
+        "sections/method.tex:60"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.udp.no-connection.fi-mass.minimum-required-replies.count",
+      "unit": "replies",
+      "definition": "Configured minimum accepted FI-MASS replies",
+      "paper_references": [
+        "sections/method.tex:62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.udp.no-connection.rt-base.configured-sequence-length.count",
+      "unit": "probes",
+      "definition": "Configured requests per IP: connections × requests per connection",
+      "paper_references": [
+        "sections/method.tex:61-62"
+      ]
+    },
+    {
+      "key": "parameters.vp-{vp}.udp.no-connection.rt-base.maximum-tolerated-rtt",
+      "unit": "",
+      "definition": "Configured reply timeout",
+      "paper_references": [
+        "sections/method.tex:60"
+      ]
+    },
+    {
+      "key": "plots.validation.chi-square-cdf",
+      "unit": "pdf-path",
+      "definition": "Current-paper synthetic validation PDF relative to the paper root",
+      "paper_references": [
+        "sections/appendix.tex:122"
+      ]
+    },
+    {
+      "key": "plots.validation.fi-ideal.confusion-matrix",
+      "unit": "pdf-path",
+      "definition": "Current-paper synthetic validation PDF relative to the paper root",
+      "paper_references": [
+        "sections/correctness.tex:8"
+      ]
+    },
+    {
+      "key": "plots.validation.fi-lossy-reordered.confusion-matrix",
+      "unit": "pdf-path",
+      "definition": "Current-paper synthetic validation PDF relative to the paper root",
+      "paper_references": [
+        "sections/correctness.tex:56"
+      ]
+    },
+    {
+      "key": "plots.validation.nist-cdf",
+      "unit": "pdf-path",
+      "definition": "Current-paper synthetic validation PDF relative to the paper root",
+      "paper_references": [
+        "sections/appendix.tex:79"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.icmp.no-connection.rt-base-vs-fi-base.increment-distributions",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.icmp.no-connection.rt-base-vs-fi-base.probing-intervals-by-continent",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.icmp.no-connection.rt-base-vs-fi-base.strategy-intersection",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-os",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/appendix.tex:163-184"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.icmp.no-connection.rt-fi-merged.measurement-type-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.connection.rt-base-vs-fi-base.increment-distributions",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.connection.rt-base-vs-fi-base.probing-intervals-by-continent",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.connection.rt-base-vs-fi-base.strategy-intersection",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.connection.rt-base.itdk-role-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:278"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.connection.rt-base.operating-system-group-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:277"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.no-connection.rt-base-vs-fi-base.increment-distributions",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.no-connection.rt-base-vs-fi-base.probing-intervals-by-continent",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.no-connection.rt-base-vs-fi-base.strategy-intersection",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-os",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/appendix.tex:163-184"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.no-connection.rt-fi-merged.measurement-type-by-strategy-with-connection",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.tcp.no-connection.rt-fi-merged.tcp-flags-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:223,243-244"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.udp.no-connection.rt-base-vs-fi-base.increment-distributions",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.udp.no-connection.rt-base-vs-fi-base.probing-intervals-by-continent",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.udp.no-connection.rt-base-vs-fi-base.strategy-intersection",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-os",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/appendix.tex:163-184"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.udp.no-connection.rt-fi-merged.measurement-type-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "plots.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy",
+      "unit": "pdf-path",
+      "definition": "Current-paper generated figure, relative to the paper repository root",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "probing-comparison.vp-{vp}.icmp.no-connection.fi-to-rt-success.share-pct",
+      "unit": "percent",
+      "definition": "FI-BASE successes / RT successes in that same selected target population",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ],
+      "missing_reason": "requires the matched RT cohort count"
+    },
+    {
+      "key": "probing-comparison.vp-{vp}.icmp.no-connection.rt-successful.count",
+      "unit": "ips",
+      "definition": "RT successes within exactly the selected FI-BASE target cohort",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ],
+      "missing_reason": "requires RT membership within the selected FI-BASE population; full RT totals are not comparable"
+    },
+    {
+      "key": "probing-comparison.vp-{vp}.tcp.connection.fi-to-rt-success.share-pct",
+      "unit": "percent",
+      "definition": "FI-BASE successes / RT successes in that same selected target population",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ],
+      "missing_reason": "requires the matched RT cohort count"
+    },
+    {
+      "key": "probing-comparison.vp-{vp}.tcp.connection.rt-successful.count",
+      "unit": "ips",
+      "definition": "RT successes within exactly the selected FI-BASE target cohort",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ],
+      "missing_reason": "requires RT membership within the selected FI-BASE population; full RT totals are not comparable"
+    },
+    {
+      "key": "probing-comparison.vp-{vp}.tcp.no-connection.fi-to-rt-success.share-pct",
+      "unit": "percent",
+      "definition": "FI-BASE successes / RT successes in that same selected target population",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ],
+      "missing_reason": "requires the matched RT cohort count"
+    },
+    {
+      "key": "probing-comparison.vp-{vp}.tcp.no-connection.rt-successful.count",
+      "unit": "ips",
+      "definition": "RT successes within exactly the selected FI-BASE target cohort",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ],
+      "missing_reason": "requires RT membership within the selected FI-BASE population; full RT totals are not comparable"
+    },
+    {
+      "key": "probing-comparison.vp-{vp}.udp.no-connection.fi-to-rt-success.share-pct",
+      "unit": "percent",
+      "definition": "FI-BASE successes / RT successes in that same selected target population",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ],
+      "missing_reason": "requires the matched RT cohort count"
+    },
+    {
+      "key": "probing-comparison.vp-{vp}.udp.no-connection.rt-successful.count",
+      "unit": "ips",
+      "definition": "RT successes within exactly the selected FI-BASE target cohort",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ],
+      "missing_reason": "requires RT membership within the selected FI-BASE population; full RT totals are not comparable"
+    },
+    {
+      "key": "references.vp-{vp}.itdk.release",
+      "unit": "",
+      "definition": "Recorded CAIDA ITDK release used for this VP",
+      "paper_references": [
+        "sections/method.tex:176"
+      ]
+    },
+    {
+      "key": "references.vp-{vp}.maxmind.build-month",
+      "unit": "",
+      "definition": "UTC build month from the recorded MaxMind build epoch",
+      "paper_references": [
+        "sections/method.tex:183"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.fi-base.probing-intervals.below-500ms.share-pct",
+      "unit": "percent",
+      "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
+      "paper_references": [
+        "sections/correctness.tex:151; sections/appendix.tex:253"
+      ],
+      "missing_reason": "exact interval distribution report required; sampled quantiles are insufficient"
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-base.probing-intervals.below-500ms.share-pct",
+      "unit": "percent",
+      "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
+      "paper_references": [
+        "sections/correctness.tex:151; sections/appendix.tex:253"
+      ],
+      "missing_reason": "exact interval distribution report required; sampled quantiles are insufficient"
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-consistency-summary.strict-agreement-percentage",
+      "unit": "percent",
+      "definition": "Strict agreement among eligible multi-interface ITDK nodes",
+      "paper_references": [
+        "sections/results.tex:56,304"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-os.coverage.transit-observed-os-resolved",
+      "unit": "ips",
+      "definition": "Resolved OS address count within the transit-observed population",
+      "paper_references": [
+        "sections/appendix.tex:153-184"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.constant",
+      "unit": "percent",
+      "definition": "constant among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.multi",
+      "unit": "percent",
+      "definition": "multi among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.per-bucket",
+      "unit": "percent",
+      "definition": "per-bucket among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.per-destination",
+      "unit": "percent",
+      "definition": "per-destination among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.random",
+      "unit": "percent",
+      "definition": "random among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.reflection",
+      "unit": "percent",
+      "definition": "reflection among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.single",
+      "unit": "percent",
+      "definition": "single among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.cisco.strategies.reflection.share-pct",
+      "unit": "percent",
+      "definition": "reflection / sufficient-sample strategy rows in resolved OS group cisco",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.debian.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group debian",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.multi.share-pct",
+      "unit": "percent",
+      "definition": "multi / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.random.share-pct",
+      "unit": "percent",
+      "definition": "random / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.huawei.strategies.reflection.share-pct",
+      "unit": "percent",
+      "definition": "reflection / sufficient-sample strategy rows in resolved OS group huawei",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.mikrotik.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group mikrotik",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.mikrotik.strategies.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination / sufficient-sample strategy rows in resolved OS group mikrotik",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.openbsd.strategies.random.share-pct",
+      "unit": "percent",
+      "definition": "random / sufficient-sample strategy rows in resolved OS group openbsd",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.sonicwall.strategies.random.share-pct",
+      "unit": "percent",
+      "definition": "random / sufficient-sample strategy rows in resolved OS group sonicwall",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.sonicwall.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group sonicwall",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.ubuntu.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group ubuntu",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.windows.strategies.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant / sufficient-sample strategy rows in resolved OS group windows",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.windows.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group windows",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.windows.strategies.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination / sufficient-sample strategy rows in resolved OS group windows",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.windows.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group windows",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.zyxel.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group zyxel",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.icmp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.zyxel.strategies.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination / sufficient-sample strategy rows in resolved OS group zyxel",
+      "paper_references": [
+        "sections/results.tex:90-113"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.connection.fi-base.probing-intervals.below-500ms.share-pct",
+      "unit": "percent",
+      "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
+      "paper_references": [
+        "sections/correctness.tex:151; sections/appendix.tex:253"
+      ],
+      "missing_reason": "exact interval distribution report required; sampled quantiles are insufficient"
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.connection.rt-base.itdk-consistency-summary.strict-agreement-percentage",
+      "unit": "percent",
+      "definition": "Strict eligible-node agreement for connection-oriented TCP",
+      "paper_references": [
+        "sections/results.tex:304"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.connection.rt-base.itdk-role-by-strategy.plot-percentages.transit-observed.per-connection",
+      "unit": "percent",
+      "definition": "per-connection among transit-observed connection-oriented TCP targets",
+      "paper_references": [
+        "sections/results.tex:302-304"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.connection.rt-base.itdk-role-by-strategy.plot-percentages.transit-observed.single",
+      "unit": "percent",
+      "definition": "single among transit-observed connection-oriented TCP targets",
+      "paper_references": [
+        "sections/results.tex:302-304"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.connection.rt-base.probing-intervals.below-500ms.share-pct",
+      "unit": "percent",
+      "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
+      "paper_references": [
+        "sections/correctness.tex:151; sections/appendix.tex:253"
+      ],
+      "missing_reason": "exact interval distribution report required; sampled quantiles are insufficient"
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.fi-base.probing-intervals.below-500ms.share-pct",
+      "unit": "percent",
+      "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
+      "paper_references": [
+        "sections/correctness.tex:151; sections/appendix.tex:253"
+      ],
+      "missing_reason": "exact interval distribution report required; sampled quantiles are insufficient"
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-base.probing-intervals.below-500ms.share-pct",
+      "unit": "percent",
+      "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
+      "paper_references": [
+        "sections/correctness.tex:151; sections/appendix.tex:253"
+      ],
+      "missing_reason": "exact interval distribution report required; sampled quantiles are insufficient"
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-consistency-summary.strict-agreement-percentage",
+      "unit": "percent",
+      "definition": "Strict agreement among eligible multi-interface ITDK nodes",
+      "paper_references": [
+        "sections/results.tex:56,304"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-os.coverage.transit-observed-os-resolved",
+      "unit": "ips",
+      "definition": "Resolved OS address count within the transit-observed population",
+      "paper_references": [
+        "sections/appendix.tex:153-184"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.constant",
+      "unit": "percent",
+      "definition": "constant among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.multi",
+      "unit": "percent",
+      "definition": "multi among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.per-bucket",
+      "unit": "percent",
+      "definition": "per-bucket among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.per-destination",
+      "unit": "percent",
+      "definition": "per-destination among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.random",
+      "unit": "percent",
+      "definition": "random among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.reflection",
+      "unit": "percent",
+      "definition": "reflection among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.single",
+      "unit": "percent",
+      "definition": "single among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.cisco.strategies.random.share-pct",
+      "unit": "percent",
+      "definition": "random / sufficient-sample strategy rows in resolved OS group cisco",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.huawei.strategies.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant / sufficient-sample strategy rows in resolved OS group huawei",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.huawei.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group huawei",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.sonicwall.strategies.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant / sufficient-sample strategy rows in resolved OS group sonicwall",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.sonicwall.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group sonicwall",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.windows.strategies.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination / sufficient-sample strategy rows in resolved OS group windows",
+      "paper_references": [
+        "sections/results.tex:321-332"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.fi-base.probing-intervals.below-500ms.share-pct",
+      "unit": "percent",
+      "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
+      "paper_references": [
+        "sections/correctness.tex:151; sections/appendix.tex:253"
+      ],
+      "missing_reason": "exact interval distribution report required; sampled quantiles are insufficient"
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-base.probing-intervals.below-500ms.share-pct",
+      "unit": "percent",
+      "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
+      "paper_references": [
+        "sections/correctness.tex:151; sections/appendix.tex:253"
+      ],
+      "missing_reason": "exact interval distribution report required; sampled quantiles are insufficient"
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-consistency-summary.strict-agreement-percentage",
+      "unit": "percent",
+      "definition": "Strict agreement among eligible multi-interface ITDK nodes",
+      "paper_references": [
+        "sections/results.tex:56,304"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-os.coverage.transit-observed-os-resolved",
+      "unit": "ips",
+      "definition": "Resolved OS address count within the transit-observed population",
+      "paper_references": [
+        "sections/appendix.tex:153-184"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.no-transit-evidence.per-bucket",
+      "unit": "percent",
+      "definition": "per-bucket among ITDK matches without transit evidence",
+      "paper_references": [
+        "sections/results.tex:166-167"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.no-transit-evidence.per-destination",
+      "unit": "percent",
+      "definition": "per-destination among ITDK matches without transit evidence",
+      "paper_references": [
+        "sections/results.tex:166-167"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.no-transit-evidence.single",
+      "unit": "percent",
+      "definition": "single among ITDK matches without transit evidence",
+      "paper_references": [
+        "sections/results.tex:166-167"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.constant",
+      "unit": "percent",
+      "definition": "constant among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.multi",
+      "unit": "percent",
+      "definition": "multi among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.per-bucket",
+      "unit": "percent",
+      "definition": "per-bucket among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.per-destination",
+      "unit": "percent",
+      "definition": "per-destination among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.random",
+      "unit": "percent",
+      "definition": "random among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.reflection",
+      "unit": "percent",
+      "definition": "reflection among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.itdk-role-by-strategy.plot-percentages.transit-observed.single",
+      "unit": "percent",
+      "definition": "single among ITDK-matched transit-observed addresses",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.cisco.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group cisco",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.multi.share-pct",
+      "unit": "percent",
+      "definition": "multi / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.random.share-pct",
+      "unit": "percent",
+      "definition": "random / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.freebsd.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group freebsd",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.huawei.strategies.single.share-pct",
+      "unit": "percent",
+      "definition": "single / sufficient-sample strategy rows in resolved OS group huawei",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.mikrotik.strategies.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination / sufficient-sample strategy rows in resolved OS group mikrotik",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.openbsd.strategies.random.share-pct",
+      "unit": "percent",
+      "definition": "random / sufficient-sample strategy rows in resolved OS group openbsd",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.windows.strategies.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination / sufficient-sample strategy rows in resolved OS group windows",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.zyxel.strategies.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group zyxel",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "reports.vp-{vp}.udp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.zyxel.strategies.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination / sufficient-sample strategy rows in resolved OS group zyxel",
+      "paper_references": [
+        "sections/results.tex:181-187"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.fi-base.successful-results.total.count",
+      "unit": "ips",
+      "definition": "Successful FI-BASE IP count",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.fi-mass.successful-results.multi.share-pct",
+      "unit": "percent",
+      "definition": "multi share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.fi-mass.successful-results.random.share-pct",
+      "unit": "percent",
+      "definition": "random share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.fi-mass.successful-results.unclassified.share-pct",
+      "unit": "percent",
+      "definition": "unclassified share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-base.successful-results.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-base.successful-results.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-base.successful-results.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-base.successful-results.reflection.share-pct",
+      "unit": "percent",
+      "definition": "reflection share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-base.successful-results.single.share-pct",
+      "unit": "percent",
+      "definition": "single share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-base.successful-results.total.count",
+      "unit": "ips",
+      "definition": "Responsive IP count in the RT phase",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-base.successful-results.unclassified.share-pct",
+      "unit": "percent",
+      "definition": "unclassified share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:29-42"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-fi-merged.rt-results.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket share among rt-results; rt-fi-merged, no-connection",
+      "paper_references": [
+        "sections/introduction.tex:37"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.icmp.no-connection.rt-fi-merged.rt-results.single.share-pct",
+      "unit": "percent",
+      "definition": "single share among rt-results; rt-fi-merged, no-connection",
+      "paper_references": [
+        "sections/introduction.tex:36; sections/discussion.tex:11"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.connection.fi-base.successful-results.total.count",
+      "unit": "ips",
+      "definition": "Successful FI-BASE IP count",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.connection.rt-base.successful-results.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket share among successful-results; rt-base, connection",
+      "paper_references": [
+        "sections/results.tex:210-212,248-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.connection.rt-base.successful-results.per-connection.share-pct",
+      "unit": "percent",
+      "definition": "per-connection share among successful-results; rt-base, connection",
+      "paper_references": [
+        "sections/results.tex:210-212,248-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.connection.rt-base.successful-results.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination share among successful-results; rt-base, connection",
+      "paper_references": [
+        "sections/results.tex:210-212,248-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.connection.rt-base.successful-results.single.share-pct",
+      "unit": "percent",
+      "definition": "single share among successful-results; rt-base, connection",
+      "paper_references": [
+        "sections/results.tex:210-212,248-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.connection.rt-base.successful-results.total.count",
+      "unit": "ips",
+      "definition": "Responsive connection-oriented TCP population",
+      "paper_references": [
+        "sections/results.tex:248"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.fi-base.successful-results.total.count",
+      "unit": "ips",
+      "definition": "Successful FI-BASE IP count",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.fi-mass.successful-results.multi.share-pct",
+      "unit": "percent",
+      "definition": "multi share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.fi-mass.successful-results.random.share-pct",
+      "unit": "percent",
+      "definition": "random share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-base.successful-results.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-base.successful-results.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-base.successful-results.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-base.successful-results.reflection.share-pct",
+      "unit": "percent",
+      "definition": "reflection share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-base.successful-results.single.share-pct",
+      "unit": "percent",
+      "definition": "single share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-base.successful-results.total.count",
+      "unit": "ips",
+      "definition": "Responsive IP count in the RT phase",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-base.successful-results.unclassified.share-pct",
+      "unit": "percent",
+      "definition": "unclassified share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:210-250"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-fi-merged.rt-results.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant share among rt-results; rt-fi-merged, no-connection",
+      "paper_references": [
+        "sections/introduction.tex:37"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.tcp.no-connection.rt-fi-merged.rt-results.single.share-pct",
+      "unit": "percent",
+      "definition": "single share among rt-results; rt-fi-merged, no-connection",
+      "paper_references": [
+        "sections/introduction.tex:36; sections/discussion.tex:11"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.fi-base.successful-results.total.count",
+      "unit": "ips",
+      "definition": "Successful FI-BASE IP count",
+      "paper_references": [
+        "sections/correctness.tex:109-205; sections/appendix.tex:220-295"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.fi-mass.successful-results.multi.share-pct",
+      "unit": "percent",
+      "definition": "multi share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.fi-mass.successful-results.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.fi-mass.successful-results.random.share-pct",
+      "unit": "percent",
+      "definition": "random share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.fi-mass.successful-results.single.share-pct",
+      "unit": "percent",
+      "definition": "single share among successful-results; fi-mass, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.rt-base.successful-results.constant.share-pct",
+      "unit": "percent",
+      "definition": "constant share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.rt-base.successful-results.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.rt-base.successful-results.per-destination.share-pct",
+      "unit": "percent",
+      "definition": "per-destination share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.rt-base.successful-results.reflection.share-pct",
+      "unit": "percent",
+      "definition": "reflection share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.rt-base.successful-results.single.share-pct",
+      "unit": "percent",
+      "definition": "single share among successful-results; rt-base, no-connection",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.rt-base.successful-results.total.count",
+      "unit": "ips",
+      "definition": "Responsive IP count in the RT phase",
+      "paper_references": [
+        "sections/results.tex:123-156"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.rt-fi-merged.rt-results.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "per-bucket share among rt-results; rt-fi-merged, no-connection",
+      "paper_references": [
+        "sections/introduction.tex:37"
+      ]
+    },
+    {
+      "key": "results.vp-{vp}.udp.no-connection.rt-fi-merged.rt-results.single.share-pct",
+      "unit": "percent",
+      "definition": "single share among rt-results; rt-fi-merged, no-connection",
+      "paper_references": [
+        "sections/introduction.tex:36; sections/discussion.tex:11"
+      ]
+    },
+    {
+      "key": "tcp-transition.vp-{vp}.rt-no-connection-to-rt-connection.constant.per-connection.column-share-pct",
+      "unit": "percent",
+      "definition": "CONSTANT before connection among the same IPs classified PER_CONNECTION afterward",
+      "paper_references": [
+        "sections/results.tex:251"
+      ],
+      "missing_reason": "requires a paired TCP before/after join, normalized by the PER_CONNECTION destination column"
+    },
+    {
+      "key": "validation.datasets.fi.samples-per-class",
+      "unit": "sequences",
+      "definition": "Synthetic dataset configuration from its validation report",
+      "paper_references": [
+        "sections/correctness.tex:21-27; sections/appendix.tex:71,89"
+      ]
+    },
+    {
+      "key": "validation.datasets.fi.sequence-length",
+      "unit": "samples",
+      "definition": "Synthetic dataset configuration from its validation report",
+      "paper_references": [
+        "sections/correctness.tex:21-27; sections/appendix.tex:71,89"
+      ]
+    },
+    {
+      "key": "validation.datasets.loss.share-pct",
+      "unit": "percent",
+      "definition": "Configured synthetic corruption fraction",
+      "paper_references": [
+        "sections/correctness.tex:31-33"
+      ]
+    },
+    {
+      "key": "validation.datasets.reordering.share-pct",
+      "unit": "percent",
+      "definition": "Configured synthetic corruption fraction",
+      "paper_references": [
+        "sections/correctness.tex:31-33"
+      ]
+    },
+    {
+      "key": "validation.datasets.rt.samples-per-class",
+      "unit": "sequences",
+      "definition": "Synthetic dataset configuration from its validation report",
+      "paper_references": [
+        "sections/correctness.tex:21-27; sections/appendix.tex:71,89"
+      ]
+    },
+    {
+      "key": "validation.datasets.rt.sequence-length",
+      "unit": "samples",
+      "definition": "Synthetic dataset configuration from its validation report",
+      "paper_references": [
+        "sections/correctness.tex:21-27; sections/appendix.tex:71,89"
+      ]
+    },
+    {
+      "key": "validation.pipeline.fi-ideal.accuracy-pct",
+      "unit": "percent",
+      "definition": "Accuracy on this synthetic ground-truth dataset",
+      "paper_references": [
+        "sections/correctness.tex:10,66"
+      ]
+    },
+    {
+      "key": "validation.pipeline.fi-ideal.truth.multi.misclassified.share-pct",
+      "unit": "percent",
+      "definition": "100 minus the FI-ideal MULTI recall",
+      "paper_references": [
+        "sections/correctness.tex:67"
+      ]
+    },
+    {
+      "key": "validation.pipeline.fi-lossy.accuracy-pct",
+      "unit": "percent",
+      "definition": "Accuracy on this synthetic ground-truth dataset",
+      "paper_references": [
+        "sections/correctness.tex:58,76"
+      ]
+    },
+    {
+      "key": "validation.pipeline.fi-reordered.accuracy-pct",
+      "unit": "percent",
+      "definition": "Accuracy on this synthetic ground-truth dataset",
+      "paper_references": [
+        "sections/correctness.tex:58,77"
+      ]
+    },
+    {
+      "key": "validation.pipeline.lossy-reordered.multi-random.minimum-recall.share-pct",
+      "unit": "percent",
+      "definition": "Minimum MULTI/RANDOM recall across lossy and reordered validation",
+      "paper_references": [
+        "sections/correctness.tex:59,78"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.accuracy-pct",
+      "unit": "percent",
+      "definition": "Accuracy on this synthetic ground-truth dataset",
+      "paper_references": [
+        "sections/correctness.tex:45"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.constant.correct.share-pct",
+      "unit": "percent",
+      "definition": "Correct predictions / synthetic sequences of this ground-truth class",
+      "paper_references": [
+        "sections/correctness.tex:46"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.multi.predicted.per-bucket.count",
+      "unit": "sequences",
+      "definition": "Synthetic MULTI sequences assigned this predicted class",
+      "paper_references": [
+        "sections/correctness.tex:47"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.multi.predicted.per-bucket.share-pct",
+      "unit": "percent",
+      "definition": "Synthetic MULTI→PER_BUCKET errors / true MULTI sequences",
+      "paper_references": [
+        "sections/correctness.tex:47"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.multi.predicted.single.count",
+      "unit": "sequences",
+      "definition": "Synthetic MULTI sequences assigned this predicted class",
+      "paper_references": [
+        "sections/correctness.tex:47"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.per-bucket.correct.share-pct",
+      "unit": "percent",
+      "definition": "Correct predictions / synthetic sequences of this ground-truth class",
+      "paper_references": [
+        "sections/correctness.tex:46"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.per-connection.correct.share-pct",
+      "unit": "percent",
+      "definition": "Correct predictions / synthetic sequences of this ground-truth class",
+      "paper_references": [
+        "sections/correctness.tex:46"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.per-destination.correct.share-pct",
+      "unit": "percent",
+      "definition": "Correct predictions / synthetic sequences of this ground-truth class",
+      "paper_references": [
+        "sections/correctness.tex:46"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.random.predicted.per-bucket.count",
+      "unit": "sequences",
+      "definition": "Synthetic RANDOM→PER_BUCKET errors",
+      "paper_references": [
+        "sections/correctness.tex:52"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.reflection.correct.share-pct",
+      "unit": "percent",
+      "definition": "Correct predictions / synthetic sequences of this ground-truth class",
+      "paper_references": [
+        "sections/correctness.tex:46"
+      ]
+    },
+    {
+      "key": "validation.pipeline.rt-ideal.truth.single.correct.share-pct",
+      "unit": "percent",
+      "definition": "Correct predictions / synthetic sequences of this ground-truth class",
+      "paper_references": [
+        "sections/correctness.tex:46"
+      ]
+    },
+    {
+      "key": "validation.random.chi-square.degrees-of-freedom",
+      "unit": "",
+      "definition": "Statistic from the synthetic RANDOM validation report",
+      "paper_references": [
+        "sections/appendix.tex:89-94"
+      ]
+    },
+    {
+      "key": "validation.random.deterministic.maximum-p-value",
+      "unit": "",
+      "definition": "Statistic from the synthetic RANDOM validation report",
+      "paper_references": [
+        "sections/appendix.tex:89-94"
+      ]
+    },
+    {
+      "key": "validation.random.random.minimum-p-value",
+      "unit": "",
+      "definition": "Statistic from the synthetic RANDOM validation report",
+      "paper_references": [
+        "sections/appendix.tex:89-94"
+      ]
+    }
+  ]
+}
