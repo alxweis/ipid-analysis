@@ -841,7 +841,8 @@ class DerivedMetricsTest(unittest.TestCase):
                     {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before}, before
                 )
                 self.assertEqual(
-                    list((f.root / "tmp").iterdir()), [f.root / "tmp/values.tex"]
+                    sorted(p.name for p in (f.root / "tmp").iterdir()),
+                    ["values.json", "values.tex"],
                 )
 
     def test_relationship_identifiers_are_lossless_not_punctuation_normalized(self):
@@ -1032,12 +1033,219 @@ class RealEUArchiveTest(unittest.TestCase):
             )
 
 
+class CacheTest(unittest.TestCase):
+    def test_parallel_reads_match_serial_export_and_ignore_unrelated_json(self):
+        with tempfile.TemporaryDirectory() as root:
+            f = Fixture(root)
+            f.baseline()
+            f.report("not-an-analysis-report", {"unused": 1})
+            ignored = next(f.reports.rglob("not-an-analysis-report.json"))
+            ignored.write_text("not valid JSON; must not be opened")
+            serial = f.export(profile="paper", strict=True, io_workers=1)
+            parallel = f.export(
+                profile="paper", strict=True, io_workers=8, recompute=True
+            )
+            self.assertEqual(serial["values"], parallel["values"])
+            self.assertFalse(parallel["input_errors"])
+
+    def os_aggregate(self, f, *, site="eu", count=3):
+        stem = MERGED + "operating-system-group-by-strategy"
+        f.report(
+            stem,
+            {
+                "protocol": "tcp",
+                "strategy_ip_count": 4,
+                "matched_grouped_ip_count": 4,
+                "groups": {"windows": {"ip_count": 4, "section": "General-Purpose OS"}},
+            },
+            site=site,
+        )
+        path = f.processed / site / ZMAP / (stem + ".pq")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.table(
+                {
+                    "OS_GROUP": ["windows", "windows"],
+                    "IPID_SELECTION_STRATEGY": ["PER_DESTINATION", "SINGLE"],
+                    "COUNT": [count, 4 - count],
+                    "PERCENTAGE": [count * 25, (4 - count) * 25],
+                }
+            ),
+            path,
+        )
+        return path
+
+    def test_warm_cache_avoids_parquet_json_and_pdf_payload_reads(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as root:
+            f = Fixture(root)
+            f.baseline()
+            aggregate = self.os_aggregate(f)
+            pdf = f.pdf(MERGED + "operating-system-group-by-strategy")
+            cold = f.export(profile="paper", strict=True)
+            tex = (f.root / "tmp/values.tex").read_bytes()
+            original = Path.open
+
+            def guarded(path, *args, **kwargs):
+                if (
+                    path == aggregate
+                    or path == pdf
+                    or (path.suffix == ".json" and path.is_relative_to(f.reports))
+                ):
+                    raise AssertionError(f"warm cache read source payload: {path}")
+                return original(path, *args, **kwargs)
+
+            with (
+                patch.object(Path, "open", new=guarded),
+                patch.object(
+                    pq, "ParquetFile", side_effect=AssertionError("Parquet reread")
+                ),
+            ):
+                warm = f.export(profile="paper", strict=True)
+            self.assertEqual(cold["values"], warm["values"])
+            self.assertEqual((f.root / "tmp/values.tex").read_bytes(), tex)
+            self.assertEqual(warm["cache"]["aggregate_hits"], 1)
+            self.assertEqual(warm["cache"]["pdf_hits"], 1)
+            self.assertGreater(warm["cache"]["metadata_hits"], 0)
+            self.assertNotIn(b"% Sources:", tex)
+            with patch.object(pq, "ParquetFile", wraps=pq.ParquetFile) as reader:
+                forced = f.export(profile="paper", strict=True, recompute=True)
+                self.assertEqual(reader.call_count, 1)
+            self.assertEqual(forced["values"], warm["values"])
+            self.assertEqual(forced["cache"]["aggregate_misses"], 1)
+
+    def test_changed_sources_and_new_results_invalidate_only_their_entries(self):
+        with tempfile.TemporaryDirectory() as root:
+            f = Fixture(root)
+            f.baseline()
+            self.os_aggregate(f)
+            first = f.export(profile="paper", strict=True)
+            self.os_aggregate(f, count=2)
+            changed = f.export(profile="paper", strict=True)
+            key = "reports.vp-eu.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy.groups.windows.strategies.per-destination.share-pct"
+            self.assertEqual(first["values"][key]["raw"], 75)
+            self.assertEqual(changed["values"][key]["raw"], 50)
+            self.assertEqual(changed["cache"]["aggregate_misses"], 1)
+            self.assertGreater(changed["cache"]["metadata_hits"], 0)
+            f.baseline(site="na")
+            self.os_aggregate(f, site="na", count=1)
+            added = f.export(profile="paper", strict=True)
+            self.assertEqual(added["values"][key.replace("vp-eu", "vp-na")]["raw"], 25)
+            self.assertEqual(added["values"][key]["raw"], 50)
+
+    def test_campaigns_input_roots_profiles_and_corrupt_cache_do_not_mix(self):
+        with tempfile.TemporaryDirectory() as root:
+            f = Fixture(root)
+            f.baseline()
+            expected = f.export(profile="paper", strict=True)["values"]
+            other = pv.export(
+                "other-campaign",
+                reports_root=f.reports,
+                processed_root=f.processed,
+                repository_root=f.root,
+                strict=True,
+            )
+            self.assertTrue(all(v["raw"] is None for v in other["values"].values()))
+            again = f.export(profile="paper", strict=True)
+            self.assertEqual(again["values"], expected)
+            self.assertGreater(again["cache"]["metadata_hits"], 0)
+            full = f.export(profile="full", strict=True)
+            self.assertGreater(full["cache"]["metadata_misses"], 0)
+            alternate = f.root / "alternate/continental" / CAMPAIGN
+            shutil.copytree(f.reports, alternate)
+            moved = pv.export(
+                CAMPAIGN,
+                reports_root=alternate,
+                processed_root=f.processed,
+                repository_root=f.root,
+                strict=True,
+            )
+            self.assertGreater(moved["cache"]["metadata_misses"], 0)
+            document = json.loads((f.root / "tmp/values.json").read_text())
+            self.assertEqual(len(document["contexts"]), 4)
+            (f.root / "tmp/values.json").write_text('{"broken":')
+            rebuilt = f.export(profile="paper", strict=True)
+            self.assertEqual(rebuilt["values"], expected)
+            self.assertGreater(rebuilt["cache"]["metadata_misses"], 0)
+
+    def test_histogram_and_snapshot_are_cached_and_missing_files_are_retried(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as root:
+            f = Fixture(root)
+            f.strategy(RT, {"SINGLE": 10})
+            stem = "no-connection/comparison/rt-based-base_fixed-interval-base/n-rt-b_fi-b_increment-distributions"
+            f.report(stem, {"protocol": "tcp"})
+            raw = f.root / "raw"
+            snapshot = raw / "eu/ipid/tcp-80_rt/ipid.snapshot.yaml"
+            snapshot.parent.mkdir(parents=True)
+            snapshot.write_text("connection_count: 4\nrequests_per_connection: 4\n")
+            first = f.export(profile="paper", raw_root=raw, strict=True)
+            key = "increments.vp-eu.tcp.no-connection.rt-base.per-bucket.p99"
+            self.assertIsNone(first["values"][key]["raw"])
+            path = f.processed / "eu" / ZMAP / (stem + ".pq")
+            path.parent.mkdir(parents=True)
+            pq.write_table(
+                pa.table(
+                    {
+                        "MODE": ["RT-based"],
+                        "IPID_SELECTION_STRATEGY": ["PER_BUCKET"],
+                        "INCREMENT": [10],
+                        "COUNT": [100],
+                        "CUMULATIVE_COUNT": [100],
+                        "TOTAL_COUNT": [100],
+                    }
+                ),
+                path,
+            )
+            computed = f.export(profile="paper", raw_root=raw, strict=True)
+            self.assertEqual(computed["values"][key]["raw"], 10)
+            with patch.object(
+                pq, "ParquetFile", side_effect=AssertionError("histogram reread")
+            ):
+                warm = f.export(profile="paper", raw_root=raw, strict=True)
+            self.assertEqual(warm["values"], computed["values"])
+            self.assertEqual(warm["cache"]["histogram_hits"], 1)
+            self.assertEqual(warm["cache"]["snapshot_hits"], 1)
+
+    def test_json_changes_and_receipt_changes_are_never_hidden_by_cache(self):
+        with tempfile.TemporaryDirectory() as root:
+            f = Fixture(root)
+            f.baseline()
+            f.export(profile="full", strict=True)
+            f.report(
+                RT + "coverage",
+                {"zmap_ip_count": 25, "ipid_ip_count": 10},
+                processed=True,
+            )
+            updated = f.export(profile="full", strict=True)
+            key = "coverage.vp-eu.tcp.no-connection.rt-fi-merged.successful.share-pct"
+            self.assertEqual(updated["values"][key]["raw"], 36)
+            f.strategy(
+                RT, {"CONSTANT": 6, "SINGLE": 2, "UNCLASSIFIED": 2}, receipt=True
+            )
+            f.export(profile="full", strict=True)
+            tex = (f.root / "tmp/values.tex").read_bytes()
+            cache = (f.root / "tmp/values.json").read_bytes()
+            marker = next(f.reports.rglob(".ipid-complete/*strategies.json.json"))
+            record = json.loads(marker.read_text())
+            record["sha256"] = "0" * 64
+            marker.write_text(json.dumps(record))
+            with self.assertRaisesRegex(ValueError, "completion receipt"):
+                f.export(profile="full", strict=True)
+            self.assertEqual((f.root / "tmp/values.tex").read_bytes(), tex)
+            self.assertEqual((f.root / "tmp/values.json").read_bytes(), cache)
+
+
 class NativeWriterTest(unittest.TestCase):
     def test_real_writer_preserves_empty_zero_and_escaped_percent(self):
         with tempfile.TemporaryDirectory() as root:
             registry = pv.Registry()
             registry.reserve("missing")
-            registry.put("zero", 0)
+            registry.put(
+                "zero", 0, sources=("existing-report.json",), definition="Observed zero"
+            )
             registry.put("percent", 85.625, unit="percent")
             registry.put("specials", "^~")
             path = "reports/continental/test_plot with spaces.pdf"
@@ -1046,7 +1254,8 @@ class NativeWriterTest(unittest.TestCase):
             pv.emit(registry, Path(root) / "values.tex", CAMPAIGN, [], [])
             text = (Path(root) / "values.tex").read_text()
             self.assertIn(r"\setval{missing}{}", text)
-            self.assertIn(r"\setval{zero}{0}", text)
+            self.assertIn(r"\setval{zero}{0} % Observed zero", text)
+            self.assertNotIn("% Sources:", text)
             self.assertIn(r"\setval{percent}{85.62\%}", text)
             self.assertNotIn(r"\xspace}", text)
             self.assertIn(
@@ -1099,7 +1308,7 @@ class IsolationTest(unittest.TestCase):
                 self.assertIn("unrecognized arguments", run.stderr)
                 self.assertFalse((root / "tmp").exists())
 
-    def test_make_and_rerun_only_replace_fixed_output(self):
+    def test_make_and_rerun_only_replace_fixed_export_outputs(self):
         if not shutil.which("make"):
             self.skipTest("GNU Make required")
         with tempfile.TemporaryDirectory() as directory:
@@ -1128,7 +1337,8 @@ class IsolationTest(unittest.TestCase):
                         p.stat().st_mtime_ns,
                     )
                     for p in root.rglob("*")
-                    if p.is_file() and p != root / "tmp/values.tex"
+                    if p.is_file()
+                    and p not in (root / "tmp/values.tex", root / "tmp/values.json")
                 }
 
             before = snapshot()
@@ -1153,6 +1363,7 @@ class IsolationTest(unittest.TestCase):
 
             # A corrupt input under strict mode preserves a previously valid export.
             sentinel = (root / "tmp/values.tex").read_bytes()
+            cache_before = (root / "tmp/values.json").read_bytes()
             f.report(RT + "strategies", {"counts": {"SINGLE": -1}, "total_ips": -1})
             before = snapshot()
             run = subprocess.run(
@@ -1174,6 +1385,7 @@ class IsolationTest(unittest.TestCase):
             self.assertIn("existing tmp/values.tex retained", run.stderr)
             self.assertIn("strategies.json", run.stderr)
             self.assertEqual((root / "tmp/values.tex").read_bytes(), sentinel)
+            self.assertEqual((root / "tmp/values.json").read_bytes(), cache_before)
             self.assertEqual(snapshot(), before)
 
     def test_no_analysis_imports_and_cwd_does_not_choose_output(self):
