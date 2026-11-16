@@ -84,7 +84,9 @@ modification/change timestamps, completion receipt and (for derived values) the
 report SHA256 still match. Metadata receipt hashes are checked on every run.
 Archive entries also include the member CRC and archive fingerprint. Cache
 payloads have integrity checksums; corrupt or incompatible caches are rebuilt.
-Changes to code, source data or receipts invalidate the relevant entries. A newly
+Changes to code, source data or receipts invalidate the relevant entries.
+Unusable cache contexts from older exporter versions are discarded; contexts
+for other campaigns/VPs on the current version are preserved. A newly
 appearing source is read automatically: missing files/results are not negatively
 cached. New campaigns/VPs are never filled using values from another context.
 
@@ -125,6 +127,20 @@ Manuscript references and source-file hashes document the selection. The main
 paper can use `vp-eu`, while the other VPs have independent values. No EU values
 are copied into missing VPs. Synthetic validation and algorithm constants are global.
 
+The standard export prepares only selected placeholders; it does not allocate the
+large optional diagnostic catalog or compute unused cross-VP marginal summaries.
+The full profile retains its complete key set. JSON/PDF cache and receipt checks
+share one read path. Source validation and per-value source references remain,
+without building the unused inventories for the former JSON/Markdown sidecars.
+
+For maintenance, version-2 catalog JSON shares identical subtrees: a property such
+as `"single per-bucket"` means the same child fields for each space-separated name.
+`report_fields()` expands these into ordinary field names. The manuscript selection
+similarly allows `"keys": [...]` to share a definition/unit/reference block; its
+loader exposes the same individual entries. All 301 templates, units, reasons and
+paper references are preserved. Regression fingerprints cover the complete original
+catalog and selection, rather than checking only their sizes.
+
 The selection includes current-paper result values and result figure paths.
 Background and setup drawings are excluded. Missing constant-zero proportions,
 paired TCP classifications, matched RT/FI cohort comparisons, synthetic validation
@@ -143,7 +159,7 @@ Definitions and missing-value reasons accompany each key as LaTeX comments.
 
 ```tex
 \input{tmp/values.tex} % adjust only this input path after copying to the paper repo
-\getval{coverage.vp-eu.tcp.no-connection.rt-fi-merged.successful.count}
+\getval{results.vp-eu.tcp.no-connection.rt-base.successful-results.constant.share-pct}
 \includegraphics[width=\linewidth]{\getval{plots.vp-eu.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy}}
 ```
 

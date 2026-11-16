@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
 
 import pyarrow as pa
@@ -174,12 +175,47 @@ class ExportTest(unittest.TestCase):
             + r".rt-results.constant.count}{}",
             text,
         )
-        sources = self.result["sources"]
-        self.assertTrue(all(len(s["sha256"]) == 64 for s in sources))
-        self.assertTrue(all(s["completion"] == "legacy-no-receipt" for s in sources))
+        sources = self.values[KEY + ".rt-results.constant.share-pct"]["sources"]
+        self.assertTrue(sources)
+        self.assertTrue(all(Path(source).is_file() for source in sources))
 
 
 class CurrentPaperSelectionTest(unittest.TestCase):
+    def test_compact_schemas_preserve_the_complete_original_definitions(self):
+        from paper_values.profile import load_selection
+
+        # Fingerprints of all pre-refactor definitions, not only their counts.
+        registry = pv.Registry()
+        pv.reserve_catalog(registry)
+        fields = {key: asdict(value) for key, value in sorted(registry.values.items())}
+        encoded = json.dumps(fields, sort_keys=True, ensure_ascii=True).encode()
+        self.assertEqual(len(fields), 119457)
+        self.assertEqual(
+            hashlib.sha256(encoded).hexdigest(),
+            "5f50d344ff02418e4fc3f9377fd8fa2650f96ca34ecc91c54e8b12fd9eefb8fb",
+        )
+        selection = {e["key"]: e for e in load_selection()["entries"]}
+        encoded = json.dumps(selection, sort_keys=True, ensure_ascii=True).encode()
+        self.assertEqual(len(selection), 301)
+        self.assertEqual(
+            hashlib.sha256(encoded).hexdigest(),
+            "4786529915d199cb22274e2fdd30a16450f0d1ea3e939dda5dc2ff2f3132ff72",
+        )
+
+    def test_paper_preparation_only_keeps_selected_placeholders(self):
+        from paper_values.profile import load_selection
+
+        requested = {
+            entry["key"].format(vp=site)
+            for entry in load_selection()["entries"]
+            for site in pv.SITES
+        }
+        registry = pv.Registry()
+        pv.reserve_catalog(registry, requested)
+        self.assertEqual(len(requested), 1631)
+        self.assertLess(len(registry.values), 2000)
+        self.assertFalse(any(key.startswith("comparison.") for key in registry.values))
+
     def test_default_is_exact_reviewed_selection_with_independent_vp_values(self):
         from paper_values.profile import load_selection
 
@@ -210,7 +246,9 @@ class CurrentPaperSelectionTest(unittest.TestCase):
             self.assertEqual(result["values"][key]["raw"], 60)
             self.assertEqual(result["values"][key.replace("vp-eu", "vp-na")]["raw"], 30)
             self.assertIsNone(result["values"][key.replace("vp-eu", "vp-af")]["raw"])
-            self.assertTrue(all(result["paper_references"][k] for k in expected))
+            self.assertTrue(
+                all(entry["paper_references"] for entry in load_selection()["entries"])
+            )
             self.assertFalse(
                 any(
                     "ripe-atlas" in k
@@ -1034,6 +1072,40 @@ class RealEUArchiveTest(unittest.TestCase):
 
 
 class CacheTest(unittest.TestCase):
+    def test_aggregate_receipts_still_verify_bytes_before_reading_parquet(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as root:
+            f = Fixture(root)
+            path = self.os_aggregate(f)
+            receipt = path.parent / ".ipid-complete" / (path.name + ".json")
+            receipt.parent.mkdir()
+            content = path.read_bytes()
+            receipt.write_text(
+                json.dumps(
+                    dict(
+                        status="complete",
+                        size_bytes=len(content),
+                        sha256=hashlib.sha256(content).hexdigest(),
+                    )
+                )
+            )
+            f.export(profile="paper", strict=True)
+            before = {
+                name: (f.root / "tmp" / name).read_bytes()
+                for name in ("values.tex", "values.json")
+            }
+            damaged = bytearray(content)
+            damaged[len(damaged) // 2] ^= 1
+            path.write_bytes(damaged)
+            with patch.object(
+                pq, "ParquetFile", side_effect=AssertionError("unverified read")
+            ):
+                with self.assertRaisesRegex(ValueError, "source bytes"):
+                    f.export(profile="paper", strict=True)
+            for name, data in before.items():
+                self.assertEqual((f.root / "tmp" / name).read_bytes(), data)
+
     def test_parallel_reads_match_serial_export_and_ignore_unrelated_json(self):
         with tempfile.TemporaryDirectory() as root:
             f = Fixture(root)
@@ -1164,6 +1236,16 @@ class CacheTest(unittest.TestCase):
             self.assertGreater(moved["cache"]["metadata_misses"], 0)
             document = json.loads((f.root / "tmp/values.json").read_text())
             self.assertEqual(len(document["contexts"]), 4)
+            document["contexts"]["obsolete"] = dict(
+                identity=dict(exporter_version="retired"), entries={}
+            )
+            (f.root / "tmp/values.json").write_text(json.dumps(document))
+            reused = f.export(profile="paper", strict=True)
+            self.assertEqual(reused["values"], expected)
+            self.assertGreater(reused["cache"]["metadata_hits"], 0)
+            document = json.loads((f.root / "tmp/values.json").read_text())
+            self.assertEqual(len(document["contexts"]), 4)
+            self.assertNotIn("obsolete", document["contexts"])
             (f.root / "tmp/values.json").write_text('{"broken":')
             rebuilt = f.export(profile="paper", strict=True)
             self.assertEqual(rebuilt["values"], expected)
