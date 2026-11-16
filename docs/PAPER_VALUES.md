@@ -120,16 +120,51 @@ the pair is not a filesystem transaction).
 
 ## Keys and missing results
 
-The default `paper` profile is the reviewed current-manuscript selection in
-`paper_values/selection.json`: 301 templates expand to 1,631 keys, comprising
-266 per-VP quantities for each of eu/na/sa/as/af/au and 35 global quantities.
+The default `paper` profile uses the reviewed current-manuscript selection in
+`paper_values/selection.json`. Its 301 internal source templates retain their
+scientific identities. The compact public TeX schema contains 1,497 keys:
+242 per-VP quantities for af/as/au/eu/na/sa and 45 shared/global quantities.
 Manuscript references and source-file hashes document the selection. The main
-paper can use `vp-eu`, while the other VPs have independent values. No EU values
-are copied into missing VPs. Synthetic validation and algorithm constants are global.
+paper uses `eu`; measured results from other VPs remain independent.
+
+`paper_values/keys.py` defines the public names in one place. Only an explicit
+allowlist is shared: reference dataset versions, the production Random threshold,
+the common no-connection RT/FI configuration, and TCP RT connection count.
+Available recorded settings must agree in raw value and unit. A conflict rejects
+the export before either output is replaced, including without `--strict`.
+An unavailable per-VP report does not make a known shared campaign setting unknown.
+This never fills missing VP measurement results. Phase, connection state,
+cohort/denominator, statistic and unit remain explicit where scientifically needed.
+Network-prefix properties retain their VP dimension; equal measured numbers are
+never deduplicated. No aliases with the former public names are emitted.
+
+Names use `eu`, `no-conn`, `conn`, `rt-fi`, `params`, `incs`, `refs`, `stats`,
+`probing` and `pct`. **`count` remains `count`.** Redundant JSON scaffolding
+(`groups`, `strategies`, `plot-percentages`) is removed from known report metrics.
+`success` means enough samples, including unclassified results; `rt-pop` preserves
+the original retained RT population. `column-pct` and relative gain metrics retain
+their specific denominator/meaning. `rt-vs-fi-base` is a comparison, not `rt-fi` merging.
+
+The output sorts by topic and metric before VP: each metric has its VPs in
+alphabetical order `af, as, au, eu, na, sa` on contiguous lines. Three blank lines
+separate topics, two separate population scopes, and one separates metrics.
+All per-key comments are removed. A compact top-of-file legend describes the
+schema, missing values, units/populations and every emitted prefix.
+
+Only serialization changes: calculations, internal registry keys, cache source
+identities and analysis workflows stay unchanged. The Python diagnostic result's
+`values` retains internal keys; `key_map` identifies their public TeX counterparts.
+Displayed available/missing totals count the actual public output keys.
+
+After upgrading, regenerate `tmp/values.tex` and update LaTeX consumers to the
+new key names; the local paper integration already uses this schema. Old keys
+are intentionally not duplicated as aliases. PDF path values do not change.
+The existing exporter-version check rebuilds its cache once after this code
+update; subsequent runs reuse the new cache normally. `--recompute` is not needed.
 
 The standard export prepares only selected placeholders; it does not allocate the
 large optional diagnostic catalog or compute unused cross-VP marginal summaries.
-The full profile retains its complete key set. JSON/PDF cache and receipt checks
+The full profile retains its diagnostic metrics with the same public naming rules. JSON/PDF cache and receipt checks
 share one read path. Source validation and per-value source references remain,
 without building the unused inventories for the former JSON/Markdown sidecars.
 
@@ -153,14 +188,15 @@ Counts and percentages retain explicit population definitions. For example, merg
 successful counts replace the RT unclassified target subset by successful FI results;
 a full-RT denominator is not substituted for a matched RT/FI cohort. Missing
 percentages with a zero denominator stay empty even when the count is zero.
-Definitions and missing-value reasons accompany each key as LaTeX comments.
+Definitions, source provenance and missing-value reasons remain available in
+internal diagnostics/cache records; they are not repeated as TeX comments.
 
 ## LaTeX and PDF paths
 
 ```tex
 \input{tmp/values.tex} % adjust only this input path after copying to the paper repo
-\getval{results.vp-eu.tcp.no-connection.rt-base.successful-results.constant.share-pct}
-\includegraphics[width=\linewidth]{\getval{plots.vp-eu.tcp.no-connection.rt-fi-merged.operating-system-group-by-strategy}}
+\getval{results.eu.tcp.no-conn.rt-base.success.constant.pct}
+\includegraphics[width=\linewidth]{\getval{plots.eu.tcp.no-conn.rt-fi.os-by-strategy}}
 ```
 
 The file provides standalone `\setval` / expandable `\getval` macros compatible
@@ -176,7 +212,7 @@ file. A missing plot key expands to empty; include a figure only when it is avai
 ## Validation
 
 ```sh
-.venv/bin/python -B -m unittest discover -s tests -p test_paper_values.py
+.venv/bin/python -B -m unittest discover -s tests -p 'test_paper_value*.py'
 ```
 
 Tests cover scientific denominators, missing/zero distinctions, receipts,

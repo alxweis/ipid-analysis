@@ -17,6 +17,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from paper_values import exporter as pv
+from paper_values.keys import public_key
 
 CAMPAIGN = "test-geographic-campaign"
 ZMAP = "tcp-80_2026-11-07_03-30-08"
@@ -167,12 +168,12 @@ class ExportTest(unittest.TestCase):
     def test_latex_and_unrounded_provenance(self):
         text = (self.fixture.root / "tmp/values.tex").read_text()
         self.assertIn(
-            r"\setval{" + KEY + r".rt-results.constant.share-pct}{60.00\%}", text
+            r"\setval{" + public_key(KEY + ".rt-results.constant.share-pct") + r"}{60.00\%}", text
         )
         self.assertIn(
             r"\setval{"
-            + KEY.replace("vp-eu", "vp-af")
-            + r".rt-results.constant.count}{}",
+            + public_key(KEY.replace("vp-eu", "vp-af") + ".rt-results.constant.count")
+            + r"}{}",
             text,
         )
         sources = self.values[KEY + ".rt-results.constant.share-pct"]["sources"]
@@ -521,12 +522,12 @@ class PlotPathsTest(unittest.TestCase):
             )
             text = (f.root / "tmp/values.tex").read_text()
             self.assertIn(
-                r"\setval{" + self.plot_key + r"}{\detokenize{" + expected + "}}", text
+                r"\setval{" + public_key(self.plot_key) + r"}{\detokenize{" + expected + "}}", text
             )
             line = next(
                 line
                 for line in text.splitlines()
-                if line.startswith(r"\setval{" + self.plot_key)
+                if line.startswith(r"\setval{" + public_key(self.plot_key))
             )
             self.assertNotIn(r"\_", line)
             self.assertNotIn(str(f.root), line)
@@ -1336,7 +1337,8 @@ class NativeWriterTest(unittest.TestCase):
             pv.emit(registry, Path(root) / "values.tex", CAMPAIGN, [], [])
             text = (Path(root) / "values.tex").read_text()
             self.assertIn(r"\setval{missing}{}", text)
-            self.assertIn(r"\setval{zero}{0} % Observed zero", text)
+            self.assertIn(r"\setval{zero}{0}", text)
+            self.assertNotIn("% Observed zero", text)
             self.assertNotIn("% Sources:", text)
             self.assertIn(r"\setval{percent}{85.62\%}", text)
             self.assertNotIn(r"\xspace}", text)

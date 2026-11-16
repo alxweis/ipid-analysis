@@ -1884,15 +1884,24 @@ def atomic_text(path, text):
 
 def emit(registry, output_file, campaign, artifacts, errors):
     """Serialize only LaTeX here; export() separately persists its local cache."""
-    values = dict(sorted(registry.values.items()))
+    from paper_values.keys import export_values, key_order, public_key, tex_header
+
+    values = export_values(registry.values)
     lines = [
         TEX_PREAMBLE.rstrip(),
         f"% Campaign: {campaign}; profile: {getattr(registry, 'profile', 'full')}",
+        *tex_header(values),
     ]
-    for key, value in values.items():
-        note = value.reason if value.status != "available" else value.definition
-        note = " ".join(note.split())
-        lines.append(f"\\setval{{{key}}}{{{latex_value(value)}}} % {note}")
+    previous = None
+    for key in sorted(values, key=key_order):
+        metric = key_order(key)[1]
+        if previous is not None and previous != metric:
+            # Three blank lines between topics, two between population scopes,
+            # one between metrics. VP rows of a metric remain contiguous.
+            blanks = 3 if previous[0] != metric[0] else 2 if previous[1:4] != metric[1:4] else 1
+            lines.extend([""] * blanks)
+        lines.append(f"\\setval{{{key}}}{{{latex_value(values[key])}}}")
+        previous = metric
     status = {
         "profile": getattr(registry, "profile", "full"),
         "available": sum(v.status == "available" for v in values.values()),
@@ -1900,8 +1909,11 @@ def emit(registry, output_file, campaign, artifacts, errors):
         "input_errors": errors,
         "values": {
             key: dict(asdict(value), formatted=formatted(value))
-            for key, value in values.items()
+            for key, value in registry.values.items()
         },
+        # Preserve the diagnostic Python API's scientific source identities;
+        # only the public TeX namespace changes. No aliases are emitted in TeX.
+        "key_map": {key: public_key(key) for key in registry.values},
     }
     atomic_text(output_file, "\n".join(lines) + "\n")
     return status
