@@ -745,6 +745,128 @@ class DerivedMetricsTest(unittest.TestCase):
                 result["values"][prefix + ".protocol-isolated.count"]["raw"], 0
             )
 
+    def test_interprotocol_relationship_identity_survives_strict_export(self):
+        with tempfile.TemporaryDirectory() as root:
+            f = Fixture(root)
+            partial = [
+                dict(
+                    shared_pairs=["icmp-tcp"],
+                    compatible_partitions=["icmp-tcp"],
+                    count=2,
+                ),
+                dict(
+                    shared_pairs=["icmp-udp"],
+                    compatible_partitions=["icmp-udp"],
+                    count=3,
+                ),
+                dict(
+                    shared_pairs=["icmp-tcp"],
+                    compatible_partitions=["icmp-tcp", "icmp-udp"],
+                    count=4,
+                ),
+            ]
+            parameters = [
+                dict(matching_pairs=["icmp-tcp"], count=5),
+                dict(matching_pairs=["tcp-udp"], count=7),
+            ]
+            for site in ("eu", "na"):
+                f.report(
+                    "interprotocol-campaign-summary",
+                    {
+                        "version": 2,
+                        "rows": 21,
+                        "groups": {
+                            "icmp-tcp-udp": {
+                                "rows": 21,
+                                "counts": {
+                                    "PER_BUCKET:PARTIAL_PROTOCOL_SHARED": 9,
+                                    "CONSTANT:PARTIALLY_MATCHING_PARAMETERS": 12,
+                                },
+                            }
+                        },
+                        "partial_relationships": [
+                            dict(
+                                row,
+                                baseline="PER_BUCKET",
+                                protocol_group="icmp-tcp-udp",
+                                outcome="PARTIAL_PROTOCOL_SHARED",
+                            )
+                            for row in partial
+                        ],
+                        "parameter_relationships": [
+                            dict(
+                                row,
+                                baseline="CONSTANT",
+                                protocol_group="icmp-tcp-udp",
+                                outcome="PARTIALLY_MATCHING_PARAMETERS",
+                            )
+                            for row in parameters
+                        ],
+                    },
+                    site=site,
+                    processed=True,
+                    run="interprotocol/interprotocol/runs/interprotocol",
+                )
+            before = {
+                p: (p.read_bytes(), p.stat().st_mtime_ns)
+                for p in f.processed.rglob("*")
+                if p.is_file()
+            }
+            for profile in ("paper", "full"):
+                result = f.export(profile=profile, strict=True)
+                self.assertFalse(result["input_errors"])
+                if profile == "full":
+                    for site in ("eu", "na"):
+                        prefix = (
+                            f"reports.vp-{site}.all-protocols.mixed.interprotocol."
+                            "interprotocol-campaign-summary."
+                        )
+                        for kind, counts in (
+                            ("partial-relationships.", [2, 3, 4]),
+                            ("parameter-relationships.", [5, 7]),
+                        ):
+                            actual = sorted(
+                                v["raw"]
+                                for k, v in result["values"].items()
+                                if k.startswith(prefix + kind) and k.endswith(".count")
+                            )
+                            self.assertEqual(actual, counts)
+                        self.assertEqual(
+                            result["values"][
+                                f"interprotocol.vp-{site}.icmp-tcp-udp.per-bucket.targets.count"
+                            ]["raw"],
+                            9,
+                        )
+                self.assertEqual(
+                    {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before}, before
+                )
+                self.assertEqual(
+                    list((f.root / "tmp").iterdir()), [f.root / "tmp/values.tex"]
+                )
+
+    def test_relationship_identifiers_are_lossless_not_punctuation_normalized(self):
+        rows = [
+            dict(baseline="PER_BUCKET", shared_pairs=pairs, count=count)
+            for pairs, count in (
+                (["icmp-tcp", "udp"], 1),
+                (["icmp", "tcp-udp"], 2),
+                ([], 3),
+            )
+        ]
+        flattened = list(pv.flatten({"partial_relationships": rows}))
+        self.assertEqual(len({path for path, value in flattened}), 3)
+        self.assertEqual(sorted(value for path, value in flattened), [1, 2, 3])
+
+    def test_true_duplicate_relationship_counts_are_still_rejected(self):
+        registry = pv.Registry()
+        rows = [
+            dict(baseline="PER_BUCKET", shared_pairs=["icmp-tcp"], count=count)
+            for count in (2, 3)
+        ]
+        with self.assertRaisesRegex(ValueError, "ambiguous or duplicate"):
+            for path, value in pv.flatten({"partial_relationships": rows}):
+                registry.put(".".join(path), value)
+
     def test_only_actual_snapshot_parameters_are_exported(self):
         with tempfile.TemporaryDirectory() as root:
             f = Fixture(root)
@@ -1049,6 +1171,8 @@ class IsolationTest(unittest.TestCase):
                 timeout=90,
             )
             self.assertNotEqual(run.returncode, 0)
+            self.assertIn("existing tmp/values.tex retained", run.stderr)
+            self.assertIn("strategies.json", run.stderr)
             self.assertEqual((root / "tmp/values.tex").read_bytes(), sentinel)
             self.assertEqual(snapshot(), before)
 

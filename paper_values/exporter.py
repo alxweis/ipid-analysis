@@ -727,6 +727,18 @@ def flatten(data, path=()):
                 )
                 if k in row and isinstance(row[k], (str, int))
             ]
+            # Relationship rows can share baseline/group/outcome while differing
+            # in these lists. Preserve array boundaries and punctuation losslessly.
+            for field in ("shared_pairs", "compatible_partitions", "matching_pairs"):
+                if field not in row:
+                    continue
+                value = row[field]
+                if not isinstance(value, list) or any(
+                    type(v) is not str for v in value
+                ):
+                    raise ValueError(f"invalid relationship identifier: {field}")
+                encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+                identifiers.append((field, "json-" + encoded.encode("ascii").hex()))
             if identifiers:
                 label = "-".join(
                     f"{component(k)}-{component(v)}" for k, v in identifiers
@@ -1891,8 +1903,10 @@ def export(
         registry.paper_selection = selected.paper_selection
         registry.paper_references = selected.paper_references
     if strict and errors:
+        details = "\n".join(f"{error['source']}: {error['error']}" for error in errors)
         raise ValueError(
-            f"{len(errors)} invalid or ambiguous inputs; existing tmp/values.tex retained"
+            f"{len(errors)} invalid or ambiguous inputs; existing tmp/values.tex retained\n"
+            + details
         )
     return emit(registry, output, campaign, valid, errors)
 
