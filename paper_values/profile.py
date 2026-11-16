@@ -430,11 +430,24 @@ def manuscript_metrics(registry, artifacts, processed_root, errors):
         )
 
 
-def _increment_histogram(registry, artifact, processed_root, put, ratio):
+def _increment_histogram(
+    registry, artifact, processed_root, put, ratio, *, cached=False
+):
     """Exact statistics where the retained full-count histogram still determines them."""
     relative = artifact.relative.removeprefix("figures/")
     path = Path(processed_root) / artifact.site / Path(relative).with_suffix(".pq")
     if not path.is_file():
+        return
+    if registry.cache is not None and not cached:
+        registry.cache.derive(
+            registry,
+            artifact,
+            path,
+            "histogram",
+            lambda: _increment_histogram(
+                registry, artifact, processed_root, put, ratio, cached=True
+            ),
+        )
         return
     registry.record_file(path)
     import pyarrow.parquet as pq

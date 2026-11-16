@@ -6,8 +6,10 @@ The default export contains only the current manuscript's selected values and
 paper-relative PDF paths, with separate measurement keys for all six VPs.
 The reviewed selection and its paper references live in
 `paper_values/selection.json`; `ARGS="--profile full"` enables the
-complete diagnostic catalog. Only `tmp/values.tex` is written. Missing results remain empty; sources and
-denominator definitions are included as LaTeX comments. Existing analysis is
+complete diagnostic catalog. Output is limited to `tmp/values.tex` and the
+versioned `tmp/values.json` cache. `ARGS="--strict --recompute --timings"` forces
+a refresh and reports runtime stages. Missing results remain empty; short value
+definitions stay inline, without Sources comments. Existing analysis is
 never imported or run.
 See [Paper values](docs/PAPER_VALUES.md)
 for the key schema, EU archive export, and limitations.

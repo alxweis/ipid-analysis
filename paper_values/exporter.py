@@ -18,10 +18,14 @@ import re
 import tempfile
 import zipfile
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 from pathlib import Path, PurePosixPath
+from time import perf_counter
 from typing import Any
+
+from paper_values.cache import ExportCache, stamp
 
 SITES = ("eu", "na", "sa", "as", "af", "au")
 PROTOCOLS = ("icmp", "tcp", "udp")
@@ -173,6 +177,7 @@ class Registry:
     def __init__(self):
         self.values: dict[str, Value] = {}
         self.evidence = {}
+        self.cache = None
 
     def record_file(self, path):
         path = Path(path)
@@ -291,28 +296,55 @@ class Plot:
 
 
 class Inputs:
-    def __init__(self, paths=(), archive=None):
+    def __init__(
+        self, paths=(), archive=None, *, cache=None, workers=8, profile="full"
+    ):
         self.reports_root = Path(paths[0]) if paths and paths[0] is not None else None
         self.paths = [Path(p) for p in paths if p is not None and Path(p).is_dir()]
         self.archive = zipfile.ZipFile(archive) if archive else None
         self.errors = []
+        self.cache = cache
+        self.workers = 1 if archive else workers
+        self.profile = profile
+        self.inventory = {}
+        self.timings = {}
+        self.archive_stamp = stamp(archive) if archive else None
 
     def close(self):
         if self.archive:
             self.archive.close()
 
+    def scan(self):
+        start = perf_counter()
+        for root in self.paths:
+            files = []
+
+            def failed(error):
+                self.errors.append({"source": str(root), "error": str(error)})
+
+            for directory, directories, names in os.walk(root, onerror=failed):
+                directories[:] = [d for d in directories if not d.startswith(".")]
+                files.extend(
+                    Path(directory) / name
+                    for name in names
+                    if not name.startswith(".") and name.endswith((".json", ".pdf"))
+                )
+            self.inventory[root] = sorted(files)
+        self.timings["inventory"] = perf_counter() - start
+
     def files(self):
         if self.archive:
             for info in self.archive.infolist():
-                if not info.is_dir():
+                if not info.is_dir() and info.filename.endswith(".json"):
                     yield (
                         info.filename,
                         lambda n=info.filename: self.archive.read(n),
                         "archive",
                     )
         for root in self.paths:
-            for path in sorted(root.rglob("*.json")):
-                yield path.as_posix(), path.read_bytes, str(root)
+            for path in self.inventory[root]:
+                if path.suffix == ".json":
+                    yield path.as_posix(), path.read_bytes, str(root)
 
     def read_marker(self, name, origin):
         path = PurePosixPath(name)
@@ -329,13 +361,67 @@ class Inputs:
             else None
         )
 
+    def fingerprint(self, name, origin, marker):
+        if origin == "archive":
+            info = self.archive.getinfo(name)
+            source = [*self.archive_stamp, info.CRC, info.file_size]
+        else:
+            source = stamp(name)
+        return dict(source=source, receipt=marker)
+
+    def load_artifact(self, entry):
+        name, read, origin, site, relative = entry
+        try:
+            marker = self.read_marker(name, origin)
+            before = self.fingerprint(name, origin, marker)
+            identity = (
+                self.cache.identity("metadata", site, relative, name)
+                if self.cache
+                else None
+            )
+            payload = self.cache.get(identity, before) if self.cache else None
+            if payload is None:
+                content = read()
+                payload = dict(
+                    data=json.loads(content),
+                    sha256=hashlib.sha256(content).hexdigest(),
+                    size_bytes=len(content),
+                )
+                if self.fingerprint(name, origin, marker) != before:
+                    raise ValueError("JSON artifact changed while reading")
+            if marker is not None and (
+                not isinstance(marker, dict)
+                or marker.get("status") != "complete"
+                or marker.get("size_bytes") != payload["size_bytes"]
+                or marker.get("sha256") != payload["sha256"]
+            ):
+                raise ValueError("completion receipt does not match artifact bytes")
+            if not isinstance(payload["data"], dict):
+                return None, None
+            artifact = identify(
+                Artifact(
+                    name,
+                    payload["data"],
+                    payload["sha256"],
+                    payload["size_bytes"],
+                    "verified" if marker is not None else "legacy-no-receipt",
+                    site,
+                    origin=origin,
+                    relative=relative,
+                ),
+                relative,
+            )
+            if self.cache and artifact:
+                self.cache.put(identity, before, payload)
+            return artifact, None
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
+            return None, {"source": name, "error": str(exc)}
+
     def artifacts(self, campaign):
-        seen = {}
-        conflicts = set()
+        self.scan()
+        start = perf_counter()
+        entries = []
         for name, read, origin in self.files():
-            path = PurePosixPath(name)
-            if path.suffix != ".json":
-                continue
             match = re.search(
                 rf"/continental/{re.escape(campaign)}/(eu|na|sa|as|af|au)/(.+)$",
                 "/" + name.lstrip("/"),
@@ -345,46 +431,106 @@ class Inputs:
             site, relative = match.groups()
             if any(p.startswith(".") for p in PurePosixPath(relative).parts):
                 continue
-            try:
-                content = read()
-                digest = hashlib.sha256(content).hexdigest()
-                marker = self.read_marker(name, origin)
-                if marker is not None and not isinstance(marker, dict):
-                    raise ValueError("invalid completion receipt")
-                if marker is not None and (
-                    marker.get("status") != "complete"
-                    or marker.get("size_bytes") != len(content)
-                    or marker.get("sha256") != digest
-                ):
-                    raise ValueError("completion receipt does not match artifact bytes")
-                data = json.loads(content)
-                if not isinstance(data, dict):
-                    continue
-                artifact = Artifact(
-                    name,
-                    data,
-                    digest,
-                    len(content),
-                    "verified" if marker is not None else "legacy-no-receipt",
-                    site,
-                    origin=origin,
-                    relative=relative,
-                )
-                artifact = identify(artifact, relative)
+            stem = PurePosixPath(relative).stem
+            kind = next((stem[len(p) :] for p in PREFIXES if stem.startswith(p)), stem)
+            if kind.endswith("random-reproducibility-evaluation"):
+                kind = "random-reproducibility-evaluation"
+            if kind not in (
+                *KINDS,
+                "shared-os-coverage",
+                "interprotocol-campaign-summary",
+            ):
+                continue  # Never open metadata which cannot contribute an export value.
+            if self.profile == "paper" and kind == "interprotocol-campaign-summary":
+                continue
+            entries.append((name, read, origin, site, relative))
+        seen, conflicts = {}, set()
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            for artifact, error in pool.map(self.load_artifact, entries):
+                if error:
+                    self.errors.append(error)
                 if artifact:
-                    identity = (site, relative)
+                    identity = (artifact.site, artifact.relative)
                     if identity in seen:
-                        if seen[identity].sha256 != digest:
+                        if seen[identity].sha256 != artifact.sha256:
                             conflicts.add(identity)
-                            raise ValueError("archive and mounted artifact disagree")
-                        continue
-                    seen[identity] = artifact
-            except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
-                self.errors.append({"source": name, "error": str(exc)})
+                            self.errors.append(
+                                {
+                                    "source": artifact.name,
+                                    "error": "archive and mounted artifact disagree",
+                                }
+                            )
+                    else:
+                        seen[identity] = artifact
+        self.timings["json"] = perf_counter() - start
         yield from (a for identity, a in seen.items() if identity not in conflicts)
 
+    def load_plot(self, entry):
+        name, site, relative, origin, size = entry
+        plot = identify_plot(name, site, relative, self.campaign)
+        if plot is None:
+            return None
+        if (
+            self.plot_keys is not None
+            and f"plots.vp-{site}.{plot.scope}" not in self.plot_keys
+        ):
+            return None
+        try:
+            validate_plot_path(plot.paper_path)
+            marker = self.read_marker(name, origin)
+            before = self.fingerprint(name, origin, marker)
+            identity = (
+                self.cache.identity("pdf", site, relative, name) if self.cache else None
+            )
+            payload = self.cache.get(identity, before) if self.cache else None
+            if payload is None:
+                if origin == "archive":
+                    with self.archive.open(name) as source:
+                        header = source.read(5)
+                else:
+                    size = before["source"][0]
+                    with Path(name).open("rb") as source:
+                        header = source.read(5)
+                if header != b"%PDF-":
+                    raise ValueError("report file has no PDF signature")
+                payload = dict(size_bytes=size)
+                if self.fingerprint(name, origin, marker) != before:
+                    raise ValueError("PDF changed while reading")
+            size = payload["size_bytes"]
+            plot.size_bytes = size
+            if marker is not None:
+                if (
+                    not isinstance(marker, dict)
+                    or marker.get("status") != "complete"
+                    or marker.get("size_bytes") != size
+                    or not re.fullmatch(
+                        r"[a-fA-F0-9]{64}", str(marker.get("sha256", ""))
+                    )
+                ):
+                    raise ValueError(
+                        "PDF completion receipt does not match file metadata"
+                    )
+                plot.receipt_sha256 = marker["sha256"]
+                plot.completion = "size-checked"
+            if self.cache:
+                self.cache.put(identity, before, payload)
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
+            plot.error = str(exc)
+        return plot
+
     def plots(self, campaign):
-        """Inventory actual report PDFs; never use absolute paths embedded in JSON."""
+        start = perf_counter()
+        self.campaign = campaign
+        self.plot_keys = None
+        if self.profile == "paper":
+            from paper_values.profile import load_selection
+
+            self.plot_keys = {
+                entry["key"].format(vp=site)
+                for entry in load_selection()["entries"]
+                if entry["key"].startswith("plots.")
+                for site in SITES
+            }
         entries = []
         if self.archive:
             for info in self.archive.infolist():
@@ -399,7 +545,9 @@ class Inputs:
                         (info.filename, site, relative, "archive", info.file_size)
                     )
         if self.reports_root and self.reports_root.is_dir():
-            for path in sorted(self.reports_root.rglob("*.pdf")):
+            for path in self.inventory[self.reports_root]:
+                if path.suffix != ".pdf":
+                    continue
                 parts = path.relative_to(self.reports_root).parts
                 if len(parts) >= 2 and parts[0] in SITES:
                     entries.append(
@@ -411,42 +559,16 @@ class Inputs:
                             None,
                         )
                     )
-        for name, site, relative, origin, size in entries:
-            if any(p.startswith(".") for p in PurePosixPath(relative).parts):
-                continue
-            plot = identify_plot(name, site, relative, campaign)
-            if plot is None:
-                continue
-            try:
-                validate_plot_path(plot.paper_path)
-                if origin == "archive":
-                    with self.archive.open(name) as source:
-                        header = source.read(5)
-                else:
-                    size = Path(name).stat().st_size
-                    with Path(name).open("rb") as source:
-                        header = source.read(5)
-                if header != b"%PDF-":
-                    raise ValueError("report file has no PDF signature")
-                plot.size_bytes = size
-                marker = self.read_marker(name, origin)
-                if marker is not None:
-                    if (
-                        not isinstance(marker, dict)
-                        or marker.get("status") != "complete"
-                        or marker.get("size_bytes") != size
-                        or not re.fullmatch(
-                            r"[a-fA-F0-9]{64}", str(marker.get("sha256", ""))
-                        )
-                    ):
-                        raise ValueError(
-                            "PDF completion receipt does not match file metadata"
-                        )
-                    plot.receipt_sha256 = marker["sha256"]
-                    plot.completion = "size-checked"
-            except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
-                plot.error = str(exc)
-            yield plot
+        entries = [
+            e
+            for e in entries
+            if not any(p.startswith(".") for p in PurePosixPath(e[2]).parts)
+        ]
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            yield from (
+                plot for plot in pool.map(self.load_plot, entries) if plot is not None
+            )
+        self.timings["pdf"] = perf_counter() - start
 
 
 def identify(artifact, relative, *, allow_unknown_kind=False):
@@ -1383,7 +1505,7 @@ def interprotocol_values(registry, artifact):
         raise ValueError("interprotocol campaign count differs from the group counts")
 
 
-def aggregate_values(registry, artifact, processed_root):
+def aggregate_values(registry, artifact, processed_root, *, cached=False):
     """Read only small, existing plot aggregates; never rebuild joins from raw scans."""
     if not processed_root or artifact.kind not in (
         "operating-system-group-by-strategy",
@@ -1396,6 +1518,15 @@ def aggregate_values(registry, artifact, processed_root):
     path = Path(processed_root) / artifact.site / Path(relative).with_suffix(".pq")
     if not path.is_file():
         return
+    if registry.cache is not None and not cached:
+        registry.cache.derive(
+            registry,
+            artifact,
+            path,
+            "aggregate",
+            lambda: aggregate_values(registry, artifact, processed_root, cached=True),
+        )
+        return
     registry.record_file(path)
     import pyarrow.parquet as pq
 
@@ -1404,7 +1535,12 @@ def aggregate_values(registry, artifact, processed_root):
             raise ValueError(
                 f"expected a small plot aggregate, not per-IP data: {path}"
             )
-        rows = source.read().to_pylist()
+        columns = (
+            ["OS_GROUP", "IPID_SELECTION_STRATEGY", "COUNT", "PERCENTAGE"]
+            if artifact.kind == "operating-system-group-by-strategy"
+            else None
+        )
+        rows = source.read(columns=columns).to_pylist()
     prefix = (
         base_key(
             "reports",
@@ -1616,7 +1752,7 @@ def derived_coverage(registry, artifacts):
             )
 
 
-def snapshot_values(registry, artifacts, raw_root):
+def snapshot_values(registry, artifacts, raw_root, *, cached=False):
     if not raw_root:
         return
     for a in artifacts:
@@ -1631,6 +1767,15 @@ def snapshot_values(registry, artifacts, raw_root):
             raise ValueError(f"invalid measurement identity: {mid}")
         path = Path(raw_root) / a.site / "ipid" / mid / "ipid.snapshot.yaml"
         if not path.is_file():
+            continue
+        if registry.cache is not None and not cached:
+            registry.cache.derive(
+                registry,
+                a,
+                path,
+                "snapshot",
+                lambda: snapshot_values(registry, [a], raw_root, cached=True),
+            )
             continue
         import yaml
 
@@ -1733,7 +1878,7 @@ def atomic_text(path, text):
 
 
 def emit(registry, output_file, campaign, artifacts, errors):
-    """The only persistent write in the exporter is this one LaTeX file."""
+    """Serialize only LaTeX here; export() separately persists its local cache."""
     values = dict(sorted(registry.values.items()))
     lines = [
         TEX_PREAMBLE.rstrip(),
@@ -1743,11 +1888,6 @@ def emit(registry, output_file, campaign, artifacts, errors):
         note = value.reason if value.status != "available" else value.definition
         note = " ".join(note.split())
         lines.append(f"\\setval{{{key}}}{{{latex_value(value)}}} % {note}")
-        if value.sources:
-            lines.append(
-                "% Sources: "
-                + " | ".join(" ".join(source.split()) for source in value.sources)
-            )
     status = {
         "schema_version": 1,
         "profile": getattr(registry, "profile", "full"),
@@ -1784,11 +1924,13 @@ def emit(registry, output_file, campaign, artifacts, errors):
     return status
 
 
-def fixed_output_path(root, input_roots, input_files):
+def fixed_output_path(root, input_roots, input_files, filename="values.tex"):
     """Only root/tmp/values.tex is writable; never follow a link into input data."""
-    output = root / "tmp" / "values.tex"
+    if filename not in ("values.tex", "values.json"):
+        raise ValueError("unsupported export output")
+    output = root / "tmp" / filename
     if output.is_symlink():
-        raise ValueError("tmp/values.tex must not be a symbolic link")
+        raise ValueError(f"tmp/{filename} must not be a symbolic link")
     resolved = output.resolve()
     protected = [root / "reports", root / "data", root / "references"]
     protected.extend(Path(path) for path in input_roots if path is not None)
@@ -1816,7 +1958,13 @@ def export(
     profile="paper",
     repository_root=None,
     strict=False,
+    recompute=False,
+    io_workers=8,
+    use_cache=True,
 ):
+    started = perf_counter()
+    if not 1 <= io_workers <= 32:
+        raise ValueError("io_workers must be between 1 and 32")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", campaign):
         raise ValueError("invalid campaign ID")
     if profile not in ("paper", "full"):
@@ -1838,10 +1986,34 @@ def export(
                 raise ValueError(
                     "choose a local output directory outside the S3 mounts"
                 )
+    cache_path = fixed_output_path(
+        root,
+        (reports_root, processed_root, raw_root),
+        (archive, *additional_reports),
+        "values.json",
+    )
+    cache = (
+        ExportCache(
+            cache_path,
+            campaign,
+            [reports_root, processed_root, raw_root, archive, *additional_reports],
+            profile,
+            recompute=recompute,
+        )
+        if use_cache
+        else None
+    )
     registry = Registry()
+    registry.cache = cache
     reserve_catalog(registry)
     registry.put("meta.campaign-id", campaign, definition="immutable campaign identity")
-    inputs = Inputs((reports_root, processed_root), archive)
+    inputs = Inputs(
+        (reports_root, processed_root),
+        archive,
+        cache=cache,
+        workers=io_workers,
+        profile=profile,
+    )
     try:
         artifacts, conflicts = select_artifacts(list(inputs.artifacts(campaign)))
         plots = list(inputs.plots(campaign))
@@ -1849,8 +2021,10 @@ def export(
         inputs.close()
     errors = inputs.errors + conflicts
     valid = []
+    derive_start = perf_counter()
     for a in artifacts:
         transaction = Registry()
+        transaction.cache = cache
         try:
             # Validate scientific primary reports before exposing their scalar fields.
             if a.kind == "strategies":
@@ -1876,7 +2050,8 @@ def export(
                         definition=f"reported scalar: {a.kind}/{'/'.join(pointer)}",
                         sources=(a.name,),
                     )
-            aggregate_values(transaction, a, processed_root)
+            if profile != "paper" or a.kind != "strategy-intersection":
+                aggregate_values(transaction, a, processed_root)
             registry.merge(transaction)
             valid.append(a)
         except (OSError, ValueError, TypeError, KeyError, ImportError) as exc:
@@ -1908,7 +2083,16 @@ def export(
             f"{len(errors)} invalid or ambiguous inputs; existing tmp/values.tex retained\n"
             + details
         )
-    return emit(registry, output, campaign, valid, errors)
+    timings = {**inputs.timings, "derive": perf_counter() - derive_start}
+    write_start = perf_counter()
+    status = emit(registry, output, campaign, valid, errors)
+    if cache is not None:
+        cache.save(atomic_text)
+    timings["write"] = perf_counter() - write_start
+    timings["total"] = perf_counter() - started
+    status["timings"] = timings
+    status["cache"] = dict(cache.stats) if cache is not None else {}
+    return status
 
 
 def main():
@@ -1926,6 +2110,22 @@ def main():
         "--strict",
         action="store_true",
         help="reject invalid inputs before replacing values.tex; missing results are allowed",
+    )
+    parser.add_argument(
+        "--recompute",
+        action="store_true",
+        help="ignore cache and refresh export-derived values",
+    )
+    parser.add_argument(
+        "--io-workers",
+        type=int,
+        default=8,
+        help="parallel independent reads (1-32; default 8)",
+    )
+    parser.add_argument(
+        "--timings",
+        action="store_true",
+        help="print per-stage timings and cache hit counters",
     )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -1946,6 +2146,8 @@ def main():
             profile=args.profile,
             additional_reports=args.additional_report,
             strict=args.strict,
+            recompute=args.recompute,
+            io_workers=args.io_workers,
         )
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         parser.exit(2, f"paper-values: {exc}\n")
@@ -1953,6 +2155,14 @@ def main():
         f"Paper values: {status['available']} available, {status['missing']} empty; "
         f"{len(status['input_errors'])} input errors; output: {root / 'tmp/values.tex'}"
     )
+    if args.timings:
+        print(
+            "Timings: "
+            + ", ".join(
+                f"{key}={value:.3f}s" for key, value in status["timings"].items()
+            )
+        )
+        print("Cache: " + json.dumps(status["cache"], sort_keys=True))
     for error in status["input_errors"]:
         print(f"Unavailable input: {error['source']}: {error['error']}")
 
