@@ -67,8 +67,13 @@ def load_selection():
     data = json.loads(
         Path(__file__).with_name("selection.json").read_text(encoding="utf-8")
     )
-    if data.get("schema_version") != 1:
+    if data.get("schema_version") not in (1, 2):
         raise ValueError("unsupported current-paper selection")
+    data["entries"] = [
+        dict(key=key, **{k: v for k, v in entry.items() if k not in ("key", "keys")})
+        for entry in data["entries"]
+        for key in entry.get("keys", [entry.get("key")])
+    ]
     return data
 
 
@@ -379,7 +384,7 @@ def manuscript_metrics(registry, artifacts, processed_root, errors):
         if version and all(
             str(a.data["classifier_version"]) == version for a in versions
         ):
-            registry.record_file(path)
+            registry.verify_file(path)
             sources = (str(path), *(a.name for a in versions))
             for metric, value in (
                 ("single.maximum-increment", constants.get("MAX_INC")),
@@ -449,7 +454,7 @@ def _increment_histogram(
             ),
         )
         return
-    registry.record_file(path)
+    registry.verify_file(path)
     import pyarrow.parquet as pq
 
     with pq.ParquetFile(path) as source:
@@ -521,13 +526,11 @@ def select_manuscript_values(registry, sites):
     """No glob or automatic scalar discovery is allowed in the default output."""
     selection = load_selection()
     output = type(registry)()
-    references = {}
     for entry in selection["entries"]:
         for site in sites if "{vp}" in entry["key"] else (None,):
             key = entry["key"].format(vp=site)
-            if key in references:
+            if key in output.values:
                 raise ValueError("duplicate manuscript selection: " + key)
-            references[key] = entry["paper_references"]
             value = registry.values.get(key)
             if value and value.status == "available":
                 output.put(
@@ -549,10 +552,5 @@ def select_manuscript_values(registry, sites):
                         else "required current-paper analysis report is unavailable"
                     ),
                 )
-    output.evidence = registry.evidence
     output.profile = "paper"
-    output.paper_selection = {
-        key: value for key, value in selection.items() if key != "entries"
-    }
-    output.paper_references = references
     return output

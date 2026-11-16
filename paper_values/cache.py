@@ -49,6 +49,12 @@ class ExportCache:
             if document.get("schema_version") == 1 and isinstance(
                 document.get("contexts"), dict
             ):
+                # Entries from other code versions can never be reused here.
+                document["contexts"] = {
+                    key: entry
+                    for key, entry in document["contexts"].items()
+                    if entry.get("identity", {}).get("exporter_version") == version
+                }
                 self.document = document
         except (OSError, ValueError, AttributeError):
             pass  # A cache is expendable; corrupt/old caches never replace source data.
@@ -137,10 +143,8 @@ class ExportCache:
                         definition=value["definition"],
                         sources=value["sources"],
                     )
-            registry.evidence.update(payload["evidence"])
             return
         old = dict(registry.values)
-        old_evidence = dict(registry.evidence)
         compute()
         if fingerprint() != before:
             raise ValueError(f"aggregate changed while reading: {path}")
@@ -149,11 +153,6 @@ class ExportCache:
                 key: asdict(value)
                 for key, value in registry.values.items()
                 if value.status == "available" and old.get(key) != value
-            },
-            evidence={
-                key: value
-                for key, value in registry.evidence.items()
-                if old_evidence.get(key) != value
             },
         )
         self.put(identity, before, payload)

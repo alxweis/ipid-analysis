@@ -176,10 +176,10 @@ class Value:
 class Registry:
     def __init__(self):
         self.values: dict[str, Value] = {}
-        self.evidence = {}
         self.cache = None
 
-    def record_file(self, path):
+    def verify_file(self, path):
+        """Validate existing completion metadata; do not build a source inventory."""
         path = Path(path)
         stat = path.stat()
         marker_path = path.parent / ".ipid-complete" / (path.name + ".json")
@@ -197,21 +197,11 @@ class Registry:
             raise ValueError(f"completion receipt does not match source size: {path}")
         digest = (
             hashlib.sha256(path.read_bytes()).hexdigest()
-            if stat.st_size <= 32 * 1024**2
+            if marker is not None and stat.st_size <= 32 * 1024**2
             else None
         )
         if digest and marker is not None and digest != marker.get("sha256"):
             raise ValueError(f"completion receipt does not match source bytes: {path}")
-        self.evidence[str(path)] = {
-            "path": str(path),
-            "size_bytes": stat.st_size,
-            "mtime_ns": stat.st_mtime_ns,
-            "sha256": digest,
-            "receipt_sha256": marker.get("sha256") if marker is not None else None,
-            "completion": ("verified" if digest else "size-checked")
-            if marker is not None
-            else "legacy-no-receipt",
-        }
 
     def reserve(self, key, *, unit="", definition="", reason=None):
         if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", key):
@@ -260,7 +250,6 @@ class Registry:
             if previous and previous.status == "available" and previous != value:
                 raise ValueError(f"ambiguous or duplicate value: {key}")
         self.values.update(other.values)
-        self.evidence.update(other.evidence)
 
 
 @dataclass
@@ -276,7 +265,6 @@ class Artifact:
     phase: str = ""
     kind: str = ""
     run: str = ""
-    origin: str = ""
     relative: str = ""
 
 
@@ -291,7 +279,6 @@ class Plot:
     scope: str
     size_bytes: int = 0
     receipt_sha256: str | None = None
-    completion: str = "legacy-no-receipt"
     error: str | None = None
 
 
@@ -369,33 +356,57 @@ class Inputs:
             source = stamp(name)
         return dict(source=source, receipt=marker)
 
+    def read_payload(self, operation, name, origin, site, relative, read):
+        """One cache/freshness/receipt path for JSON metadata and PDF headers."""
+        marker = self.read_marker(name, origin)
+        before = self.fingerprint(name, origin, marker)
+        identity = (
+            self.cache.identity(operation, site, relative, name) if self.cache else None
+        )
+        payload = self.cache.get(identity, before) if self.cache else None
+        fresh = payload is None
+        if fresh:
+            size = before["source"][-1 if origin == "archive" else 0]
+            payload = read(size)
+            if self.fingerprint(name, origin, marker) != before:
+                raise ValueError(f"{operation} changed while reading")
+        if marker is not None:
+            valid = (
+                isinstance(marker, dict)
+                and marker.get("status") == "complete"
+                and marker.get("size_bytes") == payload["size_bytes"]
+            )
+            if valid:
+                valid = (
+                    marker.get("sha256") == payload["sha256"]
+                    if operation == "metadata"
+                    else re.fullmatch(r"[a-fA-F0-9]{64}", str(marker.get("sha256", "")))
+                )
+            if not valid:
+                raise ValueError(
+                    "completion receipt does not match artifact bytes"
+                    if operation == "metadata"
+                    else "PDF completion receipt does not match file metadata"
+                )
+        if self.cache and fresh:
+            self.cache.put(identity, before, payload)
+        return payload, marker
+
     def load_artifact(self, entry):
         name, read, origin, site, relative = entry
         try:
-            marker = self.read_marker(name, origin)
-            before = self.fingerprint(name, origin, marker)
-            identity = (
-                self.cache.identity("metadata", site, relative, name)
-                if self.cache
-                else None
-            )
-            payload = self.cache.get(identity, before) if self.cache else None
-            if payload is None:
+
+            def metadata(size):
                 content = read()
-                payload = dict(
+                return dict(
                     data=json.loads(content),
                     sha256=hashlib.sha256(content).hexdigest(),
                     size_bytes=len(content),
                 )
-                if self.fingerprint(name, origin, marker) != before:
-                    raise ValueError("JSON artifact changed while reading")
-            if marker is not None and (
-                not isinstance(marker, dict)
-                or marker.get("status") != "complete"
-                or marker.get("size_bytes") != payload["size_bytes"]
-                or marker.get("sha256") != payload["sha256"]
-            ):
-                raise ValueError("completion receipt does not match artifact bytes")
+
+            payload, marker = self.read_payload(
+                "metadata", name, origin, site, relative, metadata
+            )
             if not isinstance(payload["data"], dict):
                 return None, None
             artifact = identify(
@@ -406,13 +417,10 @@ class Inputs:
                     payload["size_bytes"],
                     "verified" if marker is not None else "legacy-no-receipt",
                     site,
-                    origin=origin,
                     relative=relative,
                 ),
                 relative,
             )
-            if self.cache and artifact:
-                self.cache.put(identity, before, payload)
             return artifact, None
         except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
             return None, {"source": name, "error": str(exc)}
@@ -466,54 +474,32 @@ class Inputs:
         yield from (a for identity, a in seen.items() if identity not in conflicts)
 
     def load_plot(self, entry):
-        name, site, relative, origin, size = entry
+        name, site, relative, origin, _ = entry
         plot = identify_plot(name, site, relative, self.campaign)
-        if plot is None:
-            return None
-        if (
+        if plot is None or (
             self.plot_keys is not None
             and f"plots.vp-{site}.{plot.scope}" not in self.plot_keys
         ):
             return None
         try:
             validate_plot_path(plot.paper_path)
-            marker = self.read_marker(name, origin)
-            before = self.fingerprint(name, origin, marker)
-            identity = (
-                self.cache.identity("pdf", site, relative, name) if self.cache else None
+
+            def signature(size):
+                source = (
+                    self.archive.open(name)
+                    if origin == "archive"
+                    else Path(name).open("rb")
+                )
+                with source:
+                    if source.read(5) != b"%PDF-":
+                        raise ValueError("report file has no PDF signature")
+                return dict(size_bytes=size)
+
+            payload, marker = self.read_payload(
+                "pdf", name, origin, site, relative, signature
             )
-            payload = self.cache.get(identity, before) if self.cache else None
-            if payload is None:
-                if origin == "archive":
-                    with self.archive.open(name) as source:
-                        header = source.read(5)
-                else:
-                    size = before["source"][0]
-                    with Path(name).open("rb") as source:
-                        header = source.read(5)
-                if header != b"%PDF-":
-                    raise ValueError("report file has no PDF signature")
-                payload = dict(size_bytes=size)
-                if self.fingerprint(name, origin, marker) != before:
-                    raise ValueError("PDF changed while reading")
-            size = payload["size_bytes"]
-            plot.size_bytes = size
-            if marker is not None:
-                if (
-                    not isinstance(marker, dict)
-                    or marker.get("status") != "complete"
-                    or marker.get("size_bytes") != size
-                    or not re.fullmatch(
-                        r"[a-fA-F0-9]{64}", str(marker.get("sha256", ""))
-                    )
-                ):
-                    raise ValueError(
-                        "PDF completion receipt does not match file metadata"
-                    )
-                plot.receipt_sha256 = marker["sha256"]
-                plot.completion = "size-checked"
-            if self.cache:
-                self.cache.put(identity, before, payload)
+            plot.size_bytes = payload["size_bytes"]
+            plot.receipt_sha256 = marker["sha256"] if marker is not None else None
         except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
             plot.error = str(exc)
         return plot
@@ -757,14 +743,6 @@ def plot_values(registry, plots, artifacts, errors):
             sources=(plot.name,),
             definition="existing PDF; copy reports/ unchanged into the paper root",
         )
-        registry.evidence[plot.name] = {
-            "path": plot.name,
-            "paper_path": plot.paper_path,
-            "size_bytes": plot.size_bytes,
-            "sha256": None,
-            "receipt_sha256": plot.receipt_sha256,
-            "completion": plot.completion,
-        }
 
 
 def select_artifacts(artifacts):
@@ -799,6 +777,9 @@ def select_artifacts(artifacts):
                     "error": "ambiguous measurement identity; no baseline guessed",
                 }
             )
+            continue
+        if len(candidates) == 1:
+            selected.append(candidates[0])
             continue
         summaries = {
             json.dumps(list(flatten(report_payload(a))), sort_keys=True)
@@ -886,12 +867,34 @@ def scalar_unit(pointer):
     return ""
 
 
-def reserve_catalog(registry):
+def report_fields(tree, prefix=""):
+    """Expand a report schema: space-separated sibling names share one definition."""
+    if isinstance(tree, str):
+        yield prefix, tree
+    else:
+        for names, child in tree.items():
+            for name in names.split():
+                yield from report_fields(child, f"{prefix}.{name}" if prefix else name)
+
+
+def reserve_catalog(registry, keys=None):
     """Fixed primary metrics also exist for an entirely empty campaign."""
     catalog_path = Path(__file__).with_name("catalog.json")
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-    if catalog.get("schema_version") != 1:
+    if catalog.get("schema_version") != 2:
         raise ValueError("unsupported paper value catalog")
+    catalog["fields"] = {
+        kind: dict(sorted(report_fields(schema)))
+        for kind, schema in catalog["fields"].items()
+    }
+
+    reserve = registry.reserve
+    if keys is not None:
+
+        def reserve(key, **options):
+            if key in keys:
+                registry.reserve(key, **options)
+
     for namespace in catalog["contexts"]:
         kind = namespace.rsplit(".", 1)[-1]
         plot_names = [kind] if kind in PLOT_KINDS else []
@@ -903,7 +906,7 @@ def reserve_catalog(registry):
             plot_names.append("random-reproducibility-summary")
         for plot_name in plot_names:
             for site in SITES:
-                registry.reserve(
+                reserve(
                     f"plots.vp-{site}.{namespace.rsplit('.', 1)[0]}.{plot_name}",
                     unit="pdf-path",
                     reason="PDF is not available",
@@ -911,7 +914,7 @@ def reserve_catalog(registry):
                 )
         for field, unit in catalog["fields"][kind].items():
             for site in SITES:
-                registry.reserve(
+                reserve(
                     f"reports.vp-{site}.{namespace}.{field}",
                     unit=unit,
                     definition="published report scalar; see source metadata",
@@ -946,7 +949,7 @@ def reserve_catalog(registry):
             }
         for suffix, unit in claims.items():
             for site in SITES:
-                registry.reserve(
+                reserve(
                     f"claims.vp-{site}.{namespace.rsplit('.', 1)[0]}.{suffix}",
                     unit=unit,
                     definition="derived prose metric; source denominator required",
@@ -955,7 +958,7 @@ def reserve_catalog(registry):
         registry.put(
             f"meta.vp-{site}.site", site, definition="measurement vantage point"
         )
-        registry.reserve(
+        reserve(
             f"plots.vp-{site}.interprotocol.target-population",
             unit="pdf-path",
             reason="PDF is not available",
@@ -970,7 +973,7 @@ def reserve_catalog(registry):
             "random",
         ):
             for family in ("campaign", "upset"):
-                registry.reserve(
+                reserve(
                     f"plots.vp-{site}.interprotocol.{family}.{strategy}",
                     unit="pdf-path",
                     reason="PDF is not available",
@@ -986,10 +989,10 @@ def reserve_catalog(registry):
                 "RANDOM",
             ):
                 prefix = f"interprotocol.vp-{site}.{group}.{component(strategy)}"
-                registry.reserve(prefix + ".targets.count", unit="ips")
+                reserve(prefix + ".targets.count", unit="ips")
                 for outcome in INTERPROTOCOL_OUTCOMES:
                     for metric, unit in (("count", "ips"), ("share-pct", "percent")):
-                        registry.reserve(
+                        reserve(
                             prefix + "." + component(outcome) + "." + metric,
                             unit=unit,
                             definition="within selected baseline/protocol-group cohort",
@@ -1005,7 +1008,7 @@ def reserve_catalog(registry):
                 "unclassified.share-pct",
                 "with-evidence.count",
             ):
-                registry.reserve(
+                reserve(
                     f"os.vp-{site}.{protocol}.{metric}",
                     unit="percent" if metric.endswith("share-pct") else "ips",
                     definition="OS status over this VP/protocol's unique discovery targets",
@@ -1024,7 +1027,7 @@ def reserve_catalog(registry):
                         "successful-results",
                         "classified-results",
                     ):
-                        registry.reserve(
+                        reserve(
                             f"{result}.{population}.total.count",
                             unit="ips",
                             definition=f"unique IPs in {population}",
@@ -1034,7 +1037,7 @@ def reserve_catalog(registry):
                                 ("count", "ips"),
                                 ("share-pct", "percent"),
                             ):
-                                registry.reserve(
+                                reserve(
                                     f"{result}.{population}.{component(strategy)}.{metric}",
                                     unit=unit,
                                     definition=f"{strategy} among {population}; phase={phase}",
@@ -1047,7 +1050,7 @@ def reserve_catalog(registry):
                         ("classified.count", "ips"),
                         ("classified.share-pct", "percent"),
                     ):
-                        registry.reserve(
+                        reserve(
                             f"{coverage}.{metric}",
                             unit=unit,
                             definition="coverage denominator: all intended targets",
@@ -1073,7 +1076,7 @@ def reserve_catalog(registry):
                         ),
                     }.items():
                         for metric in metrics:
-                            registry.reserve(
+                            reserve(
                                 f"{family}.vp-{site}.{protocol}.{mode}.{phase}.{metric}",
                                 unit="percent"
                                 if metric.endswith("share-pct")
@@ -1087,12 +1090,12 @@ def reserve_catalog(registry):
                         "PER_BUCKET",
                     ):
                         prefix = f"increments.vp-{site}.{protocol}.{mode}.{phase}.{component(strategy)}"
-                        registry.reserve(prefix + ".total.count", unit="increments")
+                        reserve(prefix + ".total.count", unit="increments")
                         for threshold in (1000, 2000):
-                            registry.reserve(
+                            reserve(
                                 prefix + f".below-{threshold}.count", unit="increments"
                             )
-                            registry.reserve(
+                            reserve(
                                 f"increments.vp-{site}.{protocol}.{mode}.{phase}."
                                 f"{component(strategy)}.below-{threshold}.share-pct",
                                 unit="percent",
@@ -1108,7 +1111,7 @@ def reserve_catalog(registry):
                         "fixed-interval.minimum-reply-rate",
                         "number-of-inflight-probes",
                     ):
-                        registry.reserve(
+                        reserve(
                             base_key("parameters", site, protocol, mode, phase)
                             + "."
                             + metric,
@@ -1122,7 +1125,7 @@ def reserve_catalog(registry):
                 "rov",
             ):
                 for metric in ("eligible.count", "eligible.share-pct", "targets.count"):
-                    registry.reserve(
+                    reserve(
                         f"applications.vp-{site}.{protocol}.{technique}.{metric}",
                         unit="percent" if metric.endswith("share-pct") else "ips",
                         reason="requires technique-specific eligibility criteria and analysis",
@@ -1136,7 +1139,7 @@ def reserve_catalog(registry):
                 "agreement.share-pct",
                 "time-separation-seconds",
             ):
-                registry.reserve(
+                reserve(
                     prefix + "." + metric,
                     unit="percent"
                     if metric.endswith("share-pct")
@@ -1144,31 +1147,31 @@ def reserve_catalog(registry):
                     reason="requires a paired cross-VP analysis; marginals insufficient",
                 )
             for source, target in itertools.product(STRATEGIES, repeat=2):
-                registry.reserve(
+                reserve(
                     f"{prefix}.transition.{component(source)}.{component(target)}.count"
                 )
     for scenario in ("rt-ideal", "fi-ideal", "fi-lossy", "fi-reordered", "end-to-end"):
         for metric in ("accuracy-pct", "correct.count", "total.count"):
-            registry.reserve(
+            reserve(
                 f"validation.pipeline.{scenario}.{metric}",
                 unit="percent" if metric == "accuracy-pct" else "sequences",
                 reason="requires a synthetic ground-truth validation report",
             )
         for truth in STRATEGIES:
             prefix = f"validation.pipeline.{scenario}.truth.{component(truth)}"
-            registry.reserve(prefix + ".total.count", unit="sequences")
-            registry.reserve(prefix + ".correct.share-pct", unit="percent")
+            reserve(prefix + ".total.count", unit="sequences")
+            reserve(prefix + ".correct.share-pct", unit="percent")
             for predicted in STRATEGIES:
-                registry.reserve(
+                reserve(
                     prefix + f".predicted.{component(predicted)}.count",
                     unit="sequences",
                 )
     for site in SITES:
         prefix = f"tcp-transition.vp-{site}.rt-no-connection-to-rt-connection"
-        registry.reserve(prefix + ".overlap.count", unit="ips")
+        reserve(prefix + ".overlap.count", unit="ips")
         for source, target in itertools.product(STRATEGIES, repeat=2):
             for metric in ("count", "row-share-pct"):
-                registry.reserve(
+                reserve(
                     prefix + f".{component(source)}.{component(target)}.{metric}",
                     unit="percent" if metric.endswith("pct") else "ips",
                     reason="requires paired TCP observations of the same addresses",
@@ -1527,7 +1530,7 @@ def aggregate_values(registry, artifact, processed_root, *, cached=False):
             lambda: aggregate_values(registry, artifact, processed_root, cached=True),
         )
         return
-    registry.record_file(path)
+    registry.verify_file(path)
     import pyarrow.parquet as pq
 
     with pq.ParquetFile(path) as source:
@@ -1713,9 +1716,11 @@ def derived_coverage(registry, artifacts):
             if artifact.phase == "rt-fi-merged"
             else prefix
         )
-        target = registry.values[source_prefix + ".all-targets.count"]
+        target = registry.values.get(source_prefix + ".all-targets.count", Value())
         if artifact.phase == "rt-fi-merged":
-            rt_result = registry.values[source_prefix + ".successful.count"]
+            rt_result = registry.values.get(
+                source_prefix + ".successful.count", Value()
+            )
             if (
                 rt_result.status == "available"
                 and artifact.data["total_ips"] != rt_result.raw
@@ -1737,7 +1742,7 @@ def derived_coverage(registry, artifacts):
                 )
             )
         for metric, raw, unit in metrics:
-            previous = registry.values[prefix + "." + metric]
+            previous = registry.values.get(prefix + "." + metric, Value())
             if previous.status == "available":
                 if previous.raw != raw:
                     raise ValueError("strategy population differs from coverage report")
@@ -1779,7 +1784,7 @@ def snapshot_values(registry, artifacts, raw_root, *, cached=False):
             continue
         import yaml
 
-        registry.record_file(path)
+        registry.verify_file(path)
         data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
         if not isinstance(data, dict):
             raise ValueError(f"invalid snapshot: {path}")
@@ -1813,7 +1818,7 @@ def extra_reports(registry, paths, campaign):
             or not isinstance(document.get("values"), dict)
         ):
             raise ValueError(f"invalid additional metric report: {path}")
-        registry.record_file(path)
+        registry.verify_file(path)
         for key, record in document["values"].items():
             if not isinstance(record, dict) or "definition" not in record:
                 raise ValueError(f"{path}: each metric requires a definition")
@@ -1889,37 +1894,15 @@ def emit(registry, output_file, campaign, artifacts, errors):
         note = " ".join(note.split())
         lines.append(f"\\setval{{{key}}}{{{latex_value(value)}}} % {note}")
     status = {
-        "schema_version": 1,
         "profile": getattr(registry, "profile", "full"),
-        "paper_selection": getattr(registry, "paper_selection", None),
-        "paper_references": getattr(registry, "paper_references", {}),
-        "campaign_id": campaign,
-        "main_vp": "eu",
-        "sites": list(SITES),
         "available": sum(v.status == "available" for v in values.values()),
         "missing": sum(v.status == "missing" for v in values.values()),
         "input_errors": errors,
-        "sources": [
-            {
-                "path": a.name,
-                "sha256": a.sha256,
-                "size_bytes": a.size_bytes,
-                "completion": a.completion,
-                "generated_at": a.data.get("generated_at"),
-            }
-            for a in artifacts
-        ]
-        + list(registry.evidence.values()),
         "values": {
             key: dict(asdict(value), formatted=formatted(value))
             for key, value in values.items()
         },
     }
-    if status["profile"] == "paper":
-        referenced = {source for value in values.values() for source in value.sources}
-        status["sources"] = [
-            source for source in status["sources"] if source["path"] in referenced
-        ]
     atomic_text(output_file, "\n".join(lines) + "\n")
     return status
 
@@ -2005,7 +1988,18 @@ def export(
     )
     registry = Registry()
     registry.cache = cache
-    reserve_catalog(registry)
+    from paper_values.profile import load_selection
+
+    requested = (
+        {
+            entry["key"].format(vp=site)
+            for entry in load_selection()["entries"]
+            for site in SITES
+        }
+        if profile == "paper"
+        else None
+    )
+    reserve_catalog(registry, requested)
     registry.put("meta.campaign-id", campaign, definition="immutable campaign identity")
     inputs = Inputs(
         (reports_root, processed_root),
@@ -2062,10 +2056,12 @@ def export(
         snapshot_values(registry, valid, raw_root)
     except (OSError, ValueError, ImportError) as exc:
         errors.append({"source": str(raw_root), "error": str(exc)})
-    marginal_comparison(registry)
+    if profile == "full":
+        marginal_comparison(registry)
     extra_reports(registry, additional_reports, campaign)
     plot_values(registry, plots, valid, errors)
-    registry.mirror_missing_vps()
+    if profile == "full":
+        registry.mirror_missing_vps()
     from paper_values.profile import manuscript_metrics, select_manuscript_values
 
     manuscript_metrics(registry, valid, processed_root, errors)
@@ -2075,8 +2071,6 @@ def export(
     else:
         for key, value in selected.values.items():
             registry.values.setdefault(key, value)
-        registry.paper_selection = selected.paper_selection
-        registry.paper_references = selected.paper_references
     if strict and errors:
         details = "\n".join(f"{error['source']}: {error['error']}" for error in errors)
         raise ValueError(
