@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from threading import Barrier
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -17,7 +18,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from paper_values.cache import ValueCache
-from paper_values.exporter import export
+from paper_values.exporter import export, load_metrics, required_contexts
+from paper_values.inputs import Inputs
 from paper_values.tex import key_order, render
 
 CAMPAIGN = "test-campaign"
@@ -155,6 +157,150 @@ class PaperValuesTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.f = Fixture(self.temp.name)
+
+    def inputs(self, workers=8):
+        contexts, plots = required_contexts(load_metrics()["metrics"])
+        return Inputs(
+            (self.f.reports, self.f.processed),
+            workers=workers,
+            contexts=contexts,
+            plot_contexts=plots,
+        )
+
+    def test_inventory_prunes_unused_branches_before_listing_them(self):
+        wanted = self.f.strategy({"CONSTANT": 1})
+        unused = [
+            self.f.reports / "discovery-parts/large-subtree",
+            wanted.parent.parent / "unused-analysis/large-subtree",
+            wanted.parent.parent / ".ipynb_checkpoints/large-subtree",
+            wanted.parent.parent / "comparison/unused-comparison/large-subtree",
+            self.f.reports / "eu/figures" / RUNS["icmp"] / "connection/large-subtree",
+        ]
+        for path in unused:
+            path.mkdir(parents=True)
+            (path / "unrelated.json").write_text("{}", encoding="utf-8")
+        walked = []
+        walk = os.walk
+
+        def record(*args, **kwargs):
+            for entry in walk(*args, **kwargs):
+                walked.append(Path(entry[0]))
+                yield entry
+
+        inputs = self.inputs()
+        with patch("paper_values.inputs.os.walk", side_effect=record):
+            inputs.scan()
+        self.assertIn(wanted, inputs.inventory[self.f.reports])
+        for path in unused:
+            self.assertNotIn(path, walked)
+            self.assertFalse(any(path in visited.parents for visited in walked))
+
+    def test_inventory_scans_vps_concurrently(self):
+        self.f.strategy({"CONSTANT": 1}, site="eu")
+        self.f.strategy({"CONSTANT": 1}, site="au")
+        inputs = self.inputs(workers=2)
+        barrier = Barrier(2)
+        scan_site = inputs.scan_site
+
+        def synchronized(job):
+            barrier.wait(timeout=10)
+            return scan_site(job)
+
+        with patch.object(inputs, "scan_site", side_effect=synchronized):
+            inputs.scan()
+        self.assertEqual(len(inputs.inventory[self.f.reports]), 2)
+
+    def test_inventory_preserves_unknown_layouts_and_refreshes_each_run(self):
+        inputs_root = self.f.reports / "eu/legacy/nested"
+        inputs_root.mkdir(parents=True)
+        legacy = inputs_root / "legacy.json"
+        legacy.write_text("{}", encoding="utf-8")
+        inputs = self.inputs()
+        inputs.scan()
+        self.assertIn(legacy, inputs.inventory[self.f.reports])
+        added = self.f.strategy({"CONSTANT": 1}, site="au", processed=True)
+        # A newly available input root is detected by the next export's Inputs.
+        refreshed = self.inputs()
+        refreshed.scan()
+        self.assertIn(added, refreshed.inventory[self.f.processed])
+        another = self.f.strategy({"CONSTANT": 2}, site="na")
+        inputs.scan()
+        self.assertIn(another, inputs.inventory[self.f.reports])
+
+    def test_inventory_errors_preserve_existing_outputs(self):
+        self.f.baseline()
+        self.f.run(strict=True)
+        before = self.f.output_hashes()
+        walk = os.walk
+
+        def failing(top, *, onerror):
+            if Path(top) == self.f.reports / "eu":
+                onerror(PermissionError("inventory permission denied"))
+                return
+            yield from walk(top, onerror=onerror)
+
+        with patch("paper_values.inputs.os.walk", side_effect=failing):
+            with self.assertRaisesRegex(ValueError, "inventory permission denied"):
+                self.f.run(strict=True)
+        self.assertEqual(before, self.f.output_hashes())
+
+    def test_inventory_root_listing_error_is_reported(self):
+        self.f.strategy({"CONSTANT": 1})
+        inputs = self.inputs()
+        with patch(
+            "paper_values.inputs.os.scandir", side_effect=PermissionError("root listing denied")
+        ):
+            inputs.scan()
+        self.assertEqual(inputs.inventory[self.f.reports], [])
+        self.assertEqual(len(inputs.errors), 1)
+        self.assertIn("root listing denied", inputs.errors[0]["error"])
+
+    def test_pruned_parallel_export_matches_full_serial_inventory(self):
+        for site in ("eu", "au"):
+            for protocol in RUNS:
+                self.f.baseline(site=site, protocol=protocol)
+        # Evaluation reports live one level deeper than other mass reports.
+        report = self.f.report("random-reproducibility-evaluation", {})
+        report.unlink()
+        nested = (
+            report.parent.parent
+            / "fixed-interval-mass/random-reproducibility"
+            / "tcp-no-connection-mass-random-reproducibility-evaluation.json"
+        )
+        nested.parent.mkdir(parents=True)
+        nested.write_text("{}", encoding="utf-8")
+        plot = (
+            self.f.reports
+            / "eu/figures"
+            / RUNS["tcp"]
+            / "no-connection/comparison/rt-based-base_fixed-interval-base"
+            / "n-rt-b_fi-b_increment-distributions.pdf"
+        )
+        plot.parent.mkdir(parents=True)
+        plot.write_bytes(b"%PDF-1.4\nfixture")
+
+        def full_scan(inputs):
+            inputs.inventory = {
+                root: sorted(
+                    Path(directory) / name
+                    for directory, _, names in os.walk(root)
+                    for name in names
+                    if name.endswith((".json", ".pdf"))
+                )
+                for root in inputs.paths
+            }
+
+        with patch.object(Inputs, "scan", full_scan):
+            expected = self.f.run(strict=True, io_workers=1)
+        expected_hashes = self.f.output_hashes()
+        for workers in (1, 8):
+            actual = self.f.run(strict=True, io_workers=workers)
+            self.assertEqual(expected["values"], actual["values"])
+            self.assertEqual(expected_hashes, self.f.output_hashes())
+        inputs = self.inputs()
+        inputs.scan()
+        self.assertIn(nested, inputs.inventory[self.f.reports])
+        self.assertIn(plot, inputs.inventory[self.f.reports])
 
     def test_all_existing_public_keys_and_six_vps_remain(self):
         result = self.f.run(strict=True)
