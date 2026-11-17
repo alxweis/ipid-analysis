@@ -21,12 +21,12 @@ requires-python = ">=3.10.0"
 [tool.ruff]
 line-length = 99
 src = ["ipid_analysis"]
-include = ["pyproject.toml", "ipid_analysis/**/*.py"]
+include = ["pyproject.toml", "ipid_analysis/**/*.py", "paper_values/**/*.py", "tests/test_paper_value*.py"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ipid_analysis"]
+known-first-party = ["ipid_analysis", "paper_values"]
 force-sort-within-sections = true
 

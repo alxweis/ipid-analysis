@@ -1,223 +1,197 @@
-# Paper values (read-only export)
+# Paper values
 
-Run from the ipid-analysis checkout on the Analysis VM:
+Run from the Analysis VM checkout:
 
 ```sh
-cd /mnt/data01/ipid-analysis
 make paper-values CAMPAIGN_ID=geo-full-20261107-r1
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
 ```
 
-Persistent outputs are limited to `/mnt/data01/ipid-analysis/tmp/values.tex`
-and the reusable `/mnt/data01/ipid-analysis/tmp/values.json` cache.
-Rerunning replaces these files atomically. No worker restart, environment changes,
-analysis run or campaign change is required. `ARGS` and lowercase `args` are
-supported for this target; for example:
+Uppercase `ARGS` takes precedence over lowercase `args`. The command writes only
+`tmp/values.tex` and `tmp/values.json`. It reads the existing campaign data; it
+does not run a workflow, start measurements, import `ipid_analysis`, or rebuild
+large raw-data joins. Existing analysis workers can continue running.
+
+## Sources and keys
+
+`paper_values/metrics.json` is the single definition of the 1,497 existing public
+keys: 242 quantities per VP (`af`, `as`, `au`, `eu`, `na`, `sa`) and 45 shared/global
+quantities. All six VPs are exported, even when the current text discusses EU.
+The short public names, populations and known missing values are preserved.
+There is no internal/public key translation or general diagnostic catalog.
+`--profile full` has been removed.
+
+Each group shares a source context and unit. Its `prefix` plus each suffix in
+`values` is the **actual public key**, not an intermediate name. For example:
+
+```json
+{
+  "prefix": "stats.{vp}.tcp.no-conn.rt-fi",
+  "unit": "percent",
+  "sources": [{
+    "reader": "field",
+    "protocol": "tcp",
+    "connection": "no-connection",
+    "phase": "rt-fi-merged",
+    "kind": "itdk-role-by-strategy"
+  }],
+  "values": {
+    "itdk-strategy.transit-observed.single.pct": {
+      "definition": "SINGLE / Transit-Observed population in the report",
+      "read": {"field": ["plot-percentages", "transit-observed", "single"]}
+    }
+  }
+}
+```
+
+The resulting key is `stats.eu.tcp.no-conn.rt-fi.itdk-strategy.transit-observed.single.pct`.
+Field lookup normalizes case/underscores but rejects ambiguous field names.
+Only declared fields/report families are read. Values are never discovered by
+flattening every scalar in a report. Scientific readers in `readers.py` handle
+the existing ratios, OS-family ranges and exact histogram statistics.
+
+Default read-only inputs:
+
+- `reports/continental/<campaign>`: existing JSON reports and selected PDF metadata;
+- `data/processed/continental/<campaign>`: the existing small OS/strategy and
+  positive-increment histogram aggregates needed by selected metrics;
+- `data/raw/continental/<campaign>`: measurement YAML snapshots only.
+
+The current paper selection obtains its reported values from JSON. The large
+repetition CSVs contain per-target observations, not additional selected paper
+scalars, and are not scanned. A future CSV metric should name its exact file,
+columns and reduction explicitly rather than introducing a generic directory-wide
+CSV scan.
+
+Canonical ZMap reports are preferred over streaming copies; repetition runs are
+not substituted for baseline measurements. Conflicting copies are reported.
+Existing JSON completion receipts are checked against bytes. PDF checks validate
+the signature, size and receipt metadata, not a full-file PDF hash. Missing
+receipts remain supported for legacy reports. The output contains paper-relative
+PDF paths; copy `reports/` without changing its relative structure.
+
+## Derived-value cache
+
+`values.json` caches only derived scalar tables from existing processed inputs:
+OS/strategy cells and exact increment-histogram statistics. It does **not** cache
+entire JSON reports, PDF inventories or raw probe sequences. Source reports are
+read fresh on every export. One source file is reused within a run for all metrics
+that depend on it.
+
+Cache entries are scoped by campaign, calculation code, operation, full input path,
+source file size/timestamps, completion receipt and accompanying report hash.
+Changing a source or calculation invalidates its entry. Missing sources are
+checked again next run. A damaged or old-format cache is disposable; it cannot
+replace source data. The former metadata cache is rebuilt in the new format once.
 
 ```sh
-make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict"
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 \
+  ARGS="--strict --recompute --timings"
 ```
 
-`--strict` rejects corrupt, conflicting or ambiguous inputs before replacing an
-existing values.tex or values.json. Missing results alone are allowed: their keys remain empty.
-Without strict mode, invalid inputs are reported on stdout and affected values
-remain empty. An empty value is different from an observed zero.
+`--recompute` ignores cached derived values. It does not bypass a mounted S3
+filesystem's own caches. `--io-workers 1` selects serial reads; the default is 8
+(maximum 32). ZIP reads are serial. Local ZIP timings are not performance promises
+for the S3 mounts.
 
-## Isolation and inputs
-
-The standalone `paper_values` package never imports `ipid_analysis`, invokes
-analysis functions, starts subprocesses or imports plotting libraries. Make runs
-Python with `-B`, preventing bytecode-cache writes. No new dependencies or changes
-to production analysis code are required.
-
-Default input directories are read only:
-
-- `reports/continental/<campaign>`: published JSON reports and PDF metadata;
-- `data/processed/continental/<campaign>`: coverage and small existing aggregates;
-- `data/raw/continental/<campaign>`: existing configuration snapshots only.
-
-Existing small aggregate Parquet tables are read using PyArrow and YAML snapshots
-using PyYAML (already analysis dependencies). Raw probe sequences are never scanned.
-Classifier constants are read as restricted AST expressions from the existing source,
-without importing or executing it, and used only when recorded versions match.
-Reads through existing mounted S3 storage can cause network reads managed by that
-mount; the exporter does not manage mounts, caches or S3 uploads.
-
-Apart from values.json, it does not write status sidecars, Markdown, logs, receipts
-or analysis artifacts. Atomic replacement briefly creates private staging files
-under `tmp`, then replaces each output and removes staging on failure. Existing unrelated files under `tmp`
-are retained. Output symlinks, paths resolving into input directories and writes
-through S3/FUSE mounts are rejected. Do not run concurrently with changes to the
-input directory layout.
-
-To read a downloaded report ZIP without extracting or changing it:
+## Partial archives and missing results
 
 ```sh
 make paper-values CAMPAIGN_ID=geo-full-20261107-r1 \
   ARGS="--archive /path/to/eu-results.zip --strict"
 ```
 
-With `--archive`, default filesystem inputs are disabled. Explicit
-`--reports-root`, `--processed-root`, `--raw-root` can supplement the archive.
-Repeated `--additional-report` accepts compatible existing supplemental reports;
-it never generates them. Output remains `tmp/values.tex` in this checkout even
-when the working directory or input locations differ. There is no output override.
+An archive is read without extraction. In archive mode, default mount inputs are
+disabled. Explicit `--reports-root`, `--processed-root` and `--raw-root` may
+supplement it. Archive and directory copies must agree.
 
-## Cache, performance and freshness
+A reports-only ZIP lacks YAML snapshots and Parquet aggregates. Consequently it
+can populate fewer keys than an export on the Analysis VM. Replacing a fuller
+paper export with that partial export can make previously known values empty.
+Values from previous exports or other campaigns are never used to fill gaps.
+
+`--strict` rejects invalid or conflicting required inputs before replacing either
+existing output. Missing results alone are allowed. Without strict mode, input
+errors are printed and affected values stay empty. Conflicting shared settings
+always reject the export. Observed zero stays zero; percentages with a zero
+denominator stay empty. In particular, the full RT population is not used as a
+replacement denominator for a matched RT/FI comparison.
+
+Known missing scientific reports remain missing. Resource requirements, public
+source-prefix properties and editorial settings are manually maintained paper
+information; the exporter does not infer them from VM capacity, private GCP
+addresses or analysis-generation timestamps. Their existing unfilled keys are
+retained until the paper integration is revised.
+
+For an existing supplemental metric report:
 
 ```sh
-# Normal export: reuse unchanged metadata and derived scalar values.
-make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
-
-# Bypass every exporter cache entry and refresh computations/read checks.
-make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --recompute --timings"
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 \
+  ARGS="--additional-report /path/to/validation-values.json --strict"
 ```
 
-The cache contains validated report metadata, PDF-signature checks, and derived
-scalar values from small OS/strategy aggregates, increment histograms and YAML
-snapshots. Aggregate Parquet rows and raw probe sequences are not cached. Cached
-values supplement existing JSON values; they never supersede fresh metadata.
+The explicit schema uses **public keys**, not the former internal names:
 
-Cache contexts include campaign, all input locations, profile and the exporter
-code/selection version. Each entry additionally records its VP, measurement/run,
-operation and full source path. Entries are reused only while source size,
-modification/change timestamps, completion receipt and (for derived values) the
-report SHA256 still match. Metadata receipt hashes are checked on every run.
-Archive entries also include the member CRC and archive fingerprint. Cache
-payloads have integrity checksums; corrupt or incompatible caches are rebuilt.
-Changes to code, source data or receipts invalidate the relevant entries.
-Unusable cache contexts from older exporter versions are discarded; contexts
-for other campaigns/VPs on the current version are preserved. A newly
-appearing source is read automatically: missing files/results are not negatively
-cached. New campaigns/VPs are never filled using values from another context.
+```json
+{
+  "schema_version": 1,
+  "campaign_id": "geo-full-20261107-r1",
+  "values": {
+    "validation.fi-ideal.accuracy-pct": {
+      "value": 99.3,
+      "unit": "percent",
+      "definition": "Accuracy of the specified current synthetic validation"
+    }
+  }
+}
+```
 
-Directory discovery remains fresh on every invocation, so the export can be used
-while the campaign continues. Discovery now walks each input tree once, skips
-hidden receipt directories, and inventories JSON and PDF together. Unsupported
-JSON filenames are filtered before opening. The paper profile avoids unrelated
-interprotocol detail reports, unselected PDFs and unused strategy-intersection
-Parquet cells. Independent mounted-file reads use eight workers by default;
-`--io-workers 1` selects serial reads and values must remain identical. ZIP
-members are read serially for compatibility with shared-file implementations.
+The key must be defined in `metrics.json`, and unit/campaign must match.
+`--additional-report` reads existing results; it does not run missing analyses.
+New scientific metrics and currently unexported paper keys can be added separately.
 
-The expensive work is remote I/O and reading existing aggregate tables; no raw
-per-IP join or new scientific analysis is triggered. Most counts/proportions are
-already in JSON. OS/strategy cells need their small aggregate table, and exact
-positive-increment statistics need the retained full-count histogram. Subsequent
-exports reuse those derived scalar values instead of reading Parquet again.
-
-`--timings` prints inventory, JSON, PDF, derivation, write and total wall times,
-plus cache hit/miss counters. Output measurements describe this export, not the
-measurement/analysis workers. Source identity checks and directory listing still
-perform reads on warm runs. Mount-level metadata caching/freshness is controlled
-by the existing S3 mount; `--recompute` bypasses the exporter cache, not that mount.
-No VM-specific runtime promise can be inferred from local ZIP timings.
-
-Only successful exports persist a refreshed cache. Strict input failures retain
-both existing outputs. Unrelated files in tmp are preserved. Run one paper export
-at a time; the analysis worker can continue in parallel. Concurrent exports can
-replace each other's two final output files (each file replacement is atomic,
-the pair is not a filesystem transaction).
-
-## Keys and missing results
-
-The default `paper` profile uses the reviewed current-manuscript selection in
-`paper_values/selection.json`. Its 301 internal source templates retain their
-scientific identities. The compact public TeX schema contains 1,497 keys:
-242 per-VP quantities for af/as/au/eu/na/sa and 45 shared/global quantities.
-Manuscript references and source-file hashes document the selection. The main
-paper uses `eu`; measured results from other VPs remain independent.
-
-`paper_values/keys.py` defines the public names in one place. Only an explicit
-allowlist is shared: reference dataset versions, the production Random threshold,
-the common no-connection RT/FI configuration, and TCP RT connection count.
-Available recorded settings must agree in raw value and unit. A conflict rejects
-the export before either output is replaced, including without `--strict`.
-An unavailable per-VP report does not make a known shared campaign setting unknown.
-This never fills missing VP measurement results. Phase, connection state,
-cohort/denominator, statistic and unit remain explicit where scientifically needed.
-Network-prefix properties retain their VP dimension; equal measured numbers are
-never deduplicated. No aliases with the former public names are emitted.
-
-Names use `eu`, `no-conn`, `conn`, `rt-fi`, `params`, `incs`, `refs`, `stats`,
-`probing` and `pct`. **`count` remains `count`.** Redundant JSON scaffolding
-(`groups`, `strategies`, `plot-percentages`) is removed from known report metrics.
-`success` means enough samples, including unclassified results; `rt-pop` preserves
-the original retained RT population. `column-pct` and relative gain metrics retain
-their specific denominator/meaning. `rt-vs-fi-base` is a comparison, not `rt-fi` merging.
-
-The output sorts by topic and metric before VP: each metric has its VPs in
-alphabetical order `af, as, au, eu, na, sa` on contiguous lines. Three blank lines
-separate topics, two separate population scopes, and one separates metrics.
-All per-key comments are removed. A compact top-of-file legend describes the
-schema, missing values, units/populations and every emitted prefix.
-
-Only serialization changes: calculations, internal registry keys, cache source
-identities and analysis workflows stay unchanged. The Python diagnostic result's
-`values` retains internal keys; `key_map` identifies their public TeX counterparts.
-Displayed available/missing totals count the actual public output keys.
-
-After upgrading, regenerate `tmp/values.tex` and update LaTeX consumers to the
-new key names; the local paper integration already uses this schema. Old keys
-are intentionally not duplicated as aliases. PDF path values do not change.
-The existing exporter-version check rebuilds its cache once after this code
-update; subsequent runs reuse the new cache normally. `--recompute` is not needed.
-
-The standard export prepares only selected placeholders; it does not allocate the
-large optional diagnostic catalog or compute unused cross-VP marginal summaries.
-The full profile retains its diagnostic metrics with the same public naming rules. JSON/PDF cache and receipt checks
-share one read path. Source validation and per-value source references remain,
-without building the unused inventories for the former JSON/Markdown sidecars.
-
-For maintenance, version-2 catalog JSON shares identical subtrees: a property such
-as `"single per-bucket"` means the same child fields for each space-separated name.
-`report_fields()` expands these into ordinary field names. The manuscript selection
-similarly allows `"keys": [...]` to share a definition/unit/reference block; its
-loader exposes the same individual entries. All 301 templates, units, reasons and
-paper references are preserved. Regression fingerprints cover the complete original
-catalog and selection, rather than checking only their sizes.
-
-The selection includes current-paper result values and result figure paths.
-Background and setup drawings are excluded. Missing constant-zero proportions,
-paired TCP classifications, matched RT/FI cohort comparisons, synthetic validation
-values and validation figures remain empty until suitable existing reports are
-available and their readers are added. This command does not compute missing
-analyses. `ARGS="--profile full"` additionally exposes the diagnostic catalog;
-it still writes only the two export files and does not run additional analysis.
-
-Counts and percentages retain explicit population definitions. For example, merged
-successful counts replace the RT unclassified target subset by successful FI results;
-a full-RT denominator is not substituted for a matched RT/FI cohort. Missing
-percentages with a zero denominator stay empty even when the count is zero.
-Definitions, source provenance and missing-value reasons remain available in
-internal diagnostics/cache records; they are not repeated as TeX comments.
-
-## LaTeX and PDF paths
+## LaTeX
 
 ```tex
-\input{tmp/values.tex} % adjust only this input path after copying to the paper repo
+\usepackage{todonotes}
+\input{values}
 \getval{results.eu.tcp.no-conn.rt-base.success.constant.pct}
-\includegraphics[width=\linewidth]{\getval{plots.eu.tcp.no-conn.rt-fi.os-by-strategy}}
+\getval{classifier.single.max-inc}
 ```
 
-The file provides standalone `\setval` / expandable `\getval` macros compatible
-with the value-store convention. No ndpi installation is required. Percent signs
-and text are escaped; PDF filenames are represented with `\detokenize` so that
-underscores and spaces work directly with `\includegraphics`.
+The standalone `setval`/`getval` convention is compatible with ndpi. `getval`
+returns stored values unchanged. Its generated fallback uses the existing
+`\todo[inline]{...}` for both an undefined key and a defined empty value. Existing
+consumer macros can override the provided fallback.
 
-PDF values begin with `reports/continental/...`, without `./` or absolute VM paths.
-Copy the reports tree into the paper repository preserving its relative structure.
-Duplicate unpinned plot candidates remain empty rather than selecting an arbitrary
-file. A missing plot key expands to empty; include a figure only when it is available.
+Percentages retain the existing two-decimal display and escaped percent sign;
+time strings retain their recorded unit. Counts and exact thresholds are not
+compacted. Other floats retain their raw Python precision rather than twelve
+significant digits. Raw cached values are never rounded.
 
-## Validation
+Explicit compact formatting belongs in the paper's planned `getvalcompact`
+function. It should operate on plain real numbers and be invoked only where
+`k`/`M`/`B` or scientific notation is desired. The exporter does not supply a
+custom formatter or figure/TODO framework. Updating the paper's existing
+`getvalf` integration is a separate step.
+
+## Output and tests
+
+The two output files are replaced atomically **individually**, not as one filesystem
+transaction. Output symlinks, writes into input directories and S3/FUSE output
+paths are rejected. Run one exporter at a time. Unrelated files in `tmp` are kept.
+No Markdown, logs, per-input receipts or report-side caches are generated.
 
 ```sh
-.venv/bin/python -B -m unittest discover -s tests -p 'test_paper_value*.py'
+python -B -m unittest discover -s tests -p 'test_paper_value*.py'
+IPID_PAPER_VALUES_ARCHIVE=/path/to/eu-results.zip \
+  python -B -m unittest discover -s tests -p 'test_paper_value*.py'
 ```
 
-Tests cover scientific denominators, missing/zero distinctions, receipts,
-conflicting reports, VP separation, paper selection, plot paths and serialization.
-Subprocess checks verify the Make target, input immutability, two-output behavior,
-repeated execution, strict failure, bytecode suppression and analysis-import isolation.
-The optional `IPID_PAPER_VALUES_ARCHIVE=/path/to/eu-results.zip` enables an additional
-integration check against the supplied real EU report archive.
+Tests cover public keys, six-VP separation, denominators, canonical/repeated runs,
+source receipts, incomplete data, processed-aggregate caching and invalidation,
+exact thresholds, the TeX interface, input immutability and the CLI/Make wrapper.
+The optional supplied EU archive test checks known populations and partial-VP
+behavior. The Python diagnostic return now uses public keys directly; the former
+internal-key `key_map` and `profile` API are removed together with the diagnostic
+catalog.
