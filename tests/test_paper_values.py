@@ -21,6 +21,7 @@ from paper_values.cache import ValueCache
 from paper_values.diagnostics import Diagnostics
 from paper_values.exporter import export, load_metrics, required_contexts
 from paper_values.inputs import Inputs
+from paper_values.readers import Readers
 from paper_values.tex import key_order, render
 
 CAMPAIGN = "test-campaign"
@@ -591,6 +592,66 @@ class PaperValuesTest(unittest.TestCase):
         self.assertEqual(v["params.fi-mass.min-replies.count"]["raw"], 80)
         self.assertEqual(v["params.fi-mass.request-interval"]["raw"], "20ms")
         self.assertIsNone(v["results.na.tcp.no-conn.rt-base.success.count"]["raw"])
+
+    def test_parallel_snapshot_reads_overlap_and_read_each_request_once(self):
+        for site in ("au", "eu"):
+            self.f.snapshot(site=site)
+        barrier = Barrier(2)
+        snapshot = Readers.snapshot
+        visited = []
+
+        def synchronized(reader, site, protocol, connection, phase):
+            request = (site, protocol, connection, phase)
+            if site in ("au", "eu") and request[1:] == ("tcp", "no-connection", "rt-base"):
+                visited.append(request)
+                barrier.wait(timeout=10)
+            return snapshot(reader, *request)
+
+        with patch.object(Readers, "snapshot", synchronized):
+            result = self.f.run(strict=True, io_workers=2, diagnostics=True)
+        self.assertEqual(sorted(site for site, *_ in visited), ["au", "eu"])
+        self.assertEqual(result["values"]["params.rt-base.sequence-length.count"]["raw"], 16)
+        self.assertEqual(result["operations"]["snapshot.prefetch"]["calls"], 1)
+
+    def test_prefetched_snapshots_match_sequential_values_sources_and_files(self):
+        for site in ("au", "eu"):
+            for protocol in RUNS:
+                self.f.snapshot(site=site, protocol=protocol)
+                self.f.snapshot(site=site, protocol=protocol, phase="fi-mass")
+        with patch("paper_values.exporter.prefetch_snapshots"):
+            expected = self.f.run(strict=True, io_workers=1)
+        before = self.f.output_hashes()
+        for workers in (1, 8):
+            actual = self.f.run(strict=True, io_workers=workers, diagnostics=True)
+            self.assertEqual(expected["values"], actual["values"])
+            self.assertEqual(expected["input_errors"], actual["input_errors"])
+            self.assertEqual(before, self.f.output_hashes())
+
+    def test_snapshot_prefetch_preserves_error_attribution_and_strict_outputs(self):
+        path = self.f.snapshot()
+        self.f.run(strict=True)
+        before = self.f.output_hashes()
+        path.write_text("connection_count: [", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "invalid snapshot"):
+            self.f.run(strict=True)
+        self.assertEqual(before, self.f.output_hashes())
+        with patch("paper_values.exporter.prefetch_snapshots"):
+            expected = self.f.run(io_workers=1)
+        actual = self.f.run(io_workers=8)
+        self.assertTrue(actual["input_errors"])
+        self.assertEqual(expected["input_errors"], actual["input_errors"])
+        self.assertEqual(expected["values"], actual["values"])
+
+    def test_snapshot_prefetch_rechecks_inputs_on_next_export(self):
+        path = self.f.snapshot()
+        first = self.f.run(strict=True)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["connection_count"] = 8
+        path.write_text(json.dumps(data), encoding="utf-8")
+        second = self.f.run(strict=True)
+        key = "params.rt-base.sequence-length.count"
+        self.assertEqual(first["values"][key]["raw"], 16)
+        self.assertEqual(second["values"][key]["raw"], 32)
 
     def test_shared_setting_conflict_fails_even_without_strict(self):
         self.f.snapshot()
