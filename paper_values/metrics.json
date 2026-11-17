@@ -10,7 +10,7 @@
   ],
   "metrics": [
     {
-      "prefix": "claims.{vp}.icmp.no-conn.fi-mass",
+      "prefix": "results.{vp}.icmp.fi-mass",
       "unit": "percent",
       "sources": [
         {
@@ -28,7 +28,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -40,7 +40,7 @@
         }
       ],
       "values": {
-        "itdk-os.no-transit-evidence.centos.pct": {
+        "itdk-os.all-others.centos.pct": {
           "definition": "centos / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -49,7 +49,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.deb.pct": {
+        "itdk-os.all-others.deb.pct": {
           "definition": "deb / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -59,7 +59,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.rhel.pct": {
+        "itdk-os.all-others.rhel.pct": {
           "definition": "rhel / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -68,7 +68,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.windows.pct": {
+        "itdk-os.all-others.windows.pct": {
           "definition": "windows / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -77,7 +77,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.cisco.pct": {
+        "itdk-os.routers.cisco.pct": {
           "definition": "cisco / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -86,7 +86,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.deb.pct": {
+        "itdk-os.routers.deb.pct": {
           "definition": "deb / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -96,7 +96,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.huawei.pct": {
+        "itdk-os.routers.huawei.pct": {
           "definition": "huawei / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -105,7 +105,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.windows.pct": {
+        "itdk-os.routers.windows.pct": {
           "definition": "windows / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -117,7 +117,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -129,7 +129,7 @@
         }
       ],
       "values": {
-        "itdk-os.no-transit-evidence.centos.pct": {
+        "itdk-os.all-others.centos.pct": {
           "definition": "centos / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -138,7 +138,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.deb.pct": {
+        "itdk-os.all-others.deb.pct": {
           "definition": "deb / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -148,7 +148,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.rhel.pct": {
+        "itdk-os.all-others.rhel.pct": {
           "definition": "rhel / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -157,7 +157,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.windows.pct": {
+        "itdk-os.all-others.windows.pct": {
           "definition": "windows / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -166,7 +166,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.cisco.pct": {
+        "itdk-os.routers.cisco.pct": {
           "definition": "cisco / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -175,7 +175,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.deb.pct": {
+        "itdk-os.routers.deb.pct": {
           "definition": "deb / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -185,7 +185,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.windows.pct": {
+        "itdk-os.routers.windows.pct": {
           "definition": "windows / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -197,7 +197,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -209,7 +209,7 @@
         }
       ],
       "values": {
-        "itdk-os.no-transit-evidence.centos.pct": {
+        "itdk-os.all-others.centos.pct": {
           "definition": "centos / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -218,7 +218,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.deb.pct": {
+        "itdk-os.all-others.deb.pct": {
           "definition": "deb / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -228,7 +228,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.rhel.pct": {
+        "itdk-os.all-others.rhel.pct": {
           "definition": "rhel / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -237,7 +237,7 @@
             ]
           }
         },
-        "itdk-os.no-transit-evidence.windows.pct": {
+        "itdk-os.all-others.windows.pct": {
           "definition": "windows / all resolved OS IPs in role no-transit-evidence; deb=Debian+Ubuntu",
           "read": {
             "role": "no-transit-evidence",
@@ -246,7 +246,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.deb.pct": {
+        "itdk-os.routers.deb.pct": {
           "definition": "deb / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -256,7 +256,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.huawei.pct": {
+        "itdk-os.routers.huawei.pct": {
           "definition": "huawei / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -265,7 +265,7 @@
             ]
           }
         },
-        "itdk-os.transit-observed.rhel.pct": {
+        "itdk-os.routers.rhel.pct": {
           "definition": "rhel / all resolved OS IPs in role transit-observed; deb=Debian+Ubuntu",
           "read": {
             "role": "transit-observed",
@@ -277,7 +277,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -289,7 +289,7 @@
         }
       ],
       "values": {
-        "itdk.transit-observed.count": {
+        "itdk.routers.count": {
           "definition": "Transit-observed address count in the ITDK report population",
           "read": {
             "stat": "count"
@@ -298,7 +298,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -310,7 +310,7 @@
         }
       ],
       "values": {
-        "itdk.transit-observed.pct": {
+        "itdk.routers.pct": {
           "definition": "Transit-observed / all retained report result IPs, including unmatched IPs",
           "read": {
             "stat": "share-pct"
@@ -319,7 +319,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -340,7 +340,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -361,7 +361,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -424,7 +424,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -437,7 +437,7 @@
       ],
       "values": {
         "flags.constant.syn-ack-relative-to-rst.gain-pct": {
-          "definition": "Relative CONSTANT-share increase: (SYN-ACK \u2212 RST) / RST",
+          "definition": "Relative CONSTANT-share increase: (SYN-ACK − RST) / RST",
           "read": {
             "stat": "flags.constant.syn-ack-relative-to-rst.gain-pct"
           }
@@ -457,7 +457,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -469,7 +469,7 @@
         }
       ],
       "values": {
-        "itdk.transit-observed.count": {
+        "itdk.routers.count": {
           "definition": "Transit-observed address count in the ITDK report population",
           "read": {
             "stat": "count"
@@ -478,7 +478,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -490,7 +490,7 @@
         }
       ],
       "values": {
-        "itdk.transit-observed.pct": {
+        "itdk.routers.pct": {
           "definition": "Transit-observed / all retained report result IPs, including unmatched IPs",
           "read": {
             "stat": "share-pct"
@@ -499,7 +499,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -564,7 +564,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -585,7 +585,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -606,7 +606,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -618,7 +618,7 @@
         }
       ],
       "values": {
-        "itdk.transit-observed.count": {
+        "itdk.routers.count": {
           "definition": "Transit-observed address count in the ITDK report population",
           "read": {
             "stat": "count"
@@ -627,7 +627,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -639,7 +639,7 @@
         }
       ],
       "values": {
-        "itdk.transit-observed.pct": {
+        "itdk.routers.pct": {
           "definition": "Transit-observed / all retained report result IPs, including unmatched IPs",
           "read": {
             "stat": "share-pct"
@@ -648,7 +648,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -691,7 +691,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -712,7 +712,7 @@
       }
     },
     {
-      "prefix": "claims.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -768,7 +768,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.icmp.no-conn.fi-base",
+      "prefix": "results.{vp}.icmp.fi-base.increments",
       "unit": "increments",
       "sources": [
         {
@@ -792,7 +792,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.icmp.no-conn.rt-base",
+      "prefix": "results.{vp}.icmp.rt-base.increments",
       "unit": "increments",
       "sources": [
         {
@@ -816,7 +816,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.tcp.conn.fi-base",
+      "prefix": "results.{vp}.tcp.conn.fi-base.increments",
       "unit": "increments",
       "sources": [
         {
@@ -840,7 +840,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.tcp.conn.rt-base",
+      "prefix": "results.{vp}.tcp.conn.rt-base.increments",
       "unit": "increments",
       "sources": [
         {
@@ -864,7 +864,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.udp.no-conn.fi-base",
+      "prefix": "results.{vp}.udp.fi-base.increments",
       "unit": "increments",
       "sources": [
         {
@@ -896,7 +896,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.udp.no-conn.rt-base",
+      "prefix": "results.{vp}.udp.rt-base.increments",
       "unit": "increments",
       "sources": [
         {
@@ -920,7 +920,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.icmp.no-conn.fi-base",
+      "prefix": "results.{vp}.icmp.fi-base.increments",
       "unit": "percent",
       "sources": [
         {
@@ -943,7 +943,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.icmp.no-conn.rt-base",
+      "prefix": "results.{vp}.icmp.rt-base.increments",
       "unit": "percent",
       "sources": [
         {
@@ -966,7 +966,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.tcp.conn.fi-base",
+      "prefix": "results.{vp}.tcp.conn.fi-base.increments",
       "unit": "percent",
       "sources": [
         {
@@ -989,7 +989,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.tcp.conn.rt-base",
+      "prefix": "results.{vp}.tcp.conn.rt-base.increments",
       "unit": "percent",
       "sources": [
         {
@@ -1012,7 +1012,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.tcp.no-conn.fi-base",
+      "prefix": "results.{vp}.tcp.no-conn.fi-base.increments",
       "unit": "percent",
       "sources": [
         {
@@ -1043,7 +1043,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.tcp.no-conn.rt-base",
+      "prefix": "results.{vp}.tcp.no-conn.rt-base.increments",
       "unit": "percent",
       "sources": [
         {
@@ -1074,7 +1074,7 @@
       }
     },
     {
-      "prefix": "incs.{vp}.udp.no-conn.rt-base",
+      "prefix": "results.{vp}.udp.rt-base.increments",
       "unit": "percent",
       "sources": [
         {
@@ -1124,7 +1124,7 @@
       ],
       "values": {
         "sequence-length.count": {
-          "definition": "Configured requests per IP: connections \u00d7 requests per connection",
+          "definition": "Configured requests per IP: connections × requests per connection",
           "read": {
             "field": "configured-sequence-length.count"
           }
@@ -1159,7 +1159,7 @@
       ],
       "values": {
         "sequence-length.count": {
-          "definition": "Configured requests per IP: connections \u00d7 requests per connection",
+          "definition": "Configured requests per IP: connections × requests per connection",
           "read": {
             "field": "configured-sequence-length.count"
           }
@@ -1293,7 +1293,7 @@
       }
     },
     {
-      "prefix": "plots.validation",
+      "prefix": "fig.validation",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1310,7 +1310,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.icmp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.icmp.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1328,7 +1328,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.icmp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.icmp.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1346,7 +1346,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.icmp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.icmp.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1364,7 +1364,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.tcp.conn.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1382,7 +1382,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.tcp.conn.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1400,7 +1400,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.tcp.conn.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1418,7 +1418,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.tcp.no-conn.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1436,7 +1436,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.tcp.no-conn.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1454,7 +1454,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.tcp.no-conn.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1472,7 +1472,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.udp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.udp.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1490,7 +1490,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.udp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.udp.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1508,7 +1508,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.udp.no-conn.rt-vs-fi-base",
+      "prefix": "fig.{vp}.udp.rt-vs-fi-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1526,7 +1526,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.icmp.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1544,7 +1544,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.tcp.no-conn.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1562,7 +1562,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.udp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.udp.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1580,7 +1580,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.icmp.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1598,7 +1598,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.icmp.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1616,7 +1616,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.icmp.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1634,7 +1634,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.conn.rt-base",
+      "prefix": "fig.{vp}.tcp.conn.rt-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1652,7 +1652,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.conn.rt-base",
+      "prefix": "fig.{vp}.tcp.conn.rt-base",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1670,7 +1670,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.tcp.no-conn.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1688,7 +1688,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.tcp.no-conn.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1706,7 +1706,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.tcp.no-conn.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1724,7 +1724,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.tcp.no-conn.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1742,7 +1742,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.udp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.udp.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1760,7 +1760,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.udp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.udp.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1778,7 +1778,7 @@
       }
     },
     {
-      "prefix": "plots.{vp}.udp.no-conn.rt-fi",
+      "prefix": "fig.{vp}.udp.rt-fi",
       "unit": "pdf-path",
       "sources": [
         {
@@ -1796,7 +1796,7 @@
       }
     },
     {
-      "prefix": "probing.{vp}.icmp.no-conn.fi-to-rt-success",
+      "prefix": "results.{vp}.icmp.fi-to-rt-success",
       "unit": "percent",
       "sources": [
         {
@@ -1811,7 +1811,7 @@
       }
     },
     {
-      "prefix": "probing.{vp}.tcp.conn.fi-to-rt-success",
+      "prefix": "results.{vp}.tcp.conn.fi-to-rt-success",
       "unit": "percent",
       "sources": [
         {
@@ -1826,7 +1826,7 @@
       }
     },
     {
-      "prefix": "probing.{vp}.tcp.no-conn.fi-to-rt-success",
+      "prefix": "results.{vp}.tcp.no-conn.fi-to-rt-success",
       "unit": "percent",
       "sources": [
         {
@@ -1841,7 +1841,7 @@
       }
     },
     {
-      "prefix": "probing.{vp}.udp.no-conn.fi-to-rt-success",
+      "prefix": "results.{vp}.udp.fi-to-rt-success",
       "unit": "percent",
       "sources": [
         {
@@ -1856,7 +1856,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -1879,7 +1879,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -1891,7 +1891,7 @@
         }
       ],
       "values": {
-        "itdk-os.transit-observed.os-resolved.count": {
+        "itdk-os.routers.os-resolved.count": {
           "definition": "Resolved OS address count within the transit-observed population",
           "read": {
             "field": [
@@ -1903,7 +1903,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -1915,7 +1915,7 @@
         }
       ],
       "values": {
-        "itdk-os.transit-observed.os-resolved.count": {
+        "itdk-os.routers.os-resolved.count": {
           "definition": "Resolved OS address count within the transit-observed population",
           "read": {
             "field": [
@@ -1927,7 +1927,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "ips",
       "sources": [
         {
@@ -1939,7 +1939,7 @@
         }
       ],
       "values": {
-        "itdk-os.transit-observed.os-resolved.count": {
+        "itdk-os.routers.os-resolved.count": {
           "definition": "Resolved OS address count within the transit-observed population",
           "read": {
             "field": [
@@ -1951,7 +1951,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -1963,7 +1963,7 @@
         }
       ],
       "values": {
-        "itdk-strategy.transit-observed.constant.pct": {
+        "itdk-strategy.routers.constant.pct": {
           "definition": "constant among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -1973,7 +1973,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.multi.pct": {
+        "itdk-strategy.routers.multi.pct": {
           "definition": "multi among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -1983,7 +1983,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.per-bucket.pct": {
+        "itdk-strategy.routers.per-bucket.pct": {
           "definition": "per-bucket among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -1993,7 +1993,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.per-destination.pct": {
+        "itdk-strategy.routers.per-destination.pct": {
           "definition": "per-destination among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2003,7 +2003,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.random.pct": {
+        "itdk-strategy.routers.random.pct": {
           "definition": "random among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2013,7 +2013,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.reflection.pct": {
+        "itdk-strategy.routers.reflection.pct": {
           "definition": "reflection among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2023,7 +2023,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.single.pct": {
+        "itdk-strategy.routers.single.pct": {
           "definition": "single among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2036,7 +2036,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -2203,7 +2203,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.tcp.conn.rt-base",
+      "prefix": "results.{vp}.tcp.conn.rt-base",
       "unit": "percent",
       "sources": [
         {
@@ -2215,7 +2215,7 @@
         }
       ],
       "values": {
-        "itdk-strategy.transit-observed.per-connection.pct": {
+        "itdk-strategy.routers.per-connection.pct": {
           "definition": "per-connection among transit-observed connection-oriented TCP targets",
           "read": {
             "field": [
@@ -2225,7 +2225,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.single.pct": {
+        "itdk-strategy.routers.single.pct": {
           "definition": "single among transit-observed connection-oriented TCP targets",
           "read": {
             "field": [
@@ -2238,7 +2238,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -2250,7 +2250,7 @@
         }
       ],
       "values": {
-        "itdk-strategy.transit-observed.constant.pct": {
+        "itdk-strategy.routers.constant.pct": {
           "definition": "constant among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2260,7 +2260,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.multi.pct": {
+        "itdk-strategy.routers.multi.pct": {
           "definition": "multi among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2270,7 +2270,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.per-bucket.pct": {
+        "itdk-strategy.routers.per-bucket.pct": {
           "definition": "per-bucket among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2280,7 +2280,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.per-destination.pct": {
+        "itdk-strategy.routers.per-destination.pct": {
           "definition": "per-destination among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2290,7 +2290,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.random.pct": {
+        "itdk-strategy.routers.random.pct": {
           "definition": "random among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2300,7 +2300,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.reflection.pct": {
+        "itdk-strategy.routers.reflection.pct": {
           "definition": "reflection among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2310,7 +2310,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.single.pct": {
+        "itdk-strategy.routers.single.pct": {
           "definition": "single among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2323,7 +2323,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.tcp.no-conn.rt-fi",
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -2410,7 +2410,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -2422,7 +2422,7 @@
         }
       ],
       "values": {
-        "itdk-strategy.no-transit-evidence.per-bucket.pct": {
+        "itdk-strategy.all-others.per-bucket.pct": {
           "definition": "per-bucket among ITDK matches without transit evidence",
           "read": {
             "field": [
@@ -2432,7 +2432,7 @@
             ]
           }
         },
-        "itdk-strategy.no-transit-evidence.per-destination.pct": {
+        "itdk-strategy.all-others.per-destination.pct": {
           "definition": "per-destination among ITDK matches without transit evidence",
           "read": {
             "field": [
@@ -2442,7 +2442,7 @@
             ]
           }
         },
-        "itdk-strategy.no-transit-evidence.single.pct": {
+        "itdk-strategy.all-others.single.pct": {
           "definition": "single among ITDK matches without transit evidence",
           "read": {
             "field": [
@@ -2452,7 +2452,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.constant.pct": {
+        "itdk-strategy.routers.constant.pct": {
           "definition": "constant among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2462,7 +2462,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.multi.pct": {
+        "itdk-strategy.routers.multi.pct": {
           "definition": "multi among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2472,7 +2472,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.per-bucket.pct": {
+        "itdk-strategy.routers.per-bucket.pct": {
           "definition": "per-bucket among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2482,7 +2482,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.per-destination.pct": {
+        "itdk-strategy.routers.per-destination.pct": {
           "definition": "per-destination among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2492,7 +2492,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.random.pct": {
+        "itdk-strategy.routers.random.pct": {
           "definition": "random among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2502,7 +2502,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.reflection.pct": {
+        "itdk-strategy.routers.reflection.pct": {
           "definition": "reflection among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2512,7 +2512,7 @@
             ]
           }
         },
-        "itdk-strategy.transit-observed.single.pct": {
+        "itdk-strategy.routers.single.pct": {
           "definition": "single among ITDK-matched transit-observed addresses",
           "read": {
             "field": [
@@ -2525,7 +2525,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -2636,7 +2636,7 @@
       }
     },
     {
-      "prefix": "results.{vp}.icmp.no-conn.fi-mass",
+      "prefix": "results.{vp}.icmp.fi-mass",
       "unit": "percent",
       "sources": [
         {
@@ -2675,7 +2675,7 @@
       }
     },
     {
-      "prefix": "results.{vp}.icmp.no-conn.rt-base",
+      "prefix": "results.{vp}.icmp.rt-base",
       "unit": "percent",
       "sources": [
         {
@@ -2738,7 +2738,7 @@
       }
     },
     {
-      "prefix": "results.{vp}.icmp.no-conn.rt-base",
+      "prefix": "results.{vp}.icmp.rt-base",
       "unit": "ips",
       "sources": [
         {
@@ -2761,7 +2761,7 @@
       }
     },
     {
-      "prefix": "results.{vp}.icmp.no-conn.rt-fi",
+      "prefix": "results.{vp}.icmp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -2792,7 +2792,7 @@
       }
     },
     {
-      "prefix": "results.{vp}.udp.no-conn.rt-fi",
+      "prefix": "results.{vp}.udp.rt-fi",
       "unit": "percent",
       "sources": [
         {
@@ -3041,7 +3041,7 @@
       }
     },
     {
-      "prefix": "results.{vp}.udp.no-conn.fi-mass",
+      "prefix": "results.{vp}.udp.fi-mass",
       "unit": "percent",
       "sources": [
         {
@@ -3088,7 +3088,7 @@
       }
     },
     {
-      "prefix": "results.{vp}.udp.no-conn.rt-base",
+      "prefix": "results.{vp}.udp.rt-base",
       "unit": "percent",
       "sources": [
         {
@@ -3143,7 +3143,7 @@
       }
     },
     {
-      "prefix": "results.{vp}.udp.no-conn.rt-base",
+      "prefix": "results.{vp}.udp.rt-base",
       "unit": "ips",
       "sources": [
         {
@@ -3166,7 +3166,7 @@
       }
     },
     {
-      "prefix": "tcp-transition.{vp}.rt-no-conn-to-conn",
+      "prefix": "results.{vp}.tcp.rt-no-conn-to-conn",
       "unit": "percent",
       "sources": [
         {
@@ -3288,7 +3288,7 @@
       }
     },
     {
-      "prefix": "stats.{vp}.tcp.conn.rt-base",
+      "prefix": "results.{vp}.tcp.conn.rt-base",
       "unit": "percent",
       "sources": [
         {
@@ -3300,7 +3300,7 @@
         }
       ],
       "values": {
-        "itdk-strategy.no-transit-evidence.single.pct": {
+        "itdk-strategy.all-others.single.pct": {
           "definition": "SINGLE / No Transit Evidence population in the TCP connection RT-BASE report",
           "read": {
             "field": [

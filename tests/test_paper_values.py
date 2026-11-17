@@ -336,18 +336,29 @@ class PaperValuesTest(unittest.TestCase):
         definitions = load_metrics()["metrics"]
         self.assertEqual(len(definitions), 229)
         self.assertEqual(sum(m["unit"] == "pdf-path" for m in definitions), 29)
+        self.assertEqual(
+            {m["key"].split(".")[0] for m in definitions},
+            {"results", "validation", "classifier", "params", "fig"},
+        )
+        for metric in definitions:
+            self.assertNotIn(".icmp.no-conn.", metric["key"])
+            self.assertNotIn(".udp.no-conn.", metric["key"])
+            self.assertNotIn(".transit-observed.", metric["key"])
+            self.assertNotIn(".no-transit-evidence.", metric["key"])
+            if metric["unit"] == "pdf-path":
+                self.assertTrue(metric["key"].startswith("fig."))
         excluded = {
             "refs.itdk.release", "refs.maxmind.build-month",
-            "classifier.random.threshold", "plots.validation.nist-cdf",
-            "plots.validation.chi-square-cdf", "validation.data.fi.samples-per-class",
-            "claims.{vp}.icmp.fi-mass.recovered.rt-outliers-1.pct",
-            "constant.{vp}.tcp.conn.rt-base.zero.pct",
-            "stats.{vp}.tcp.conn.rt-base.probing-intervals.below-500ms.pct",
+            "classifier.random.threshold", "fig.validation.nist-cdf",
+            "fig.validation.chi-square-cdf", "validation.data.fi.samples-per-class",
+            "results.{vp}.icmp.fi-mass.recovered.rt-outliers-1.pct",
+            "results.{vp}.tcp.conn.rt-base.zero.pct",
+            "results.{vp}.tcp.conn.rt-base.probing-intervals.below-500ms.pct",
         }
         self.assertTrue(excluded.isdisjoint(m["key"] for m in definitions))
         for site in ("af", "as", "au", "eu", "na", "sa"):
             self.assertIn(
-                f"stats.{site}.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct",
+                f"results.{site}.tcp.conn.rt-base.itdk-strategy.all-others.single.pct",
                 result["values"],
             )
 
@@ -360,11 +371,11 @@ class PaperValuesTest(unittest.TestCase):
             )
         values = self.f.run(strict=True)["values"]
         for site, value in (("eu", 1.9701569113685922), ("au", 0), ("af", None)):
-            key = f"stats.{site}.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct"
+            key = f"results.{site}.tcp.conn.rt-base.itdk-strategy.all-others.single.pct"
             self.assertEqual(values[key]["raw"], value)
         tex = (self.f.root / "tmp/values.tex").read_text(encoding="utf-8")
         self.assertIn(
-            r"\setval{stats.eu.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct}{1.97\%}",
+            r"\setval{results.eu.tcp.conn.rt-base.itdk-strategy.all-others.single.pct}{1.97\%}",
             tex,
         )
 
@@ -374,7 +385,7 @@ class PaperValuesTest(unittest.TestCase):
         self.assertEqual(v["results.eu.tcp.no-conn.rt-base.success.count"]["raw"], 10)
         self.assertEqual(v["results.eu.tcp.no-conn.rt-fi.rt-pop.constant.pct"]["raw"], 60)
         self.assertEqual(v["results.eu.tcp.no-conn.rt-base.success.count"]["raw"], 10)
-        self.assertIsNone(v["probing.eu.tcp.no-conn.fi-to-rt-success.pct"]["raw"])
+        self.assertIsNone(v["results.eu.tcp.no-conn.fi-to-rt-success.pct"]["raw"])
 
     def test_zero_is_observed_but_missing_vp_is_not_zero(self):
         self.f.strategy({"SINGLE": 10})
@@ -506,10 +517,10 @@ class PaperValuesTest(unittest.TestCase):
         result = self.f.run(strict=True)
         self.assertFalse(result["input_errors"])
         self.assertEqual(
-            result["values"]["results.eu.icmp.no-conn.fi-mass.success.random.pct"]["raw"], 100
+            result["values"]["results.eu.icmp.fi-mass.success.random.pct"]["raw"], 100
         )
         self.assertIsNone(
-            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"]
+            result["values"]["results.au.icmp.fi-mass.success.random.pct"]["raw"]
         )
 
     def test_even_one_unbound_streaming_mass_is_not_assumed_to_be_baseline(self):
@@ -530,7 +541,7 @@ class PaperValuesTest(unittest.TestCase):
         )
         result = self.f.run(strict=True)
         self.assertIsNone(
-            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"]
+            result["values"]["results.au.icmp.fi-mass.success.random.pct"]["raw"]
         )
 
     def test_evaluation_identifies_baseline_and_filters_coverage_without_measurement_id(self):
@@ -539,14 +550,14 @@ class PaperValuesTest(unittest.TestCase):
         result = self.f.run(strict=True)
         self.assertFalse(result["input_errors"])
         self.assertEqual(
-            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"], 80
+            result["values"]["results.au.icmp.fi-mass.success.random.pct"]["raw"], 80
         )
 
     def test_evaluation_without_baseline_files_does_not_promote_a_repeat(self):
         self.streaming_mass(evaluation=True, include_baseline=False)
         result = self.f.run(strict=True)
         self.assertIsNone(
-            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"]
+            result["values"]["results.au.icmp.fi-mass.success.random.pct"]["raw"]
         )
 
     def test_canonical_primary_report_selects_mass_before_merged_report_exists(self):
@@ -562,14 +573,14 @@ class PaperValuesTest(unittest.TestCase):
         )
         result = self.f.run(strict=True)
         self.assertEqual(
-            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"], 100
+            result["values"]["results.au.icmp.fi-mass.success.random.pct"]["raw"], 100
         )
 
     def test_later_merged_provenance_makes_pending_baseline_available(self):
         ids = self.streaming_mass()
         self.assertIsNone(
             self.f.run(strict=True)["values"][
-                "results.au.icmp.no-conn.fi-mass.success.random.pct"
+                "results.au.icmp.fi-mass.success.random.pct"
             ]["raw"]
         )
         self.f.report(
@@ -587,7 +598,7 @@ class PaperValuesTest(unittest.TestCase):
         )
         result = self.f.run(strict=True)
         self.assertEqual(
-            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"], 80
+            result["values"]["results.au.icmp.fi-mass.success.random.pct"]["raw"], 80
         )
 
     def test_conflicting_explicit_baseline_identities_still_fail_strict_export(self):
@@ -744,11 +755,11 @@ class PaperValuesTest(unittest.TestCase):
         )
         v = self.f.run(strict=True)["values"]
         self.assertEqual(
-            v["stats.eu.tcp.no-conn.rt-fi.itdk-strategy.transit-observed.single.pct"]["raw"],
+            v["results.eu.tcp.no-conn.rt-fi.itdk-strategy.routers.single.pct"]["raw"],
             33.3,
         )
         self.assertAlmostEqual(
-            v["claims.eu.tcp.no-conn.rt-fi.itdk.transit-observed.pct"]["raw"], 100 / 3
+            v["results.eu.tcp.no-conn.rt-fi.itdk.routers.pct"]["raw"], 100 / 3
         )
 
     def test_missing_role_denominator_does_not_turn_a_count_into_a_percentage(self):
@@ -757,7 +768,7 @@ class PaperValuesTest(unittest.TestCase):
         )
         result = self.f.run(strict=True)
         self.assertIsNone(
-            result["values"]["claims.eu.tcp.no-conn.rt-fi.itdk.transit-observed.pct"]["raw"]
+            result["values"]["results.eu.tcp.no-conn.rt-fi.itdk.routers.pct"]["raw"]
         )
 
     def test_legacy_cache_is_discarded(self):
@@ -824,12 +835,12 @@ class PaperValuesTest(unittest.TestCase):
 
     def test_target_continent_is_not_mistaken_for_vp_scope(self):
         self.assertEqual(
-            key_order("stats.eu.tcp.geo.as.count")[1],
-            key_order("stats.af.tcp.geo.as.count")[1],
+            key_order("results.eu.tcp.geo.as.count")[1],
+            key_order("results.af.tcp.geo.as.count")[1],
         )
         self.assertNotEqual(
-            key_order("stats.eu.tcp.geo.as.count")[1],
-            key_order("stats.eu.tcp.geo.af.count")[1],
+            key_order("results.eu.tcp.geo.as.count")[1],
+            key_order("results.eu.tcp.geo.af.count")[1],
         )
 
     def test_selected_pdfs_use_canonical_paths(self):
@@ -843,7 +854,7 @@ class PaperValuesTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"%PDF-1.4\nfixture")
         v = self.f.run(strict=True)["values"]
-        key = "plots.eu.tcp.no-conn.rt-fi.os-by-strategy"
+        key = "fig.eu.tcp.no-conn.rt-fi.os-by-strategy"
         self.assertTrue(v[key]["raw"].startswith("reports/continental/"))
         path.write_bytes(b"invalid PDF")
         with self.assertRaisesRegex(ValueError, "PDF signature"):
@@ -982,9 +993,9 @@ class DerivedCacheTest(unittest.TestCase):
     def test_clipped_histogram_does_not_invent_tail_fractions(self):
         path, _ = self.histogram()
         v = self.f.run(strict=True)["values"]
-        self.assertNotIn("incs.eu.tcp.no-conn.rt-base.per-bucket.p99", v)
+        self.assertNotIn("results.eu.tcp.no-conn.rt-base.increments.per-bucket.p99", v)
         self.assertEqual(increment_histogram(path)["RT-based:PER_BUCKET"]["p99"], 900)
-        self.assertIsNone(v["incs.eu.tcp.no-conn.rt-base.per-bucket.below-1000.pct"]["raw"])
+        self.assertIsNone(v["results.eu.tcp.no-conn.rt-base.increments.per-bucket.below-1000.pct"]["raw"])
 
     def test_cached_histogram_is_not_read_again(self):
         self.histogram(counts=(98, 2), total=100)
@@ -1022,7 +1033,7 @@ class DerivedCacheTest(unittest.TestCase):
         self.histogram(counts=(90, 10), increments=(1, 1200))
         result = self.f.run(strict=True)
         self.assertEqual(result["cache"]["histogram_misses"], 1)
-        key = "incs.eu.tcp.no-conn.rt-base.per-bucket.below-1000.pct"
+        key = "results.eu.tcp.no-conn.rt-base.increments.per-bucket.below-1000.pct"
         self.assertEqual(result["values"][key]["raw"], 90)
         self.assertEqual(self.f.run(recompute=True)["cache"]["histogram_misses"], 1)
 
@@ -1071,11 +1082,11 @@ class DerivedCacheTest(unittest.TestCase):
         result = self.f.run(strict=True)
         self.assertEqual(result["cache"]["os-strategy_misses"], 1)
         self.assertEqual(
-            result["values"]["claims.eu.icmp.no-conn.rt-fi.os.rpm.per-bucket.min-pct"]["raw"],
+            result["values"]["results.eu.icmp.rt-fi.os.rpm.per-bucket.min-pct"]["raw"],
             70,
         )
         self.assertEqual(
-            result["values"]["claims.eu.icmp.no-conn.rt-fi.os.rpm.per-bucket.max-pct"]["raw"],
+            result["values"]["results.eu.icmp.rt-fi.os.rpm.per-bucket.max-pct"]["raw"],
             90,
         )
 
@@ -1162,7 +1173,8 @@ class RealEUArchiveTest(unittest.TestCase):
                 ("tcp", 94046744),
                 ("udp", 3353747),
             ):
-                key = f"results.eu.{protocol}.no-conn.rt-base.success.count"
+                mode = "no-conn." if protocol == "tcp" else ""
+                key = f"results.eu.{protocol}.{mode}rt-base.success.count"
                 self.assertEqual(v[key]["raw"], total)
                 self.assertIsNone(v[key.replace(".eu.", ".na.")]["raw"])
             self.assertEqual(
@@ -1170,11 +1182,11 @@ class RealEUArchiveTest(unittest.TestCase):
                 "77.80%",
             )
             self.assertEqual(
-                v["stats.eu.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct"]["raw"],
+                v["results.eu.tcp.conn.rt-base.itdk-strategy.all-others.single.pct"]["raw"],
                 1.9701569113685922,
             )
             self.assertTrue(
-                v["plots.eu.tcp.no-conn.rt-fi.os-by-strategy"]["raw"].startswith("reports/")
+                v["fig.eu.tcp.no-conn.rt-fi.os-by-strategy"]["raw"].startswith("reports/")
             )
             self.assertFalse(result["input_errors"])
 

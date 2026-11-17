@@ -29,12 +29,50 @@ from the definitions, rather than filtered after their values are calculated.
 Shared input reports may still be needed for retained fields, cohort checks and
 canonical-run selection. A selected key is not evidence that its value is available.
 
+### Naming
+
+The public keys use five prefixes:
+
+| Prefix | Meaning |
+|---|---|
+| `results` | Measured or derived campaign results, including distributions, ratios and paired comparisons |
+| `validation` | Synthetic validation scenarios and classifier performance on those scenarios |
+| `classifier` | Exact constants and thresholds of the classifier |
+| `params` | Measurement settings |
+| `fig` | PDF paths relative to the paper repository |
+
+`claims`, `stats`, `probing`, `incs` and `tcp-transition` are folded into
+`results`. The use of a number in a paper claim does not define a different kind
+of measurement result. Increments retain an explicit `increments` component
+after the measurement phase. The paired TCP transition uses
+`results.{vp}.tcp.rt-no-conn-to-conn...`.
+
+TCP retains `no-conn` or `conn`; ICMP and UDP omit the redundant `no-conn`
+component. ITDK role components are `routers` and `all-others`. These are public
+key names only: existing JSON selectors still read `transit-observed` and
+`no-transit-evidence`, and source report/PDF paths are unchanged. Renaming a key
+does not change its population, denominator or value.
+
+Examples:
+
+```text
+results.eu.icmp.rt-fi.itdk-strategy.routers.single.pct
+results.eu.tcp.conn.rt-base.itdk-strategy.all-others.single.pct
+results.eu.tcp.conn.rt-base.increments.per-bucket.p99
+fig.eu.udp.rt-fi.os-by-strategy
+```
+
+Only the new public names are exported; there are no legacy aliases or runtime
+name translations. Update paper references and any `--additional-report` keys
+together with the exporter. The derived-value cache depends on source data and
+calculation code, not public key spelling, so the rename does not invalidate it.
+
 Each group shares a source context and unit. Its `prefix` plus each suffix in
 `values` is the **actual public key**, not an intermediate name. For example:
 
 ```json
 {
-  "prefix": "stats.{vp}.tcp.no-conn.rt-fi",
+  "prefix": "results.{vp}.tcp.no-conn.rt-fi",
   "unit": "percent",
   "sources": [{
     "reader": "field",
@@ -52,7 +90,7 @@ Each group shares a source context and unit. Its `prefix` plus each suffix in
 }
 ```
 
-The resulting key is `stats.eu.tcp.no-conn.rt-fi.itdk-strategy.transit-observed.single.pct`.
+The resulting key is `results.eu.tcp.no-conn.rt-fi.itdk-strategy.routers.single.pct`.
 Field lookup normalizes case/underscores but rejects ambiguous field names.
 Only declared fields/report families are read. Values are never discovered by
 flattening every scalar in a report. Scientific readers in `readers.py` handle
@@ -198,7 +236,7 @@ empty placeholder. Their absence does not mean the associated analysis reports
 should be deleted. Refresh the generated export; do not delete its keys manually.
 
 The previously absent
-`stats.{vp}.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct`
+`results.{vp}.tcp.conn.rt-base.itdk-strategy.all-others.single.pct`
 reads the existing report's `plot_percentages["No Transit Evidence"]["SINGLE"]`.
 This is already a percentage, not a fraction, and is not multiplied by 100.
 
@@ -206,11 +244,11 @@ Fifteen retained numeric families still need their dedicated scientific inputs
 or calculations; the exporter continues to leave them empty rather than guessing:
 
 ```text
-probing.{vp}.icmp.no-conn.fi-to-rt-success.pct
-probing.{vp}.tcp.conn.fi-to-rt-success.pct
-probing.{vp}.tcp.no-conn.fi-to-rt-success.pct
-probing.{vp}.udp.no-conn.fi-to-rt-success.pct
-tcp-transition.{vp}.rt-no-conn-to-conn.constant.per-connection.column-pct
+results.{vp}.icmp.fi-to-rt-success.pct
+results.{vp}.tcp.conn.fi-to-rt-success.pct
+results.{vp}.tcp.no-conn.fi-to-rt-success.pct
+results.{vp}.udp.fi-to-rt-success.pct
+results.{vp}.tcp.rt-no-conn-to-conn.constant.per-connection.column-pct
 validation.data.fi.sequence-length
 validation.data.loss.pct
 validation.data.reordering.pct
