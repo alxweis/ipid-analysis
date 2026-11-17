@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'ipid_analysis/**'
+      - 'paper_values/**'
       - 'tests/**'
       - '.github/workflows/interprotocol-tests.yml'
       - 'requirements.txt'
