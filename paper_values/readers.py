@@ -7,8 +7,9 @@ import math
 from pathlib import Path
 import re
 
-from paper_values.cache import verify_file
+from paper_values.cache import digest, verify_file
 from paper_values.inputs import component
+from paper_values.validation import Validation
 
 STRATEGIES = {
     "REFLECTION",
@@ -238,10 +239,11 @@ def classifier_constants(path):
 
 
 class Readers:
-    def __init__(self, artifacts, processed_root, raw_root, cache, errors):
+    def __init__(self, artifacts, processed_root, raw_root, cache, errors, validation_root=None):
         self.reports = {(a.site, a.protocol, a.connection, a.phase, a.kind): a for a in artifacts}
         self.processed_root, self.raw_root = processed_root, raw_root
         self.cache, self.errors = cache, errors
+        self.validation = Validation(validation_root)
         # Per-export memoization: repeated API calls do not retain other Readers instances.
         self.aggregate = lru_cache(maxsize=None)(self.aggregate)
         self.snapshot = lru_cache(maxsize=None)(self.snapshot)
@@ -305,6 +307,10 @@ class Readers:
     def read(self, spec, site):
         """Return a raw scalar and its sources for this explicit metric recipe."""
         reader = spec["reader"]
+        if reader == "validation":
+            return self.validation.read(spec)
+        if reader in ("fi-rt", "tcp-transition"):
+            return self.paired(spec, site)
         if reader in ("missing", "plot"):
             return None, ()
         if reader == "classifier":
@@ -483,3 +489,73 @@ class Readers:
                     *(a.name for a in versions),
                 )
         return None, ()
+
+    def paired(self, spec, site):
+        from paper_values import paired
+
+        if self.processed_root is None:
+            return None, ()
+        proto, mode = spec["protocol"], spec["connection"]
+        first = self.reports.get(
+            (
+                site,
+                proto,
+                "no-connection" if spec["reader"] == "tcp-transition" else mode,
+                "rt-base",
+                "strategies",
+            )
+        )
+        second = self.reports.get(
+            (
+                site,
+                proto,
+                mode,
+                "rt-base" if spec["reader"] == "tcp-transition" else "fi-base",
+                "strategies",
+            )
+        )
+        if first is None or second is None:
+            return None, ()
+        zid = first.data.get("zmap_id")
+        if not zid or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", zid):
+            raise ValueError("paired measurements need a safe discovery identity")
+        if second.data.get("zmap_id") != zid:
+            raise ValueError("paired measurements have different discovery identities")
+        paths = [
+            Path(self.processed_root)
+            / site
+            / Path(a.relative.removeprefix("figures/")).with_suffix(".pq")
+            for a in (first, second)
+        ]
+        reports = [first, second]
+        if spec["reader"] == "fi-rt":
+            coverage = self.reports.get((site, proto, mode, "fi-base", "coverage"))
+            if self.raw_root is None or coverage is None:
+                return None, ()
+            stem = "zmap-connection-sample" if mode == "connection" else "zmap-fixed-base-sample"
+            directory = Path(self.raw_root) / site / "zmap" / zid
+            paths += [directory / (stem + ext) for ext in (".pq", ".json")]
+            reports.append(coverage)
+        version = self.constants(
+            Path(__file__).resolve().parents[1] / "ipid_analysis/strategies.py"
+        )
+        report_sha = digest([a.sha256 for a in reports])
+
+        def compute():
+            if spec["reader"] == "tcp-transition":
+                return paired.tcp_transition(
+                    paths, first.data, second.data, version["CLASSIFIER_VERSION"]
+                )
+            return paired.fi_rt(
+                paths,
+                first.data,
+                second.data,
+                coverage.data,
+                version["CLASSIFIER_VERSION"],
+                connection_mode=mode == "connection",
+            )
+
+        result = self.cache.derive(spec["reader"], paths, report_sha, compute)
+        if not result:
+            return None, ()
+        return result["pct"], tuple([a.name for a in reports] + [str(p) for p in paths])

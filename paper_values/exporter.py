@@ -226,6 +226,7 @@ def export(
     processed_root=None,
     archive=None,
     raw_root=None,
+    validation_root=None,
     additional_reports=(),
     repository_root=None,
     strict=False,
@@ -240,8 +241,10 @@ def export(
     if not 1 <= io_workers <= 32:
         raise ValueError("io_workers must be between 1 and 32")
     root = Path(repository_root or Path(__file__).resolve().parents[1]).resolve()
+    if validation_root is None and archive is None:
+        validation_root = root / "reports/figures/classifier-validation"
     input_roots, input_files = (
-        (reports_root, processed_root, raw_root),
+        (reports_root, processed_root, raw_root, validation_root),
         (archive, *additional_reports),
     )
     output = output_path(root, "values.tex", input_roots, input_files)
@@ -281,7 +284,7 @@ def export(
         enabled=use_cache,
         diagnostics=details,
     )
-    readers = Readers(valid, processed_root, raw_root, cache, errors)
+    readers = Readers(valid, processed_root, raw_root, cache, errors, validation_root)
     derive_start = perf_counter()
     if diagnostics:
         # Include snapshot I/O and parsing without changing calculation code or
@@ -367,7 +370,7 @@ def export(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--campaign", required=True)
-    for name in ("reports-root", "processed-root", "raw-root", "archive"):
+    for name in ("reports-root", "processed-root", "raw-root", "validation-root", "archive"):
         parser.add_argument("--" + name, type=Path)
     parser.add_argument("--additional-report", type=Path, action="append", default=[])
     parser.add_argument(
@@ -402,6 +405,7 @@ def main():
             reports_root=roots["reports"],
             processed_root=roots["processed"],
             raw_root=roots["raw"],
+            validation_root=args.validation_root,
             archive=args.archive,
             additional_reports=args.additional_report,
             strict=args.strict,

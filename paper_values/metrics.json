@@ -1297,15 +1297,27 @@
       "unit": "pdf-path",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "validation"
         }
       ],
       "values": {
         "fi-ideal.confusion-matrix": {
-          "definition": "Current-paper synthetic validation PDF relative to the paper root"
+          "definition": "Current-paper synthetic validation PDF relative to the paper root",
+          "read": {
+            "stat": "figure",
+            "figure": "mass-ideal",
+            "filename": "mass-4x25-classifier-confusion-ideal.pdf"
+          },
+          "reason": "requires the current classifier-validation summary and its matching PDF"
         },
         "fi-lossy-reordered.confusion-matrix": {
-          "definition": "Current-paper synthetic validation PDF relative to the paper root"
+          "definition": "Current-paper synthetic validation PDF relative to the paper root",
+          "read": {
+            "stat": "figure",
+            "figure": "mass-lossy-vs-reordered",
+            "filename": "mass-4x25-classifier-confusion-lossy-vs-reordered.pdf"
+          },
+          "reason": "requires the current classifier-validation summary and its matching PDF"
         }
       }
     },
@@ -1800,13 +1812,17 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "fi-rt",
+          "protocol": "icmp",
+          "connection": "no-connection",
+          "phase": "fi-base",
+          "kind": "strategies"
         }
       ],
       "values": {
         "pct": {
           "definition": "FI-BASE successes / RT successes in that same selected target population",
-          "reason": "requires the matched RT cohort count"
+          "reason": "requires both strategy Parquets, FI coverage and persisted sample metadata"
         }
       }
     },
@@ -1815,13 +1831,17 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "fi-rt",
+          "protocol": "tcp",
+          "connection": "connection",
+          "phase": "fi-base",
+          "kind": "strategies"
         }
       ],
       "values": {
         "pct": {
           "definition": "FI-BASE successes / RT successes in that same selected target population",
-          "reason": "requires the matched RT cohort count"
+          "reason": "requires both strategy Parquets, FI coverage and persisted sample metadata"
         }
       }
     },
@@ -1830,13 +1850,17 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "fi-rt",
+          "protocol": "tcp",
+          "connection": "no-connection",
+          "phase": "fi-base",
+          "kind": "strategies"
         }
       ],
       "values": {
         "pct": {
           "definition": "FI-BASE successes / RT successes in that same selected target population",
-          "reason": "requires the matched RT cohort count"
+          "reason": "requires both strategy Parquets, FI coverage and persisted sample metadata"
         }
       }
     },
@@ -1845,13 +1869,17 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "fi-rt",
+          "protocol": "udp",
+          "connection": "no-connection",
+          "phase": "fi-base",
+          "kind": "strategies"
         }
       ],
       "values": {
         "pct": {
           "definition": "FI-BASE successes / RT successes in that same selected target population",
-          "reason": "requires the matched RT cohort count"
+          "reason": "requires both strategy Parquets, FI coverage and persisted sample metadata"
         }
       }
     },
@@ -3170,13 +3198,17 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "tcp-transition",
+          "protocol": "tcp",
+          "connection": "connection",
+          "phase": "rt-base",
+          "kind": "strategies"
         }
       ],
       "values": {
         "constant.per-connection.column-pct": {
           "definition": "CONSTANT before connection among the same IPs classified PER_CONNECTION afterward",
-          "reason": "requires a paired TCP before/after join, normalized by the PER_CONNECTION destination column"
+          "reason": "requires the two matching RT-BASE strategy Parquets"
         }
       }
     },
@@ -3185,15 +3217,31 @@
       "unit": "samples",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "validation"
         }
       ],
       "values": {
         "fi.sequence-length": {
-          "definition": "Synthetic dataset configuration from its validation report"
+          "definition": "Synthetic dataset configuration from its validation report",
+          "read": {
+            "field": [
+              "datasets",
+              "mass-4x25-ideal",
+              "sequence_length"
+            ]
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         },
         "rt.sequence-length": {
-          "definition": "Synthetic dataset configuration from its validation report"
+          "definition": "Synthetic dataset configuration from its validation report",
+          "read": {
+            "field": [
+              "datasets",
+              "base-4x4-ideal",
+              "sequence_length"
+            ]
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         }
       }
     },
@@ -3202,15 +3250,31 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "validation"
         }
       ],
       "values": {
         "loss.pct": {
-          "definition": "Configured synthetic corruption fraction"
+          "definition": "Configured synthetic corruption fraction",
+          "read": {
+            "field": [
+              "datasets",
+              "mass-4x25-lossy",
+              "loss_pct"
+            ]
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         },
         "reordering.pct": {
-          "definition": "Configured synthetic corruption fraction"
+          "definition": "Configured synthetic corruption fraction",
+          "read": {
+            "field": [
+              "datasets",
+              "mass-4x25-reordered",
+              "reordering_pct"
+            ]
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         }
       }
     },
@@ -3219,15 +3283,36 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "validation"
         }
       ],
       "values": {
         "accuracy-pct": {
-          "definition": "Accuracy on this synthetic ground-truth dataset"
+          "definition": "Accuracy on this synthetic ground-truth dataset",
+          "read": {
+            "field": [
+              "datasets",
+              "mass-4x25-ideal",
+              "metrics",
+              "accuracy"
+            ],
+            "factor": 100
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         },
         "truth.multi.misclassified.pct": {
-          "definition": "100 minus the FI-ideal MULTI recall"
+          "definition": "100 minus the FI-ideal MULTI recall",
+          "read": {
+            "field": [
+              "datasets",
+              "mass-4x25-ideal",
+              "metrics",
+              "classes",
+              "MULTI"
+            ],
+            "stat": "class-error-pct"
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         }
       }
     },
@@ -3236,12 +3321,22 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "validation"
         }
       ],
       "values": {
         "accuracy-pct": {
-          "definition": "Accuracy on this synthetic ground-truth dataset"
+          "definition": "Accuracy on this synthetic ground-truth dataset",
+          "read": {
+            "field": [
+              "datasets",
+              "mass-4x25-lossy",
+              "metrics",
+              "accuracy"
+            ],
+            "factor": 100
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         }
       }
     },
@@ -3250,12 +3345,22 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "validation"
         }
       ],
       "values": {
         "accuracy-pct": {
-          "definition": "Accuracy on this synthetic ground-truth dataset"
+          "definition": "Accuracy on this synthetic ground-truth dataset",
+          "read": {
+            "field": [
+              "datasets",
+              "mass-4x25-reordered",
+              "metrics",
+              "accuracy"
+            ],
+            "factor": 100
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         }
       }
     },
@@ -3264,12 +3369,24 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "validation"
         }
       ],
       "values": {
         "multi-random.minimum-recall.pct": {
-          "definition": "Minimum MULTI/RANDOM recall across lossy and reordered validation"
+          "definition": "Minimum MULTI/RANDOM recall across lossy and reordered validation",
+          "read": {
+            "stat": "minimum-recall",
+            "datasets": [
+              "mass-4x25-lossy",
+              "mass-4x25-reordered"
+            ],
+            "classes": [
+              "MULTI",
+              "RANDOM"
+            ]
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         }
       }
     },
@@ -3278,12 +3395,22 @@
       "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "validation"
         }
       ],
       "values": {
         "accuracy-pct": {
-          "definition": "Accuracy on this synthetic ground-truth dataset"
+          "definition": "Accuracy on this synthetic ground-truth dataset",
+          "read": {
+            "field": [
+              "datasets",
+              "base-4x4-ideal",
+              "metrics",
+              "accuracy"
+            ],
+            "factor": 100
+          },
+          "reason": "requires the current production-profile classifier-validation summary"
         }
       }
     },
