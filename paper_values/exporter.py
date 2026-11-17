@@ -1,6 +1,7 @@
 """Export the explicit paper metrics for all six VPs; cache only derived values."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import json
 import math
@@ -83,6 +84,26 @@ def required_contexts(metrics):
         contexts.add(("tcp", "connection", phase, "coverage"))
     contexts.add(("tcp", "connection", "rt-base-vs-fi-base", "probing-intervals-by-continent"))
     return contexts, plots
+
+
+def prefetch_snapshots(readers, metrics, sites, workers):
+    """Read each required snapshot once; surface failures at its metric lookup."""
+    if readers.raw_root is None:
+        return
+    requests = sorted(
+        {
+            (site, spec["protocol"], spec["connection"], spec["phase"])
+            for metric in metrics
+            for spec in metric["sources"]
+            if spec["reader"] == "snapshot"
+            for site in sites
+        }
+    )
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        snapshots = {request: pool.submit(readers.snapshot, *request) for request in requests}
+    # Futures retain both values and failures. Resolving them in the existing
+    # metric loop preserves deterministic error attribution and strict handling.
+    readers.snapshot = lambda *request: snapshots[request].result()
 
 
 def check_populations(artifacts):
@@ -261,12 +282,13 @@ def export(
         diagnostics=details,
     )
     readers = Readers(valid, processed_root, raw_root, cache, errors)
+    derive_start = perf_counter()
     if diagnostics:
         # Include snapshot I/O and parsing without changing calculation code or
-        # its cache identity. Calls include the reader's memoized lookups.
+        # its cache identity; prefetch times one access per distinct request.
         readers.snapshot = partial(details.call, "snapshot.access", readers.snapshot)
+    details.call("snapshot.prefetch", prefetch_snapshots, readers, metrics, sites, inputs.workers)
     values = {}
-    derive_start = perf_counter()
     for metric in metrics:
         for site in sites if "{vp}" in metric["key"] else (None,):
             key = metric["key"].format(vp=site)

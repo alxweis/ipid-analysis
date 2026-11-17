@@ -108,6 +108,14 @@ merge/comparison pairs and the random-reproducibility evaluation subdirectory
 before their directory listings are requested. Unknown layouts inside a VP retain
 recursive discovery. Results are sorted independently of worker completion order.
 
+When raw inputs are configured, required measurement snapshots are prefetched
+with the same worker limit. Each unique VP/protocol/connection/phase request is
+loaded once per export through the existing snapshot reader (currently at most
+42 requests). The scalar metric loop then uses those results in its original
+order. Failed reads are retained and reported against the same metric keys;
+strict export still preserves existing output files. Snapshot data is not added
+to the persistent derived-value cache and is refreshed on the next invocation.
+
 The inventory is rebuilt on every invocation; it is not stored in `values.json`.
 New reports are rediscovered, and listing/read errors still fail strict export.
 ZIP reads remain serial. Compare `inventory` and `total` in `--timings` on the
@@ -130,7 +138,8 @@ operation timing is disabled. Existing phase timings remain wall-clock durations
 | `cache.check` | Checking aggregate existence/fingerprints/receipts and cached scalar integrity; also checks missing sources |
 | `cache.verify` | Validating an aggregate's completion receipt on a cache miss |
 | `cache.compute` | Reading an aggregate and computing its scalar table on a cache miss |
-| `snapshot.access` | Snapshot lookup, existence/receipt checks, reading and YAML parsing; calls include memoized lookups |
+| `snapshot.access` | Snapshot lookup, existence/receipt checks, reading and YAML parsing; one access per unique prefetched request when raw inputs are configured, otherwise memoized metric lookups |
+| `snapshot.prefetch` | Wall-clock duration of the snapshot prefetch (one call), included in `derive`; worker access sums can exceed this duration |
 
 Operation counts include failed attempts. A valid JSON/PDF normally has two
 `check` calls, one before and one after reading. Sums across parallel workers can
