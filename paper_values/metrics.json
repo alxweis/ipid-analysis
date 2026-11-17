@@ -10,53 +10,6 @@
   ],
   "metrics": [
     {
-      "prefix": "artifacts",
-      "unit": "GiB",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "required-disk-gib": {
-          "definition": "Measured disk requirement of the published artifact workflow",
-          "reason": "requires a resource benchmark report; the old paper estimate is not a measurement result"
-        },
-        "required-memory-gib": {
-          "definition": "Measured RAM requirement of the published artifact workflow",
-          "reason": "requires a resource benchmark report; do not substitute VM capacity"
-        }
-      }
-    },
-    {
-      "prefix": "campaign.{vp}",
-      "unit": "",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "end-month": {
-          "definition": "Actual final probing month; terminal timing evidence required"
-        }
-      }
-    },
-    {
-      "prefix": "campaign.{vp}",
-      "unit": "",
-      "sources": [
-        {
-          "reader": "start-month"
-        }
-      ],
-      "values": {
-        "start-month": {
-          "definition": "Month of earliest original ZMap identifier; all three protocols required"
-        }
-      }
-    },
-    {
       "prefix": "claims.{vp}",
       "unit": "percent",
       "sources": [
@@ -1535,20 +1488,6 @@
           "read": {
             "field": "minimum-required-replies.count"
           }
-        }
-      }
-    },
-    {
-      "prefix": "params.{vp}",
-      "unit": "",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "source-addresses.prefix-length": {
-          "definition": "Common IPv4 prefix length of the actual probing source addresses"
         }
       }
     },
