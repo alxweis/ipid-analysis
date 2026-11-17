@@ -113,6 +113,32 @@ New reports are rediscovered, and listing/read errors still fail strict export.
 ZIP reads remain serial. Compare `inventory` and `total` in `--timings` on the
 actual Analysis VM; local ZIP or filesystem timings do not predict S3 mount speed.
 
+### Diagnosing slow mounted inputs
+
+`--timings` additionally prints operation counts, summed elapsed seconds and the
+longest individual call. These details are console-only: they do not enter either
+export file and do not invalidate the derived-value cache. Without `--timings`,
+operation timing is disabled. Existing phase timings remain wall-clock durations.
+
+| Operation | What is measured |
+| --- | --- |
+| `json.check`, `pdf.check` | Source fingerprints and completion checks before/after reading, including receipt reads |
+| `json.read` | Opening/reading JSON bytes from a directory or ZIP |
+| `json.decode` | Decoding JSON report bytes |
+| `pdf.read` | Opening a PDF and reading its signature |
+| `cache.load` | Loading and initializing the derived-value cache |
+| `cache.check` | Checking aggregate existence/fingerprints/receipts and cached scalar integrity; also checks missing sources |
+| `cache.verify` | Validating an aggregate's completion receipt on a cache miss |
+| `cache.compute` | Reading an aggregate and computing its scalar table on a cache miss |
+| `snapshot.access` | Snapshot lookup, existence/receipt checks, reading and YAML parsing; calls include memoized lookups |
+
+Operation counts include failed attempts. A valid JSON/PDF normally has two
+`check` calls, one before and one after reading. Sums across parallel workers can
+exceed a phase's wall time, so do not add operation rows to obtain total runtime.
+They are diagnostic subsets of the work, not a complete phase accounting.
+On a warm derived-value cache, `cache.compute` and `cache.verify` disappear, while
+`cache.check` and snapshot accesses can still take time on the mounted inputs.
+
 ## Partial archives and missing results
 
 ```sh

@@ -1,6 +1,7 @@
 """Export the explicit paper metrics for all six VPs; cache only derived values."""
 
 import argparse
+from functools import partial
 import json
 import math
 import os
@@ -11,6 +12,7 @@ from time import perf_counter
 import zipfile
 
 from paper_values.cache import ValueCache, verify_file
+from paper_values.diagnostics import Diagnostics
 from paper_values.inputs import Inputs, select_artifacts
 from paper_values.readers import Readers, ValueConflict, counts, validate_report
 from paper_values.tex import formatted, render
@@ -209,6 +211,7 @@ def export(
     recompute=False,
     io_workers=8,
     use_cache=True,
+    diagnostics=False,
 ):
     started = perf_counter()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", campaign):
@@ -225,12 +228,14 @@ def export(
     definitions = load_metrics()
     metrics, sites = definitions["metrics"], definitions["sites"]
     contexts, plot_contexts = required_contexts(metrics)
+    details = Diagnostics(enabled=diagnostics)
     inputs = Inputs(
         (reports_root, processed_root),
         archive,
         workers=io_workers,
         contexts=contexts,
         plot_contexts=plot_contexts,
+        diagnostics=details,
     )
     try:
         artifacts, conflicts = select_artifacts(list(inputs.artifacts(campaign)))
@@ -246,8 +251,20 @@ def export(
         except (OSError, ValueError, KeyError, TypeError) as exc:
             errors.append({"source": a.name, "error": str(exc)})
     check_populations(valid)
-    cache = ValueCache(cache_path, campaign, recompute=recompute, enabled=use_cache)
+    cache = details.call(
+        "cache.load",
+        ValueCache,
+        cache_path,
+        campaign,
+        recompute=recompute,
+        enabled=use_cache,
+        diagnostics=details,
+    )
     readers = Readers(valid, processed_root, raw_root, cache, errors)
+    if diagnostics:
+        # Include snapshot I/O and parsing without changing calculation code or
+        # its cache identity. Calls include the reader's memoized lookups.
+        readers.snapshot = partial(details.call, "snapshot.access", readers.snapshot)
     values = {}
     derive_start = perf_counter()
     for metric in metrics:
@@ -321,6 +338,7 @@ def export(
         "input_errors": errors,
         "cache": dict(cache.stats),
         "timings": timings,
+        "operations": details.summary(),
     }
 
 
@@ -341,7 +359,11 @@ def main():
         help="recompute derived values instead of using values.json",
     )
     parser.add_argument("--io-workers", type=int, default=8)
-    parser.add_argument("--timings", action="store_true")
+    parser.add_argument(
+        "--timings",
+        action="store_true",
+        help="show wall-clock phases and operation counts/summed elapsed times",
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     roots = {name: getattr(args, name + "_root") for name in ("reports", "processed", "raw")}
@@ -363,6 +385,7 @@ def main():
             strict=args.strict,
             recompute=args.recompute,
             io_workers=args.io_workers,
+            diagnostics=args.timings,
         )
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         parser.exit(2, f"paper-values: {exc}\n")
@@ -372,5 +395,10 @@ def main():
     if args.timings:
         print("Timings: " + ", ".join(f"{k}={v:.3f}s" for k, v in result["timings"].items()))
         print("Derived-value cache: " + json.dumps(result["cache"], sort_keys=True))
+        print("Operations (elapsed sums can exceed wall time with parallel I/O):")
+        for name, entry in result["operations"].items():
+            print(
+                f"  {name}: calls={entry['calls']}, sum={entry['seconds']:.3f}s, max={entry['maximum']:.3f}s"
+            )
     for error in result["input_errors"]:
         print(f"Unavailable input: {error['source']}: {error['error']}")

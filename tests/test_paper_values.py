@@ -18,6 +18,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from paper_values.cache import ValueCache
+from paper_values.diagnostics import Diagnostics
 from paper_values.exporter import export, load_metrics, required_contexts
 from paper_values.inputs import Inputs
 from paper_values.tex import key_order, render
@@ -752,6 +753,23 @@ class PaperValuesTest(unittest.TestCase):
             {"values.tex", "values.json"},
         )
 
+    def test_detailed_timings_preserve_values_and_output_bytes(self):
+        self.f.snapshot()
+        plain = self.f.run(strict=True)
+        before = self.f.output_hashes()
+        detailed = self.f.run(strict=True, diagnostics=True)
+        self.assertEqual(plain["operations"], {})
+        self.assertEqual(plain["values"], detailed["values"])
+        self.assertEqual(before, self.f.output_hashes())
+        operations = detailed["operations"]
+        self.assertEqual(operations["json.read"]["calls"], 1)
+        self.assertEqual(operations["json.decode"]["calls"], 1)
+        self.assertEqual(operations["json.check"]["calls"], 2)
+        self.assertGreater(operations["snapshot.access"]["calls"], 0)
+        for entry in operations.values():
+            self.assertGreaterEqual(entry["seconds"], entry["maximum"])
+            self.assertGreaterEqual(entry["maximum"], 0)
+
     def test_cli_reads_archive_and_does_not_import_analysis_or_plotting(self):
         archive = self.f.root / "empty.zip"
         with zipfile.ZipFile(archive, "w"):
@@ -781,6 +799,13 @@ class PaperValuesTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1497 empty", result.stdout)
+        self.assertNotIn("Operations (", result.stdout)
+        profiled = subprocess.run(
+            [*result.args, "--timings"], cwd=self.f.root, text=True, capture_output=True
+        )
+        self.assertEqual(profiled.returncode, 0, profiled.stderr)
+        self.assertIn("elapsed sums can exceed wall time", profiled.stdout)
+        self.assertIn("cache.load: calls=1", profiled.stdout)
 
     @unittest.skipUnless(shutil.which("make"), "GNU Make is not installed")
     def test_make_accepts_both_argument_variable_names(self):
@@ -863,6 +888,24 @@ class DerivedCacheTest(unittest.TestCase):
             second = self.f.run(strict=True)
         self.assertEqual(second["cache"]["histogram_hits"], 1)
         self.assertEqual(first["values"], second["values"])
+
+    def test_diagnostics_keep_warm_cache_and_identical_outputs(self):
+        self.histogram(counts=(98, 2), total=100)
+        cold = self.f.run(strict=True, diagnostics=True)
+        self.assertEqual(cold["operations"]["cache.compute"]["calls"], 1)
+        self.assertEqual(cold["operations"]["cache.verify"]["calls"], 1)
+        before = self.f.output_hashes()
+        with patch(
+            "paper_values.readers.increment_histogram",
+            side_effect=AssertionError("must use cache"),
+        ):
+            warm = self.f.run(strict=True, diagnostics=True)
+        self.assertEqual(warm["cache"]["histogram_hits"], 1)
+        self.assertEqual(warm["operations"]["cache.check"]["calls"], 1)
+        self.assertNotIn("cache.compute", warm["operations"])
+        self.assertNotIn("cache.verify", warm["operations"])
+        self.assertEqual(cold["values"], warm["values"])
+        self.assertEqual(before, self.f.output_hashes())
 
     def test_changed_input_and_recompute_bypass_cached_values(self):
         self.histogram(counts=(98, 2), increments=(1, 900))
@@ -961,6 +1004,35 @@ class DerivedCacheTest(unittest.TestCase):
         cache_path.write_text(cache.serialize())
         cache = ValueCache(cache_path, CAMPAIGN)
         self.assertEqual(cache.derive("stat", p, "report-1", lambda: dict(value=3)), dict(value=3))
+
+
+class DiagnosticsTest(unittest.TestCase):
+    def test_disabled_diagnostics_do_not_read_clock_or_change_result(self):
+        details = Diagnostics()
+        with patch(
+            "paper_values.diagnostics.perf_counter", side_effect=AssertionError("disabled")
+        ):
+            self.assertEqual(details.call("unused", lambda: 7), 7)
+            with details.measure("unused"):
+                pass
+        self.assertEqual(details.summary(), {})
+
+    def test_failed_operation_is_recorded_and_exception_preserved(self):
+        details = Diagnostics(enabled=True)
+        with patch("paper_values.diagnostics.perf_counter", side_effect=(10.0, 13.0)):
+            with self.assertRaisesRegex(OSError, "original error"):
+                with details.measure("read"):
+                    raise OSError("original error")
+        self.assertEqual(details.summary()["read"], dict(calls=1, seconds=3.0, maximum=3.0))
+
+    def test_parallel_calls_have_exact_counts(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        details = Diagnostics(enabled=True)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            values = list(pool.map(lambda value: details.call("read", lambda: value), range(1000)))
+        self.assertEqual(values, list(range(1000)))
+        self.assertEqual(details.summary()["read"]["calls"], 1000)
 
 
 @unittest.skipUnless(os.environ.get("IPID_PAPER_VALUES_ARCHIVE"), "optional supplied EU archive")
