@@ -252,6 +252,163 @@ class PaperValuesTest(unittest.TestCase):
             100,
         )
 
+    def streaming_mass(self, *, baseline=None, include_baseline=True, evaluation=False):
+        ids = [
+            "icmp_2026-11-17_01-48-11",
+            "icmp_2026-11-17_05-26-23",
+            "icmp_2026-11-17_05-26-57",
+            "icmp_2026-11-17_05-27-29",
+            "icmp_2026-11-17_05-28-02",
+            "icmp_2026-11-17_05-28-36",
+        ]
+        baseline = baseline or ids[0]
+        for mid in ids:
+            if mid == baseline and not include_baseline:
+                continue
+            c = {"RANDOM": 8, "CONSTANT": 2} if mid == baseline else {"CONSTANT": 2}
+            self.f.report(
+                "strategies",
+                dict(
+                    protocol="icmp",
+                    measurement_id=mid,
+                    zmap_id=mid,
+                    total_ips=sum(c.values()),
+                    counts=c,
+                ),
+                protocol="icmp",
+                phase="fi-mass",
+                site="au",
+                run=mid,
+            )
+            # The actual producer deliberately omits measurement_id in coverage JSON.
+            self.f.report(
+                "coverage",
+                dict(zmap_ip_count=sum(c.values()), ipid_ip_count=sum(c.values())),
+                protocol="icmp",
+                phase="fi-mass",
+                site="au",
+                run=mid,
+                processed=True,
+            )
+        if evaluation:
+            self.f.report(
+                "icmp-no_connection-mass-random-reproducibility-evaluation",
+                dict(
+                    baseline_measurement_id=baseline,
+                    repeats=[
+                        dict(measurement_id=mid, repeat_index=i + 1)
+                        for i, mid in enumerate(mid for mid in ids if mid != baseline)
+                    ],
+                ),
+                protocol="icmp",
+                phase="fi-mass",
+                site="au",
+            )
+        return ids
+
+    def test_partial_au_streaming_mass_does_not_block_other_sites_or_guess_baseline(self):
+        self.f.baseline(protocol="icmp")
+        self.streaming_mass()
+        result = self.f.run(strict=True)
+        self.assertFalse(result["input_errors"])
+        self.assertEqual(
+            result["values"]["results.eu.icmp.no-conn.fi-mass.success.random.pct"]["raw"], 100
+        )
+        self.assertIsNone(
+            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"]
+        )
+
+    def test_even_one_unbound_streaming_mass_is_not_assumed_to_be_baseline(self):
+        mid = "icmp_2026-11-17_05-26-23"
+        self.f.report(
+            "strategies",
+            dict(
+                protocol="icmp",
+                measurement_id=mid,
+                zmap_id=mid,
+                counts={"CONSTANT": 10},
+                total_ips=10,
+            ),
+            protocol="icmp",
+            phase="fi-mass",
+            site="au",
+            run=mid,
+        )
+        result = self.f.run(strict=True)
+        self.assertIsNone(
+            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"]
+        )
+
+    def test_evaluation_identifies_baseline_and_filters_coverage_without_measurement_id(self):
+        # The authoritative baseline is deliberately not the earliest timestamp.
+        self.streaming_mass(baseline="icmp_2026-11-17_05-26-23", evaluation=True)
+        result = self.f.run(strict=True)
+        self.assertFalse(result["input_errors"])
+        self.assertEqual(
+            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"], 80
+        )
+
+    def test_evaluation_without_baseline_files_does_not_promote_a_repeat(self):
+        self.streaming_mass(evaluation=True, include_baseline=False)
+        result = self.f.run(strict=True)
+        self.assertIsNone(
+            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"]
+        )
+
+    def test_canonical_primary_report_selects_mass_before_merged_report_exists(self):
+        self.streaming_mass()
+        self.f.strategy({"RANDOM": 1}, protocol="icmp", phase="fi-mass", site="au")
+        self.f.report(
+            "coverage",
+            dict(zmap_ip_count=1, ipid_ip_count=1),
+            protocol="icmp",
+            phase="fi-mass",
+            site="au",
+            processed=True,
+        )
+        result = self.f.run(strict=True)
+        self.assertEqual(
+            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"], 100
+        )
+
+    def test_later_merged_provenance_makes_pending_baseline_available(self):
+        ids = self.streaming_mass()
+        self.assertIsNone(
+            self.f.run(strict=True)["values"][
+                "results.au.icmp.no-conn.fi-mass.success.random.pct"
+            ]["raw"]
+        )
+        self.f.report(
+            "strategies",
+            dict(
+                protocol="icmp",
+                zmap_id=RUNS["icmp"],
+                mass_measurement_id=ids[0],
+                counts={"RANDOM": 8, "CONSTANT": 2},
+                total_ips=10,
+            ),
+            protocol="icmp",
+            phase="rt-fi",
+            site="au",
+        )
+        result = self.f.run(strict=True)
+        self.assertEqual(
+            result["values"]["results.au.icmp.no-conn.fi-mass.success.random.pct"]["raw"], 80
+        )
+
+    def test_conflicting_explicit_baseline_identities_still_fail_strict_export(self):
+        self.streaming_mass(evaluation=True)
+        self.f.report(
+            "icmp-no_connection-mass-random-reproducibility-evaluation",
+            dict(baseline_measurement_id="icmp_2026-11-17_05-26-23", repeats=[]),
+            protocol="icmp",
+            phase="fi-mass",
+            site="au",
+            run="icmp_other_evaluation",
+        )
+        with self.assertRaises(ValueError):
+            self.f.run(strict=True)
+
     def test_disagreeing_canonical_copies_are_rejected(self):
         self.f.baseline()
         self.f.strategy({"SINGLE": 10}, phase="rt-fi", processed=True)

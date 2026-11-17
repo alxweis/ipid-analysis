@@ -505,27 +505,80 @@ def identify_plot(name, site, relative, campaign):
 def select_artifacts(artifacts):
     """Prefer canonical ZMap reports; keep repeated Mass probes out of baseline metrics."""
     canonical = defaultdict(set)
+    baselines = defaultdict(set)
     repeat_ids = set()
     for a in artifacts:
-        if a.phase == "rt-fi-merged" and a.data.get("zmap_id"):
-            canonical[a.site, a.protocol].add(a.data["zmap_id"])
+        zid, mid = a.data.get("zmap_id"), a.data.get("measurement_id")
+        if a.phase == "rt-fi-merged" and zid:
+            canonical[a.site, a.protocol].add(zid)
+            for phase, field in (
+                ("rt-base", "base_measurement_id"),
+                ("fi-mass", "mass_measurement_id"),
+            ):
+                if a.data.get(field):
+                    baselines[a.site, a.protocol, a.connection, phase].add(a.data[field])
+        elif a.kind == "strategies" and zid and mid and zid != mid and a.run == zid:
+            # Streaming reports intentionally use their measurement ID as zmap_id.
+            # A primary report in the discovery directory can bind a phase earlier
+            # than the merged report, without guessing from timestamps/counts.
+            canonical[a.site, a.protocol].add(zid)
+            baselines[a.site, a.protocol, a.connection, a.phase].add(mid)
         if a.kind == "random-reproducibility-evaluation":
+            if a.data.get("baseline_measurement_id"):
+                baselines[a.site, a.protocol, a.connection, "fi-mass"].add(
+                    a.data["baseline_measurement_id"]
+                )
             repeat_ids.update(
-                (a.site, row["measurement_id"])
+                (a.site, a.protocol, row["measurement_id"])
                 for row in a.data.get("repeats", [])
                 if isinstance(row, dict) and "measurement_id" in row
             )
     groups = defaultdict(list)
     for a in artifacts:
-        if (a.site, a.data.get("measurement_id")) in repeat_ids:
+        # Coverage has no measurement_id; its streaming directory still identifies it.
+        if any(
+            (a.site, a.protocol, mid) in repeat_ids
+            for mid in (a.data.get("measurement_id"), a.run)
+        ):
             continue
         groups[a.site, a.protocol, a.connection, a.phase, a.kind].append(a)
     selected, errors = [], []
     for group, candidates in sorted(groups.items()):
         pinned = canonical[group[:2]]
+        measurement = group[4] not in {"random-reproducibility-evaluation", "missing-replies"}
+        known = baselines[group[:4]] if measurement else set()
+        if len(known) > 1:
+            errors.append(
+                {
+                    "source": [a.name for a in candidates],
+                    "error": "conflicting baseline measurement identities; no baseline selected",
+                }
+            )
+            continue
         preferred = [a for a in candidates if a.run in pinned]
         if preferred:
             candidates = preferred
+            if known and any(
+                a.data.get("measurement_id") and a.data["measurement_id"] not in known
+                for a in candidates
+            ):
+                errors.append(
+                    {
+                        "source": [a.name for a in candidates],
+                        "error": "canonical report differs from declared baseline identity",
+                    }
+                )
+                continue
+        elif known:
+            candidates = [
+                a for a in candidates if a.run in known or a.data.get("measurement_id") in known
+            ]
+            if not candidates:
+                continue  # The declared baseline has not been published yet.
+        elif group[3] == "fi-mass" and measurement:
+            # During an unfinished protocol sweep, these can be baseline or repeat
+            # jobs. They are unavailable until provenance binds the baseline.
+            continue
         ids = {a.data.get("measurement_id") for a in candidates}
         if len(candidates) > 1 and len(ids) > 1:
             errors.append(

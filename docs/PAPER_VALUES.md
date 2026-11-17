@@ -65,6 +65,15 @@ CSV scan.
 
 Canonical ZMap reports are preferred over streaming copies; repetition runs are
 not substituted for baseline measurements. Conflicting copies are reported.
+Streaming Mass baselines are selected only when existing provenance identifies
+them: a canonical primary/merged report or the reproducibility evaluation's
+explicit baseline ID. Repeat coverage reports are excluded by their directory ID
+even though their JSON has no measurement ID. While this provenance is still
+pending, unbound Mass values remain empty without blocking other VPs, including
+in strict mode. Neither timestamps nor population sizes select a baseline.
+Later publication of the required provenance makes the values available on the
+next export. Conflicting explicit identities and conflicting canonical copies
+still fail strict export.
 Existing JSON completion receipts are checked against bytes. PDF checks validate
 the signature, size and receipt metadata, not a full-file PDF hash. Missing
 receipts remain supported for legacy reports. The output contains paper-relative
