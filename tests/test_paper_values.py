@@ -304,9 +304,9 @@ class PaperValuesTest(unittest.TestCase):
         self.assertIn(nested, inputs.inventory[self.f.reports])
         self.assertIn(plot, inputs.inventory[self.f.reports])
 
-    def test_all_existing_public_keys_and_six_vps_remain(self):
+    def test_automated_paper_keys_and_six_vps_remain(self):
         result = self.f.run(strict=True)
-        self.assertEqual(len(result["values"]), 1497)
+        self.assertEqual(len(result["values"]), 1477)
         self.assertEqual(result["available"], 0)
         self.assertFalse(result["input_errors"])
         self.assertTrue(
@@ -320,7 +320,21 @@ class PaperValuesTest(unittest.TestCase):
         self.assertNotIn(
             "params.eu.source-addresses.count", result["values"]
         )  # Known future extension, not added silently.
-        self.assertIsNone(result["values"]["artifacts.required-memory-gib"]["raw"])
+        manual_keys = {"artifacts.required-disk-gib", "artifacts.required-memory-gib"}
+        for site in ("af", "as", "au", "eu", "na", "sa"):
+            manual_keys.update(
+                {
+                    f"campaign.{site}.start-month",
+                    f"campaign.{site}.end-month",
+                    f"params.{site}.source-addresses.prefix-length",
+                }
+            )
+        tex = (self.f.root / "tmp/values.tex").read_text(encoding="utf-8")
+        for key in manual_keys:
+            self.assertNotIn(key, result["values"])
+            self.assertNotIn(r"\setval{" + key + "}", tex)
+        for key in ("refs.itdk.release", "refs.maxmind.build-month"):
+            self.assertIn(key, result["values"])
 
     def test_rt_and_successful_denominators_remain_distinct(self):
         self.f.baseline()
@@ -859,7 +873,7 @@ class PaperValuesTest(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("1497 empty", result.stdout)
+        self.assertIn("1477 empty", result.stdout)
         self.assertNotIn("Operations (", result.stdout)
         profiled = subprocess.run(
             [*result.args, "--timings"], cwd=self.f.root, text=True, capture_output=True
@@ -895,7 +909,7 @@ class PaperValuesTest(unittest.TestCase):
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("1497 empty", result.stdout)
+            self.assertIn("1477 empty", result.stdout)
 
 
 class DerivedCacheTest(unittest.TestCase):
@@ -1108,7 +1122,7 @@ class RealEUArchiveTest(unittest.TestCase):
                 strict=True,
             )
             v = result["values"]
-            self.assertEqual((result["available"], result["missing"]), (153, 1344))
+            self.assertEqual((result["available"], result["missing"]), (152, 1325))
             for protocol, total in (
                 ("icmp", 319105777),
                 ("tcp", 94046744),

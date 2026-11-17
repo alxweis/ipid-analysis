@@ -14,10 +14,10 @@ large raw-data joins. Existing analysis workers can continue running.
 
 ## Sources and keys
 
-`paper_values/metrics.json` is the single definition of the 1,497 existing public
-keys: 242 quantities per VP (`af`, `as`, `au`, `eu`, `na`, `sa`) and 45 shared/global
+`paper_values/metrics.json` is the single definition of the 1,477 automated public
+keys: 239 quantities per VP (`af`, `as`, `au`, `eu`, `na`, `sa`) and 43 shared/global
 quantities. All six VPs are exported, even when the current text discusses EU.
-The short public names, populations and known missing values are preserved.
+The remaining public names, populations and missing scientific values are preserved.
 There is no internal/public key translation or general diagnostic catalog.
 `--profile full` has been removed.
 
@@ -171,11 +171,23 @@ always reject the export. Observed zero stays zero; percentages with a zero
 denominator stay empty. In particular, the full RT population is not used as a
 replacement denominator for a matched RT/FI comparison.
 
-Known missing scientific reports remain missing. Resource requirements, public
-source-prefix properties and editorial settings are manually maintained paper
-information; the exporter does not infer them from VM capacity, private GCP
-addresses or analysis-generation timestamps. Their existing unfilled keys are
-retained until the paper integration is revised.
+Known missing scientific reports remain missing. Campaign dates, public
+source-prefix properties, resource requirements and editorial settings are
+manually maintained paper information. The following five key families (20
+concrete keys across the six VPs) are deliberately excluded from the export:
+
+- `campaign.{vp}.start-month`
+- `campaign.{vp}.end-month`
+- `params.{vp}.source-addresses.prefix-length`
+- `artifacts.required-disk-gib`
+- `artifacts.required-memory-gib`
+
+The exporter neither infers these values nor emits empty placeholders for them.
+Dataset provenance (`refs.itdk.release` and `refs.maxmind.build-month`), automated
+measurement parameters and scientific results remain in the export, including
+metrics not yet referenced by the paper. Missing scientific values still use the
+normal empty-value behavior. Refresh `values.tex` with a new export; do not
+manually delete generated keys from a previous file.
 
 For an existing supplemental metric report:
 

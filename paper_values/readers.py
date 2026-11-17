@@ -309,7 +309,7 @@ class Readers:
         reader = spec["reader"]
         if reader in ("missing", "plot"):
             return None, ()
-        if reader in ("classifier", "reference", "start-month", "classified-min"):
+        if reader in ("classifier", "reference", "classified-min"):
             return self.summary(spec, site)
         a = self.report(spec, site)
         if reader == "snapshot":
@@ -458,21 +458,7 @@ class Readers:
     def summary(self, spec, site):
         reader = spec["reader"]
         reports = [a for a in self.reports.values() if site is None or a.site == site]
-        if reader == "start-month":
-            dates = defaultdict(set)
-            for a in reports:
-                if a.phase == "rt-fi-merged" and a.data.get("zmap_id"):
-                    try:
-                        dates[a.protocol].add(
-                            datetime.strptime(a.data["zmap_id"].rsplit("_", 2)[1], "%Y-%m-%d")
-                        )
-                    except (ValueError, IndexError):
-                        continue
-            if all(len(dates[p]) == 1 for p in PROTOCOLS):
-                return min(next(iter(dates[p])) for p in PROTOCOLS).strftime("%Y-%m"), tuple(
-                    a.name for a in reports if a.phase == "rt-fi-merged"
-                )
-        elif reader == "reference":
+        if reader == "reference":
             if spec["stat"] == "itdk.release":
                 values = [
                     (a.data["itdk_release"], a.name)
