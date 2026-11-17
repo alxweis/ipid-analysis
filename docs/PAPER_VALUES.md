@@ -14,19 +14,65 @@ large raw-data joins. Existing analysis workers can continue running.
 
 ## Sources and keys
 
-`paper_values/metrics.json` is the single definition of the 1,477 automated public
-keys: 239 quantities per VP (`af`, `as`, `au`, `eu`, `na`, `sa`) and 43 shared/global
-quantities. All six VPs are exported, even when the current text discusses EU.
-The remaining public names, populations and missing scientific values are preserved.
+`paper_values/metrics.json` is the single definition of the selected paper scope:
+200 numeric metric families and 29 PDF-path families. Expanding the VP-dependent
+families gives 1,264 public keys: 207 per VP (`af`, `as`, `au`, `eu`, `na`, `sa`)
+and 22 shared/global keys. All six VPs are exported, even when the text discusses EU.
 There is no internal/public key translation or general diagnostic catalog.
 `--profile full` has been removed.
+
+The selection covers the currently mapped, methodologically compatible paper
+values, including the two compatible synthetic-validation figures. It is not a
+claim that every old statement has already been reconciled with the new method.
+Unused, obsolete, manual and scientifically unresolved families are omitted
+from the definitions, rather than filtered after their values are calculated.
+Shared input reports may still be needed for retained fields, cohort checks and
+canonical-run selection. A selected key is not evidence that its value is available.
+
+### Naming
+
+The public keys use five prefixes:
+
+| Prefix | Meaning |
+|---|---|
+| `results` | Measured or derived campaign results, including distributions, ratios and paired comparisons |
+| `validation` | Synthetic validation scenarios and classifier performance on those scenarios |
+| `classifier` | Exact constants and thresholds of the classifier |
+| `params` | Measurement settings |
+| `fig` | PDF paths relative to the paper repository |
+
+`claims`, `stats`, `probing`, `incs` and `tcp-transition` are folded into
+`results`. The use of a number in a paper claim does not define a different kind
+of measurement result. Increments retain an explicit `increments` component
+after the measurement phase. The paired TCP transition uses
+`results.{vp}.tcp.rt-no-conn-to-conn...`.
+
+TCP retains `no-conn` or `conn`; ICMP and UDP omit the redundant `no-conn`
+component. ITDK role components are `routers` and `all-others`. These are public
+key names only: existing JSON selectors still read `transit-observed` and
+`no-transit-evidence`, and source report/PDF paths are unchanged. Renaming a key
+does not change its population, denominator or value.
+
+Examples:
+
+```text
+results.eu.icmp.rt-fi.itdk-strategy.routers.single.pct
+results.eu.tcp.conn.rt-base.itdk-strategy.all-others.single.pct
+results.eu.tcp.conn.rt-base.increments.per-bucket.p99
+fig.eu.udp.rt-fi.os-by-strategy
+```
+
+Only the new public names are exported; there are no legacy aliases or runtime
+name translations. Update paper references and any `--additional-report` keys
+together with the exporter. The derived-value cache depends on source data and
+calculation code, not public key spelling, so the rename does not invalidate it.
 
 Each group shares a source context and unit. Its `prefix` plus each suffix in
 `values` is the **actual public key**, not an intermediate name. For example:
 
 ```json
 {
-  "prefix": "stats.{vp}.tcp.no-conn.rt-fi",
+  "prefix": "results.{vp}.tcp.no-conn.rt-fi",
   "unit": "percent",
   "sources": [{
     "reader": "field",
@@ -44,7 +90,7 @@ Each group shares a source context and unit. Its `prefix` plus each suffix in
 }
 ```
 
-The resulting key is `stats.eu.tcp.no-conn.rt-fi.itdk-strategy.transit-observed.single.pct`.
+The resulting key is `results.eu.tcp.no-conn.rt-fi.itdk-strategy.routers.single.pct`.
 Field lookup normalizes case/underscores but rejects ambiguous field names.
 Only declared fields/report families are read. Values are never discovered by
 flattening every scalar in a report. Scientific readers in `readers.py` handle
@@ -183,11 +229,43 @@ concrete keys across the six VPs) are deliberately excluded from the export:
 - `artifacts.required-memory-gib`
 
 The exporter neither infers these values nor emits empty placeholders for them.
-Dataset provenance (`refs.itdk.release` and `refs.maxmind.build-month`), automated
-measurement parameters and scientific results remain in the export, including
-metrics not yet referenced by the paper. Missing scientific values still use the
-normal empty-value behavior. Refresh `values.tex` with a new export; do not
-manually delete generated keys from a previous file.
+The current scope also omits unused dataset-provenance keys, support metrics
+without a confirmed paper occurrence, earlier validation diagnostics and the
+unresolved RT-outlier claims. None of those keys is calculated or emitted as an
+empty placeholder. Their absence does not mean the associated analysis reports
+should be deleted. Refresh the generated export; do not delete its keys manually.
+
+The previously absent
+`results.{vp}.tcp.conn.rt-base.itdk-strategy.all-others.single.pct`
+reads the existing report's `plot_percentages["No Transit Evidence"]["SINGLE"]`.
+This is already a percentage, not a fraction, and is not multiplied by 100.
+
+Fifteen retained numeric families still need their dedicated scientific inputs
+or calculations; the exporter continues to leave them empty rather than guessing:
+
+```text
+results.{vp}.icmp.fi-to-rt-success.pct
+results.{vp}.tcp.conn.fi-to-rt-success.pct
+results.{vp}.tcp.no-conn.fi-to-rt-success.pct
+results.{vp}.udp.fi-to-rt-success.pct
+results.{vp}.tcp.rt-no-conn-to-conn.constant.per-connection.column-pct
+validation.data.fi.sequence-length
+validation.data.loss.pct
+validation.data.reordering.pct
+validation.data.rt.sequence-length
+validation.fi-ideal.accuracy-pct
+validation.fi-ideal.truth.multi.misclassified.pct
+validation.fi-lossy.accuracy-pct
+validation.fi-reordered.accuracy-pct
+validation.lossy-reordered.multi-random.minimum-recall.pct
+validation.rt-ideal.accuracy-pct
+```
+
+The two global validation PDF keys are retained as well; their automatic lookup
+is still missing. The four FI/RT ratios require matched target populations, and
+the TCP transition requires a join of the two RT populations by IP. Validation
+values must describe the current synthetic scenarios and production classifier.
+Pruning alone neither produces these inputs nor makes an export complete.
 
 For an existing supplemental metric report:
 

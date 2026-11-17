@@ -12,7 +12,7 @@ PREAMBLE = r"""% Generated paper values; requires todonotes for missing values.
     \else\csname texval@#1\endcsname\fi%
   \else\todo[inline]{Missing value: \detokenize{#1}}\fi}
 """
-THEMES = "campaign refs params classifier artifacts validation results claims stats constant incs probing tcp-transition plots".split()
+THEMES = "params classifier validation results fig".split()
 SITES = {"af", "as", "au", "eu", "na", "sa"}
 
 
@@ -54,7 +54,8 @@ def render(values, campaign):
     lines = [
         PREAMBLE.rstrip(),
         f"% Campaign: {campaign}",
-        "% Keys: topic.[VP].[protocol].[no-conn|conn].[phase].metric.",
+        "% Prefixes: results, validation, classifier, params, fig.",
+        "% Measurement keys: prefix.VP.protocol.[TCP mode].phase.metric; TCP mode: no-conn|conn.",
         "% VPs: af/as/au/eu/na/sa. Blank values are unavailable, not zero.",
         "% success: sufficient replies; rt-pop: original RT population; pct: percent with metric-specific denominator.",
         "% rt-fi: RT/Mass merge; rt-vs-fi-base: paired probing-method comparison.",
