@@ -21,7 +21,7 @@ from paper_values.cache import ValueCache
 from paper_values.diagnostics import Diagnostics
 from paper_values.exporter import export, load_metrics, required_contexts
 from paper_values.inputs import Inputs
-from paper_values.readers import Readers
+from paper_values.readers import Readers, increment_histogram
 from paper_values.tex import key_order, render
 
 CAMPAIGN = "test-campaign"
@@ -306,7 +306,7 @@ class PaperValuesTest(unittest.TestCase):
 
     def test_automated_paper_keys_and_six_vps_remain(self):
         result = self.f.run(strict=True)
-        self.assertEqual(len(result["values"]), 1477)
+        self.assertEqual(len(result["values"]), 1264)
         self.assertEqual(result["available"], 0)
         self.assertFalse(result["input_errors"])
         self.assertTrue(
@@ -333,8 +333,40 @@ class PaperValuesTest(unittest.TestCase):
         for key in manual_keys:
             self.assertNotIn(key, result["values"])
             self.assertNotIn(r"\setval{" + key + "}", tex)
-        for key in ("refs.itdk.release", "refs.maxmind.build-month"):
-            self.assertIn(key, result["values"])
+        definitions = load_metrics()["metrics"]
+        self.assertEqual(len(definitions), 229)
+        self.assertEqual(sum(m["unit"] == "pdf-path" for m in definitions), 29)
+        excluded = {
+            "refs.itdk.release", "refs.maxmind.build-month",
+            "classifier.random.threshold", "plots.validation.nist-cdf",
+            "plots.validation.chi-square-cdf", "validation.data.fi.samples-per-class",
+            "claims.{vp}.icmp.fi-mass.recovered.rt-outliers-1.pct",
+            "constant.{vp}.tcp.conn.rt-base.zero.pct",
+            "stats.{vp}.tcp.conn.rt-base.probing-intervals.below-500ms.pct",
+        }
+        self.assertTrue(excluded.isdisjoint(m["key"] for m in definitions))
+        for site in ("af", "as", "au", "eu", "na", "sa"):
+            self.assertIn(
+                f"stats.{site}.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct",
+                result["values"],
+            )
+
+    def test_tcp_connection_no_transit_single_uses_its_report_population(self):
+        for site, value in (("eu", 1.9701569113685922), ("au", 0)):
+            self.f.report(
+                "itdk-role-by-strategy",
+                {"plot_percentages": {"No Transit Evidence": {"SINGLE": value}}},
+                mode="connection", site=site,
+            )
+        values = self.f.run(strict=True)["values"]
+        for site, value in (("eu", 1.9701569113685922), ("au", 0), ("af", None)):
+            key = f"stats.{site}.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct"
+            self.assertEqual(values[key]["raw"], value)
+        tex = (self.f.root / "tmp/values.tex").read_text(encoding="utf-8")
+        self.assertIn(
+            r"\setval{stats.eu.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct}{1.97\%}",
+            tex,
+        )
 
     def test_rt_and_successful_denominators_remain_distinct(self):
         self.f.baseline()
@@ -770,10 +802,11 @@ class PaperValuesTest(unittest.TestCase):
             phase="fi-mass",
         )
         result = self.f.run(strict=True)
-        self.assertEqual(result["values"]["classifier.random.threshold"]["raw"], threshold)
+        self.assertNotIn("classifier.random.threshold", result["values"])
         text = (self.f.root / "tmp/values.tex").read_text()
-        self.assertIn(r"\setval{classifier.random.threshold}{4.0383019016847365e-05}", text)
         self.assertIn(r"\setval{classifier.single.max-inc}{21845}", text)
+        plain = render({"small": dict(raw=threshold, unit="")}, CAMPAIGN)
+        self.assertIn(r"\setval{small}{4.0383019016847365e-05}", plain)
 
     def test_standard_todo_and_plain_values_in_the_tex_interface(self):
         text = render(
@@ -873,7 +906,7 @@ class PaperValuesTest(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("1477 empty", result.stdout)
+        self.assertIn("1264 empty", result.stdout)
         self.assertNotIn("Operations (", result.stdout)
         profiled = subprocess.run(
             [*result.args, "--timings"], cwd=self.f.root, text=True, capture_output=True
@@ -909,7 +942,7 @@ class PaperValuesTest(unittest.TestCase):
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("1477 empty", result.stdout)
+            self.assertIn("1264 empty", result.stdout)
 
 
 class DerivedCacheTest(unittest.TestCase):
@@ -947,9 +980,10 @@ class DerivedCacheTest(unittest.TestCase):
         return path, report
 
     def test_clipped_histogram_does_not_invent_tail_fractions(self):
-        self.histogram()
+        path, _ = self.histogram()
         v = self.f.run(strict=True)["values"]
-        self.assertEqual(v["incs.eu.tcp.no-conn.rt-base.per-bucket.p99"]["raw"], 900)
+        self.assertNotIn("incs.eu.tcp.no-conn.rt-base.per-bucket.p99", v)
+        self.assertEqual(increment_histogram(path)["RT-based:PER_BUCKET"]["p99"], 900)
         self.assertIsNone(v["incs.eu.tcp.no-conn.rt-base.per-bucket.below-1000.pct"]["raw"])
 
     def test_cached_histogram_is_not_read_again(self):
@@ -988,8 +1022,8 @@ class DerivedCacheTest(unittest.TestCase):
         self.histogram(counts=(90, 10), increments=(1, 1200))
         result = self.f.run(strict=True)
         self.assertEqual(result["cache"]["histogram_misses"], 1)
-        key = "incs.eu.tcp.no-conn.rt-base.per-bucket.p99"
-        self.assertEqual(result["values"][key]["raw"], 1200)
+        key = "incs.eu.tcp.no-conn.rt-base.per-bucket.below-1000.pct"
+        self.assertEqual(result["values"][key]["raw"], 90)
         self.assertEqual(self.f.run(recompute=True)["cache"]["histogram_misses"], 1)
 
     def test_bad_aggregate_receipt_preserves_both_existing_outputs(self):
@@ -1122,7 +1156,7 @@ class RealEUArchiveTest(unittest.TestCase):
                 strict=True,
             )
             v = result["values"]
-            self.assertEqual((result["available"], result["missing"]), (152, 1325))
+            self.assertEqual((result["available"], result["missing"]), (142, 1122))
             for protocol, total in (
                 ("icmp", 319105777),
                 ("tcp", 94046744),
@@ -1135,7 +1169,10 @@ class RealEUArchiveTest(unittest.TestCase):
                 v["results.eu.tcp.no-conn.rt-fi.rt-pop.constant.pct"]["formatted"],
                 "77.80%",
             )
-            self.assertEqual(v["refs.maxmind.build-month"]["raw"], "2026-11")
+            self.assertEqual(
+                v["stats.eu.tcp.conn.rt-base.itdk-strategy.no-transit-evidence.single.pct"]["raw"],
+                1.9701569113685922,
+            )
             self.assertTrue(
                 v["plots.eu.tcp.no-conn.rt-fi.os-by-strategy"]["raw"].startswith("reports/")
             )

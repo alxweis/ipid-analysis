@@ -2,7 +2,6 @@
 
 import ast
 from collections import defaultdict
-from datetime import datetime, timezone
 from functools import lru_cache
 import math
 from pathlib import Path
@@ -11,7 +10,6 @@ import re
 from paper_values.cache import verify_file
 from paper_values.inputs import component
 
-PROTOCOLS = ("icmp", "tcp", "udp")
 STRATEGIES = {
     "REFLECTION",
     "CONSTANT",
@@ -309,7 +307,7 @@ class Readers:
         reader = spec["reader"]
         if reader in ("missing", "plot"):
             return None, ()
-        if reader in ("classifier", "reference", "classified-min"):
+        if reader == "classifier":
             return self.summary(spec, site)
         a = self.report(spec, site)
         if reader == "snapshot":
@@ -458,47 +456,7 @@ class Readers:
     def summary(self, spec, site):
         reader = spec["reader"]
         reports = [a for a in self.reports.values() if site is None or a.site == site]
-        if reader == "reference":
-            if spec["stat"] == "itdk.release":
-                values = [
-                    (a.data["itdk_release"], a.name)
-                    for a in reports
-                    if a.kind == "itdk-consistency-summary" and a.data.get("itdk_release")
-                ]
-            else:
-                values = [
-                    (a.data["maxmind_provenance"]["build_epoch"], a.name)
-                    for a in reports
-                    if isinstance(a.data.get("maxmind_provenance"), dict)
-                    and type(a.data["maxmind_provenance"].get("build_epoch")) is int
-                ]
-            unique = {v for v, _ in values}
-            if len(unique) > 1:
-                raise ValueConflict("conflicting shared reference dataset")
-            if unique:
-                value = unique.pop()
-                if spec["stat"] != "itdk.release":
-                    value = datetime.fromtimestamp(value, timezone.utc).strftime("%Y-%m")
-                return value, tuple(n for _, n in values)
-        elif reader == "classified-min":
-            values, sources = [], []
-            for protocol in PROTOCOLS:
-                a = self.reports.get(
-                    (site, protocol, "no-connection", "rt-fi-merged", "strategies")
-                )
-                if a is None:
-                    return None, ()
-                c, total = counts(a.data)
-                value = percentage(
-                    total - c.get("NOT_ENOUGH_SAMPLES", 0) - c.get("UNCLASSIFIED", 0),
-                    total,
-                )
-                if value is None:
-                    return None, ()
-                values.append(value)
-                sources.append(a.name)
-            return min(values), tuple(sources)
-        elif reader == "classifier":
+        if reader == "classifier":
             versions = [
                 a
                 for a in reports

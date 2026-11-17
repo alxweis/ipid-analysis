@@ -10,39 +10,6 @@
   ],
   "metrics": [
     {
-      "prefix": "claims.{vp}",
-      "unit": "percent",
-      "sources": [
-        {
-          "reader": "classified-min"
-        }
-      ],
-      "values": {
-        "all-protocols.classified-min.pct": {
-          "definition": "Minimum classified fraction across ICMP/TCP/UDP; denominator: retained RT-result population"
-        }
-      }
-    },
-    {
-      "prefix": "claims.{vp}.icmp.fi-mass.recovered",
-      "unit": "percent",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "rt-outliers-1.pct": {
-          "definition": "RT outliers among deterministic classes recovered in FI-MASS",
-          "reason": "requires a paired RT-sequence/outlier analysis of the recovered cohort"
-        },
-        "rt-outliers-2.pct": {
-          "definition": "RT outliers among deterministic classes recovered in FI-MASS",
-          "reason": "requires a paired RT-sequence/outlier analysis of the recovered cohort"
-        }
-      }
-    },
-    {
       "prefix": "claims.{vp}.icmp.no-conn.fi-mass",
       "unit": "percent",
       "sources": [
@@ -470,7 +437,7 @@
       ],
       "values": {
         "flags.constant.syn-ack-relative-to-rst.gain-pct": {
-          "definition": "Relative CONSTANT-share increase: (SYN-ACK − RST) / RST",
+          "definition": "Relative CONSTANT-share increase: (SYN-ACK \u2212 RST) / RST",
           "read": {
             "stat": "flags.constant.syn-ack-relative-to-rst.gain-pct"
           }
@@ -801,68 +768,6 @@
       }
     },
     {
-      "prefix": "classifier",
-      "unit": "",
-      "sources": [
-        {
-          "reader": "threshold",
-          "protocol": "icmp",
-          "connection": "no-connection",
-          "phase": "fi-mass",
-          "kind": "random-reproducibility-evaluation"
-        },
-        {
-          "reader": "threshold",
-          "protocol": "tcp",
-          "connection": "no-connection",
-          "phase": "fi-mass",
-          "kind": "random-reproducibility-evaluation"
-        },
-        {
-          "reader": "threshold",
-          "protocol": "udp",
-          "connection": "no-connection",
-          "phase": "fi-mass",
-          "kind": "random-reproducibility-evaluation"
-        }
-      ],
-      "values": {
-        "random.threshold": {
-          "definition": "Actual production RANDOM score threshold from the measurement evaluation report"
-        }
-      }
-    },
-    {
-      "prefix": "constant.{vp}.tcp.conn.rt-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "zero.pct": {
-          "definition": "Constant-zero IPs / all CONSTANT IPs in the specified population",
-          "reason": "requires constant-value sequence analysis, respecting the classifier configuration"
-        }
-      }
-    },
-    {
-      "prefix": "constant.{vp}.tcp.no-conn.rt-fi",
-      "unit": "percent",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "zero.pct": {
-          "definition": "Constant-zero IPs / all CONSTANT IPs in the specified population",
-          "reason": "requires constant-value sequence analysis, respecting the classifier configuration"
-        }
-      }
-    },
-    {
       "prefix": "incs.{vp}.icmp.no-conn.fi-base",
       "unit": "increments",
       "sources": [
@@ -941,54 +846,6 @@
         {
           "protocol": "tcp",
           "connection": "connection",
-          "phase": "rt-base-vs-fi-base",
-          "reader": "histogram",
-          "kind": "increment-distributions"
-        }
-      ],
-      "values": {
-        "per-bucket.p99": {
-          "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
-          "read": {
-            "mode": "RT-based",
-            "strategy": "PER_BUCKET",
-            "stat": "p99"
-          },
-          "reason": "requires complete counts around the percentile, not sampled CDF points"
-        }
-      }
-    },
-    {
-      "prefix": "incs.{vp}.tcp.no-conn.fi-base",
-      "unit": "increments",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "no-connection",
-          "phase": "rt-base-vs-fi-base",
-          "reader": "histogram",
-          "kind": "increment-distributions"
-        }
-      ],
-      "values": {
-        "per-bucket.p99": {
-          "definition": "Discrete 99th percentile of positive PER_BUCKET increments",
-          "read": {
-            "mode": "Fixed-Interval",
-            "strategy": "PER_BUCKET",
-            "stat": "p99"
-          },
-          "reason": "requires complete counts around the percentile, not sampled CDF points"
-        }
-      }
-    },
-    {
-      "prefix": "incs.{vp}.tcp.no-conn.rt-base",
-      "unit": "increments",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "no-connection",
           "phase": "rt-base-vs-fi-base",
           "reader": "histogram",
           "kind": "increment-distributions"
@@ -1075,22 +932,6 @@
         }
       ],
       "values": {
-        "per-connection.below-2000.pct": {
-          "definition": "Positive strategy-selected increments below 2000",
-          "read": {
-            "mode": "Fixed-Interval",
-            "strategy": "PER_CONNECTION",
-            "stat": "below-2000.share-pct"
-          }
-        },
-        "per-destination.below-2000.pct": {
-          "definition": "Positive strategy-selected increments below 2000",
-          "read": {
-            "mode": "Fixed-Interval",
-            "strategy": "PER_DESTINATION",
-            "stat": "below-2000.share-pct"
-          }
-        },
         "single.below-2000.pct": {
           "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
           "read": {
@@ -1114,22 +955,6 @@
         }
       ],
       "values": {
-        "per-connection.below-2000.pct": {
-          "definition": "Positive strategy-selected increments below 2000",
-          "read": {
-            "mode": "RT-based",
-            "strategy": "PER_CONNECTION",
-            "stat": "below-2000.share-pct"
-          }
-        },
-        "per-destination.below-2000.pct": {
-          "definition": "Positive strategy-selected increments below 2000",
-          "read": {
-            "mode": "RT-based",
-            "strategy": "PER_DESTINATION",
-            "stat": "below-2000.share-pct"
-          }
-        },
         "single.below-2000.pct": {
           "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
           "read": {
@@ -1199,14 +1024,6 @@
         }
       ],
       "values": {
-        "single.below-2000.pct": {
-          "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
-          "read": {
-            "mode": "Fixed-Interval",
-            "strategy": "SINGLE",
-            "stat": "below-2000.share-pct"
-          }
-        },
         "per-bucket.below-1000.pct": {
           "definition": "Positive per-bucket increments < 1000 / all positive increments",
           "read": {
@@ -1238,14 +1055,6 @@
         }
       ],
       "values": {
-        "single.below-2000.pct": {
-          "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
-          "read": {
-            "mode": "RT-based",
-            "strategy": "SINGLE",
-            "stat": "below-2000.share-pct"
-          }
-        },
         "per-bucket.below-1000.pct": {
           "definition": "Positive per-bucket increments < 1000 / all positive increments",
           "read": {
@@ -1260,29 +1069,6 @@
             "mode": "RT-based",
             "strategy": "SINGLE",
             "stat": "below-1000.share-pct"
-          }
-        }
-      }
-    },
-    {
-      "prefix": "incs.{vp}.udp.no-conn.fi-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "udp",
-          "connection": "no-connection",
-          "phase": "rt-base-vs-fi-base",
-          "reader": "histogram",
-          "kind": "increment-distributions"
-        }
-      ],
-      "values": {
-        "single.below-2000.pct": {
-          "definition": "Positive SINGLE increments < 2000 / all positive SINGLE increments",
-          "read": {
-            "mode": "Fixed-Interval",
-            "strategy": "SINGLE",
-            "stat": "below-2000.share-pct"
           }
         }
       }
@@ -1338,7 +1124,7 @@
       ],
       "values": {
         "sequence-length.count": {
-          "definition": "Configured requests per IP: connections × requests per connection",
+          "definition": "Configured requests per IP: connections \u00d7 requests per connection",
           "read": {
             "field": "configured-sequence-length.count"
           }
@@ -1373,7 +1159,7 @@
       ],
       "values": {
         "sequence-length.count": {
-          "definition": "Configured requests per IP: connections × requests per connection",
+          "definition": "Configured requests per IP: connections \u00d7 requests per connection",
           "read": {
             "field": "configured-sequence-length.count"
           }
@@ -1411,12 +1197,6 @@
           "definition": "Configured FI request spacing",
           "read": {
             "field": "fixed-interval.request-interval"
-          }
-        },
-        "reply-timeout": {
-          "definition": "Configured reply timeout",
-          "read": {
-            "field": "maximum-tolerated-rtt"
           }
         }
       }
@@ -1521,16 +1301,10 @@
         }
       ],
       "values": {
-        "chi-square-cdf": {
-          "definition": "Current-paper synthetic validation PDF relative to the paper root"
-        },
         "fi-ideal.confusion-matrix": {
           "definition": "Current-paper synthetic validation PDF relative to the paper root"
         },
         "fi-lossy-reordered.confusion-matrix": {
-          "definition": "Current-paper synthetic validation PDF relative to the paper root"
-        },
-        "nist-cdf": {
           "definition": "Current-paper synthetic validation PDF relative to the paper root"
         }
       }
@@ -2082,340 +1856,11 @@
       }
     },
     {
-      "prefix": "probing.{vp}.icmp.no-conn.rt-successful",
-      "unit": "ips",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "count": {
-          "definition": "RT successes within exactly the selected FI-BASE target cohort",
-          "reason": "requires RT membership within the selected FI-BASE population; full RT totals are not comparable"
-        }
-      }
-    },
-    {
-      "prefix": "probing.{vp}.tcp.conn.rt-successful",
-      "unit": "ips",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "count": {
-          "definition": "RT successes within exactly the selected FI-BASE target cohort",
-          "reason": "requires RT membership within the selected FI-BASE population; full RT totals are not comparable"
-        }
-      }
-    },
-    {
-      "prefix": "probing.{vp}.tcp.no-conn.rt-successful",
-      "unit": "ips",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "count": {
-          "definition": "RT successes within exactly the selected FI-BASE target cohort",
-          "reason": "requires RT membership within the selected FI-BASE population; full RT totals are not comparable"
-        }
-      }
-    },
-    {
-      "prefix": "probing.{vp}.udp.no-conn.rt-successful",
-      "unit": "ips",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "count": {
-          "definition": "RT successes within exactly the selected FI-BASE target cohort",
-          "reason": "requires RT membership within the selected FI-BASE population; full RT totals are not comparable"
-        }
-      }
-    },
-    {
-      "prefix": "refs",
-      "unit": "",
-      "sources": [
-        {
-          "reader": "reference"
-        }
-      ],
-      "values": {
-        "itdk.release": {
-          "definition": "Recorded CAIDA ITDK release used for this VP",
-          "read": {
-            "stat": "itdk.release"
-          }
-        },
-        "maxmind.build-month": {
-          "definition": "UTC build month from the recorded MaxMind build epoch",
-          "read": {
-            "stat": "maxmind.build-month"
-          }
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.icmp.no-conn.fi-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "icmp",
-          "connection": "no-connection",
-          "phase": "fi-base",
-          "reader": "field",
-          "kind": "probing-intervals"
-        }
-      ],
-      "values": {
-        "probing-intervals.below-500ms.pct": {
-          "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
-          "read": {
-            "field": [
-              "below-500ms",
-              "share-pct"
-            ]
-          },
-          "reason": "exact interval distribution report required; sampled quantiles are insufficient"
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.icmp.no-conn.rt-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "icmp",
-          "connection": "no-connection",
-          "phase": "rt-base",
-          "reader": "field",
-          "kind": "probing-intervals"
-        }
-      ],
-      "values": {
-        "probing-intervals.below-500ms.pct": {
-          "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
-          "read": {
-            "field": [
-              "below-500ms",
-              "share-pct"
-            ]
-          },
-          "reason": "exact interval distribution report required; sampled quantiles are insufficient"
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.tcp.conn.fi-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "connection",
-          "phase": "fi-base",
-          "reader": "field",
-          "kind": "probing-intervals"
-        }
-      ],
-      "values": {
-        "probing-intervals.below-500ms.pct": {
-          "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
-          "read": {
-            "field": [
-              "below-500ms",
-              "share-pct"
-            ]
-          },
-          "reason": "exact interval distribution report required; sampled quantiles are insufficient"
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.tcp.conn.rt-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "connection",
-          "phase": "rt-base",
-          "reader": "field",
-          "kind": "probing-intervals"
-        }
-      ],
-      "values": {
-        "probing-intervals.below-500ms.pct": {
-          "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
-          "read": {
-            "field": [
-              "below-500ms",
-              "share-pct"
-            ]
-          },
-          "reason": "exact interval distribution report required; sampled quantiles are insufficient"
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.tcp.no-conn.fi-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "no-connection",
-          "phase": "fi-base",
-          "reader": "field",
-          "kind": "probing-intervals"
-        }
-      ],
-      "values": {
-        "probing-intervals.below-500ms.pct": {
-          "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
-          "read": {
-            "field": [
-              "below-500ms",
-              "share-pct"
-            ]
-          },
-          "reason": "exact interval distribution report required; sampled quantiles are insufficient"
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.tcp.no-conn.rt-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "no-connection",
-          "phase": "rt-base",
-          "reader": "field",
-          "kind": "probing-intervals"
-        }
-      ],
-      "values": {
-        "probing-intervals.below-500ms.pct": {
-          "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
-          "read": {
-            "field": [
-              "below-500ms",
-              "share-pct"
-            ]
-          },
-          "reason": "exact interval distribution report required; sampled quantiles are insufficient"
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.udp.no-conn.fi-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "udp",
-          "connection": "no-connection",
-          "phase": "fi-base",
-          "reader": "field",
-          "kind": "probing-intervals"
-        }
-      ],
-      "values": {
-        "probing-intervals.below-500ms.pct": {
-          "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
-          "read": {
-            "field": [
-              "below-500ms",
-              "share-pct"
-            ]
-          },
-          "reason": "exact interval distribution report required; sampled quantiles are insufficient"
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.udp.no-conn.rt-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "udp",
-          "connection": "no-connection",
-          "phase": "rt-base",
-          "reader": "field",
-          "kind": "probing-intervals"
-        }
-      ],
-      "values": {
-        "probing-intervals.below-500ms.pct": {
-          "definition": "Observed probing intervals strictly below 500 ms / all observed intervals",
-          "read": {
-            "field": [
-              "below-500ms",
-              "share-pct"
-            ]
-          },
-          "reason": "exact interval distribution report required; sampled quantiles are insufficient"
-        }
-      }
-    },
-    {
       "prefix": "stats.{vp}.icmp.no-conn.rt-fi",
       "unit": "percent",
       "sources": [
         {
           "protocol": "icmp",
-          "connection": "no-connection",
-          "phase": "rt-fi-merged",
-          "reader": "field",
-          "kind": "itdk-consistency-summary"
-        }
-      ],
-      "values": {
-        "itdk.strict-agreement.pct": {
-          "definition": "Strict agreement among eligible multi-interface ITDK nodes",
-          "read": {
-            "field": [
-              "strict-agreement-percentage"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.tcp.no-conn.rt-fi",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "no-connection",
-          "phase": "rt-fi-merged",
-          "reader": "field",
-          "kind": "itdk-consistency-summary"
-        }
-      ],
-      "values": {
-        "itdk.strict-agreement.pct": {
-          "definition": "Strict agreement among eligible multi-interface ITDK nodes",
-          "read": {
-            "field": [
-              "strict-agreement-percentage"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.udp.no-conn.rt-fi",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "udp",
           "connection": "no-connection",
           "phase": "rt-fi-merged",
           "reader": "field",
@@ -2753,29 +2198,6 @@
             "group": "zyxel",
             "strategy": "PER_DESTINATION",
             "stat": "share-pct"
-          }
-        }
-      }
-    },
-    {
-      "prefix": "stats.{vp}.tcp.conn.rt-base",
-      "unit": "percent",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "connection",
-          "phase": "rt-base",
-          "reader": "field",
-          "kind": "itdk-consistency-summary"
-        }
-      ],
-      "values": {
-        "itdk.strict-agreement.pct": {
-          "definition": "Strict eligible-node agreement for connection-oriented TCP",
-          "read": {
-            "field": [
-              "strict-agreement-percentage"
-            ]
           }
         }
       }
@@ -3209,98 +2631,6 @@
             "group": "zyxel",
             "strategy": "PER_DESTINATION",
             "stat": "share-pct"
-          }
-        }
-      }
-    },
-    {
-      "prefix": "results.{vp}.icmp.no-conn.fi-base",
-      "unit": "ips",
-      "sources": [
-        {
-          "protocol": "icmp",
-          "connection": "no-connection",
-          "phase": "fi-base",
-          "reader": "strategy",
-          "kind": "strategies"
-        }
-      ],
-      "values": {
-        "success.count": {
-          "definition": "Successful FI-BASE IP count",
-          "read": {
-            "population": "successful-results",
-            "strategy": "TOTAL",
-            "stat": "count"
-          }
-        }
-      }
-    },
-    {
-      "prefix": "results.{vp}.tcp.conn.fi-base",
-      "unit": "ips",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "connection",
-          "phase": "fi-base",
-          "reader": "strategy",
-          "kind": "strategies"
-        }
-      ],
-      "values": {
-        "success.count": {
-          "definition": "Successful FI-BASE IP count",
-          "read": {
-            "population": "successful-results",
-            "strategy": "TOTAL",
-            "stat": "count"
-          }
-        }
-      }
-    },
-    {
-      "prefix": "results.{vp}.tcp.no-conn.fi-base",
-      "unit": "ips",
-      "sources": [
-        {
-          "protocol": "tcp",
-          "connection": "no-connection",
-          "phase": "fi-base",
-          "reader": "strategy",
-          "kind": "strategies"
-        }
-      ],
-      "values": {
-        "success.count": {
-          "definition": "Successful FI-BASE IP count",
-          "read": {
-            "population": "successful-results",
-            "strategy": "TOTAL",
-            "stat": "count"
-          }
-        }
-      }
-    },
-    {
-      "prefix": "results.{vp}.udp.no-conn.fi-base",
-      "unit": "ips",
-      "sources": [
-        {
-          "protocol": "udp",
-          "connection": "no-connection",
-          "phase": "fi-base",
-          "reader": "strategy",
-          "kind": "strategies"
-        }
-      ],
-      "values": {
-        "success.count": {
-          "definition": "Successful FI-BASE IP count",
-          "read": {
-            "population": "successful-results",
-            "strategy": "TOTAL",
-            "stat": "count"
           }
         }
       }
@@ -3852,23 +3182,6 @@
     },
     {
       "prefix": "validation.data",
-      "unit": "sequences",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "fi.samples-per-class": {
-          "definition": "Synthetic dataset configuration from its validation report"
-        },
-        "rt.samples-per-class": {
-          "definition": "Synthetic dataset configuration from its validation report"
-        }
-      }
-    },
-    {
-      "prefix": "validation.data",
       "unit": "samples",
       "sources": [
         {
@@ -3971,67 +3284,31 @@
       "values": {
         "accuracy-pct": {
           "definition": "Accuracy on this synthetic ground-truth dataset"
-        },
-        "truth.constant.correct.pct": {
-          "definition": "Correct predictions / synthetic sequences of this ground-truth class"
-        },
-        "truth.per-bucket.correct.pct": {
-          "definition": "Correct predictions / synthetic sequences of this ground-truth class"
-        },
-        "truth.per-connection.correct.pct": {
-          "definition": "Correct predictions / synthetic sequences of this ground-truth class"
-        },
-        "truth.per-destination.correct.pct": {
-          "definition": "Correct predictions / synthetic sequences of this ground-truth class"
-        },
-        "truth.reflection.correct.pct": {
-          "definition": "Correct predictions / synthetic sequences of this ground-truth class"
-        },
-        "truth.single.correct.pct": {
-          "definition": "Correct predictions / synthetic sequences of this ground-truth class"
-        },
-        "truth.multi.predicted.per-bucket.pct": {
-          "definition": "Synthetic MULTI→PER_BUCKET errors / true MULTI sequences"
         }
       }
     },
     {
-      "prefix": "validation.rt-ideal",
-      "unit": "sequences",
+      "prefix": "stats.{vp}.tcp.conn.rt-base",
+      "unit": "percent",
       "sources": [
         {
-          "reader": "missing"
+          "reader": "field",
+          "protocol": "tcp",
+          "connection": "connection",
+          "phase": "rt-base",
+          "kind": "itdk-role-by-strategy"
         }
       ],
       "values": {
-        "truth.multi.predicted.per-bucket.count": {
-          "definition": "Synthetic MULTI sequences assigned this predicted class"
-        },
-        "truth.multi.predicted.single.count": {
-          "definition": "Synthetic MULTI sequences assigned this predicted class"
-        },
-        "truth.random.predicted.per-bucket.count": {
-          "definition": "Synthetic RANDOM→PER_BUCKET errors"
-        }
-      }
-    },
-    {
-      "prefix": "validation.random",
-      "unit": "",
-      "sources": [
-        {
-          "reader": "missing"
-        }
-      ],
-      "values": {
-        "chi-square.degrees-of-freedom": {
-          "definition": "Statistic from the synthetic RANDOM validation report"
-        },
-        "deterministic.maximum-p-value": {
-          "definition": "Statistic from the synthetic RANDOM validation report"
-        },
-        "random.minimum-p-value": {
-          "definition": "Statistic from the synthetic RANDOM validation report"
+        "itdk-strategy.no-transit-evidence.single.pct": {
+          "definition": "SINGLE / No Transit Evidence population in the TCP connection RT-BASE report",
+          "read": {
+            "field": [
+              "plot-percentages",
+              "no-transit-evidence",
+              "single"
+            ]
+          }
         }
       }
     }
