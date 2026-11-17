@@ -286,6 +286,12 @@ class CompletionTest(unittest.TestCase):
         path.write_text(json.dumps(report))
         return path, report
 
+    def test_tcp_duplicate_labels_cannot_be_hidden_by_reply_filtering(self):
+        self.labels([("1", "CONSTANT"), ("1", "NOT_ENOUGH_SAMPLES")], protocol="tcp")
+        self.labels([("1", "PER_CONNECTION")], protocol="tcp", mode="connection")
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            self.f.run(strict=True)
+
     def test_validation_reads_all_ten_metrics_and_two_matching_pdfs(self):
         self.validation()
         values = self.f.run(strict=True)["values"]

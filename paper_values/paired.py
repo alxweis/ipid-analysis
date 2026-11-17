@@ -105,16 +105,16 @@ def tcp_transition(paths, before, after, classifier_version):
             "WHERE IPID_SELECTION_STRATEGY != 'NOT_ENOUGH_SAMPLES'"
         )
         con.execute(
-            "CREATE TEMP TABLE before_valid AS SELECT * FROM before_source "
-            "SEMI JOIN after_valid USING (IP_ADDR) "
-            "WHERE IPID_SELECTION_STRATEGY != 'NOT_ENOUGH_SAMPLES'"
+            "CREATE TEMP TABLE before_cohort AS SELECT * FROM before_source "
+            "SEMI JOIN after_valid USING (IP_ADDR)"
         )
         unique(con, "after_source")
-        unique(con, "before_valid")
+        unique(con, "before_cohort")
         numerator, denominator = con.execute(
             "SELECT count(*) FILTER (WHERE b.IPID_SELECTION_STRATEGY = 'CONSTANT'), count(*) "
-            "FROM before_valid b JOIN after_valid a USING (IP_ADDR) "
-            "WHERE a.IPID_SELECTION_STRATEGY = 'PER_CONNECTION'"
+            "FROM before_cohort b JOIN after_valid a USING (IP_ADDR) "
+            "WHERE a.IPID_SELECTION_STRATEGY = 'PER_CONNECTION' "
+            "AND b.IPID_SELECTION_STRATEGY != 'NOT_ENOUGH_SAMPLES'"
         ).fetchone()
     return {
         "constant_to_per_connection_count": numerator,
