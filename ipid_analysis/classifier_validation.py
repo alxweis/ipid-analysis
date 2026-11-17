@@ -9,6 +9,7 @@ addresses.  Sequences and timestamps are serialized exactly like ``ipid.pq``.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import ipaddress
 import json
 from pathlib import Path
@@ -1294,10 +1295,11 @@ def validate_classifier(
         fixed_matrix,
         impairment_rng,
     )
+    mass_reorder_count = 20
     mass_reordered_matrix = apply_reordering(
         fixed_matrix,
         mass_reorder_rng,
-        reordered_count=20,
+        reordered_count=mass_reorder_count,
     )
     class_slices = {}
     class_offset = 0
@@ -1478,7 +1480,7 @@ def validate_classifier(
         detections=mass_reordered_detections,
         requests_per_connection=FIXED_REQUESTS_PER_CONNECTION,
         address_offset=next_address,
-        reordered_count=20,
+        reordered_count=mass_reorder_count,
     )
     reordered_count = round(CONNECTION_COUNT * FIXED_REQUESTS_PER_CONNECTION * (1.0 - 0.20) * 0.20)
     _append_dataset_rows(
@@ -1719,8 +1721,65 @@ def validate_classifier(
         subject="Synthetic Mass 4x25 Lossy impairment confusion matrices",
     )
 
+    summary_path = figure_dir / "classifier-validation-summary.json"
+    mass_length = int(fixed_matrix.shape[1])
+    lost = int(fixed_loss_mask[0].sum())
+    loss_pct = 100.0 * lost / mass_length
+    metric_sets = {
+        RT_DATASET: (rt_metrics, CONNECTION_COUNT * RT_REQUESTS_PER_CONNECTION, 0, 0),
+        FIXED_IDEAL_DATASET: (fixed_metrics, mass_length, 0, 0),
+        FIXED_LOSSY_DATASET: (lossy_metrics, mass_length, loss_pct, 0),
+        MASS_REORDERED_DATASET: (
+            mass_reordered_metrics, mass_length, 0, 100.0 * mass_reorder_count / mass_length
+        ),
+        FIXED_REORDERED_DATASET: (
+            reordered_metrics, mass_length, loss_pct, 100.0 * reordered_count / (mass_length - lost)
+        ),
+    }
+    _write_json(
+        {
+            "schema_version": 1,
+            **common_metadata,
+            "production_profile": (
+                candidate_random_score
+                and candidate_threshold == CANDIDATE_RANDOM_MIN_SCORE
+                and candidate_null_table_samples == CANDIDATE_NULL_TABLE_SAMPLES
+                and candidate_null_table_seed == CANDIDATE_NULL_TABLE_SEED
+            ),
+            "classifier_sources": {
+                name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
+                for name in (
+                    "strategies.py", "random_classifier_candidate.py", "increment_uniformity.py",
+                    "empirical_random_uniformity.py", "classifier_validation.py",
+                )
+            },
+            "datasets": {
+                name: {
+                    "sequence_length": length,
+                    "loss_pct": loss,
+                    "reordering_pct": reorder,
+                    "metrics": metrics,
+                }
+                for name, (metrics, length, loss, reorder) in metric_sets.items()
+            },
+            "figures": {
+                name: {
+                    "filename": path.name,
+                    "size_bytes": path.stat().st_size,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+                for name, path in (
+                    ("mass-ideal", mass_ideal_pdf),
+                    ("mass-lossy-vs-reordered", mass_lossy_vs_reordered_pdf),
+                )
+            },
+        },
+        summary_path,
+    )
+
     return {
         "dataset": dataset_path,
+        "summary_json": summary_path,
         "base_reordered_3_pdf": base_reordered_3_pdf,
         "base_reordered_3_json": base_reordered_3_json,
         "base_reordered_4_pdf": base_reordered_4_pdf,

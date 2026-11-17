@@ -55,7 +55,9 @@ class ValueCache:
                 self.document = data
         except (OSError, ValueError, AttributeError):
             pass
-        code = Path(__file__).with_name("readers.py").read_bytes()
+        code = b"".join(
+            Path(__file__).with_name(name).read_bytes() for name in ("readers.py", "paired.py")
+        )
         identity = {
             "campaign": campaign,
             "calculation_sha256": hashlib.sha256(code).hexdigest(),
@@ -80,12 +82,14 @@ class ValueCache:
 
     def derive(self, operation, path, report_sha256, compute):
         """Return cached raw scalars when inputs are unchanged; never cache a missing file."""
-        path = Path(path)
+        paths = [Path(p) for p in path] if isinstance(path, (list, tuple)) else [Path(path)]
         with self.diagnostics.measure("cache.check"):
-            if not path.is_file():
+            if not paths or any(not p.is_file() for p in paths):
                 return {}
-            before = fingerprint(path)
-            key = digest([operation, before["path"], report_sha256])
+            before = [fingerprint(p) for p in paths]
+            if len(paths) == 1:
+                before = before[0]
+            key = digest([operation, [str(p.resolve()) for p in paths], report_sha256])
             entry = self.entries.get(key)
             try:
                 if (
@@ -99,11 +103,13 @@ class ValueCache:
             except (KeyError, TypeError, ValueError):
                 pass
         self.stats[operation + "_misses"] += 1
-        self.diagnostics.call("cache.verify", verify_file, path)
+        for p in paths:
+            self.diagnostics.call("cache.verify", verify_file, p)
         values = self.diagnostics.call("cache.compute", compute)
         with self.diagnostics.measure("cache.check"):
-            if fingerprint(path) != before:
-                raise ValueError(f"aggregate changed while reading: {path}")
+            after = [fingerprint(p) for p in paths]
+            if (after[0] if len(paths) == 1 else after) != before:
+                raise ValueError(f"aggregate changed while reading: {paths}")
         if self.enabled:
             self.entries[key] = {
                 "input": before,

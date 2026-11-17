@@ -732,6 +732,13 @@ separately. Out-of-scope rejection rates and detected-output counts are written 
 and are not mixed into the supported-strategy accuracy, precision, recall, or
 F1 scores.
 
+Validation also writes
+`reports/figures/classifier-validation/classifier-validation-summary.json`
+with the Base/Mass scenario parameters, confusion metrics, production-profile
+identity and selected PDF hashes. `make paper-values` reads this report directly;
+rerun `IPID_ANALYSIS_SCOPE= make validate-classifier` after updating the exporter.
+See [paper-value sources and matched populations](docs/PAPER_VALUES.md).
+
 The raw-format synthetic sequences and detected labels are written to
 `data/processed/classifier-validation/synthetic-classifier-validation.pq`.
 Five focused confusion-matrix PDFs are written below

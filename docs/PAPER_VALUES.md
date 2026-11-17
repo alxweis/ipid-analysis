@@ -100,10 +100,17 @@ Default read-only inputs:
 
 - `reports/continental/<campaign>`: existing JSON reports and selected PDF metadata;
 - `data/processed/continental/<campaign>`: the existing small OS/strategy and
-  positive-increment histogram aggregates needed by selected metrics;
-- `data/raw/continental/<campaign>`: measurement YAML snapshots only.
+  positive-increment histogram aggregates, and per-IP strategy labels for paired metrics;
+- `data/raw/continental/<campaign>`: measurement YAML snapshots and the persisted
+  FI target samples with their JSON metadata;
+- `reports/figures/classifier-validation/classifier-validation-summary.json` and
+  its two selected PDFs. Override this directory with `--validation-root`.
 
-The current paper selection obtains its reported values from JSON. The large
+Archive exports do not read implicit global validation inputs. Use
+`--validation-root` explicitly when combining an archive with local validation.
+
+The current paper selection reads reported scalars directly from JSON and computes
+only the explicitly selected derived quantities from existing Parquet inputs. The large
 repetition CSVs contain per-target observations, not additional selected paper
 scalars, and are not scanned. A future CSV metric should name its exact file,
 columns and reduction explicitly rather than introducing a generic directory-wide
@@ -120,15 +127,16 @@ in strict mode. Neither timestamps nor population sizes select a baseline.
 Later publication of the required provenance makes the values available on the
 next export. Conflicting explicit identities and conflicting canonical copies
 still fail strict export.
-Existing JSON completion receipts are checked against bytes. PDF checks validate
-the signature, size and receipt metadata, not a full-file PDF hash. Missing
+Existing JSON completion receipts are checked against bytes. Campaign PDF checks validate
+the signature, size and receipt metadata. The two global validation PDFs additionally
+match the full hashes in their generating summary. Missing
 receipts remain supported for legacy reports. The output contains paper-relative
 PDF paths; copy `reports/` without changing its relative structure.
 
 ## Derived-value cache
 
 `values.json` caches only derived scalar tables from existing processed inputs:
-OS/strategy cells and exact increment-histogram statistics. It does **not** cache
+OS/strategy cells, exact increment-histogram statistics and paired-population counts. It does **not** cache
 entire JSON reports, PDF inventories or raw probe sequences. Source reports are
 read fresh on every export. One source file is reused within a run for all metrics
 that depend on it.
@@ -240,32 +248,67 @@ The previously absent
 reads the existing report's `plot_percentages["No Transit Evidence"]["SINGLE"]`.
 This is already a percentage, not a fraction, and is not multiplied by 100.
 
-Fifteen retained numeric families still need their dedicated scientific inputs
-or calculations; the exporter continues to leave them empty rather than guessing:
+All 17 formerly unimplemented families (40 numeric keys plus two PDF keys) have
+explicit readers. A missing input still leaves the corresponding value empty;
+there are no `reader: "missing"` definitions in the selected catalog.
 
-```text
-results.{vp}.icmp.fi-to-rt-success.pct
-results.{vp}.tcp.conn.fi-to-rt-success.pct
-results.{vp}.tcp.no-conn.fi-to-rt-success.pct
-results.{vp}.udp.fi-to-rt-success.pct
-results.{vp}.tcp.rt-no-conn-to-conn.constant.per-connection.column-pct
-validation.data.fi.sequence-length
-validation.data.loss.pct
-validation.data.reordering.pct
-validation.data.rt.sequence-length
-validation.fi-ideal.accuracy-pct
-validation.fi-ideal.truth.multi.misclassified.pct
-validation.fi-lossy.accuracy-pct
-validation.fi-reordered.accuracy-pct
-validation.lossy-reordered.multi-random.minimum-recall.pct
-validation.rt-ideal.accuracy-pct
+### Synthetic validation
+
+After updating the checkout, regenerate the current production-profile validation:
+
+```sh
+IPID_ANALYSIS_SCOPE= make validate-classifier
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
 ```
 
-The two global validation PDF keys are retained as well; their automatic lookup
-is still missing. The four FI/RT ratios require matched target populations, and
-the TCP transition requires a join of the two RT populations by IP. Validation
-values must describe the current synthetic scenarios and production classifier.
-Pruning alone neither produces these inputs nor makes an export complete.
+The first command additionally writes
+`reports/figures/classifier-validation/classifier-validation-summary.json`.
+It includes the actual Base/Mass sequence lengths and impairment settings,
+the existing confusion metrics for all five needed scenarios, classifier/code
+identity and hashes for the two selected PDFs. It records the same metrics used
+by the figures, without rerunning classification for the exporter.
+
+The ten validation keys and two PDF keys read this summary automatically.
+Accuracy fractions are converted to percentages once. MULTI misclassification
+uses `(support - correct) / support`; minimum recall is the minimum MULTI/RANDOM
+class recall across the separate 20% Lossy and 20% Reordered scenarios. It does
+not silently substitute the combined loss-and-reordering scenario.
+
+Legacy/custom-null-table validation results and reports from different classifier
+or generator code are rejected. Use the normal production defaults for the paper;
+the documented small smoke run is not an exportable production-profile result.
+A missing summary stays empty until validation is run. Existing NIST diagnostics
+remain a separate command and are not substituted for older paper figures.
+
+### Matched FI/RT and TCP populations
+
+For each VP/protocol/mode, the FI/RT reader uses the canonical RT-BASE and FI-BASE
+strategy Parquets. The target is
+`data/raw/continental/<campaign>/<vp>/zmap/<zmap-id>/zmap-fixed-base-sample.pq`
+with its `.json` metadata; TCP connection mode uses `zmap-connection-sample.pq`
+instead. The persisted metadata must identify that discovery and target type.
+The target size must match FI coverage, and all FI results must belong to it.
+
+Let T be this target set, R the sufficiently answered RT rows in T, and F the
+sufficiently answered FI rows. The exported value is `100 * |F| / |R|`.
+`UNCLASSIFIED` still means sufficient replies and is included; only
+`NOT_ENOUGH_SAMPLES` is excluded. This is a ratio of success counts in the same
+target population, not `|F intersection R| / |R|`, and can exceed 100%.
+An empty denominator stays unavailable.
+
+The TCP transition joins the no-connection and connection RT-BASE labels by IP,
+retaining only IPs with sufficient replies in both measurements. The denominator
+is the number of PER_CONNECTION labels after connection establishment in this
+common population. The numerator is the subset labelled CONSTANT before it.
+
+Both readers require matching discovery/classifier identities and verify that
+Parquet class counts agree with the selected JSON reports. Duplicate IPs in the
+joined populations, invalid target membership or inconsistent identities reject
+strict export. They never reclassify sequences or rebuild existing analyses.
+DuckDB uses at most 2 GB and eight threads, with isolated temporary spill files
+removed on completion. Only the small resulting counts are cached in `values.json`.
+All contributing Parquets, target metadata and report hashes invalidate the cache
+when changed. A warm export avoids repeating the joins.
 
 For an existing supplemental metric report:
 

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -276,6 +277,23 @@ class ClassifierValidationTest(unittest.TestCase):
                 3 * rt_row_count + 2 * 8 + 4 * fixed_impaired_row_count,
             )
             rows = table.to_pylist()
+            summary = json.loads(outputs["summary_json"].read_text())
+            self.assertEqual(summary["schema_version"], 1)
+            self.assertFalse(summary["production_profile"])  # 64 null samples, a smoke run.
+            self.assertEqual(summary["datasets"][RT_DATASET]["sequence_length"], 16)
+            self.assertEqual(summary["datasets"][FIXED_IDEAL_DATASET]["sequence_length"], 100)
+            self.assertEqual(summary["datasets"][FIXED_LOSSY_DATASET]["loss_pct"], 20)
+            self.assertEqual(summary["datasets"][MASS_REORDERED_DATASET]["reordering_pct"], 20)
+            for dataset, record in summary["datasets"].items():
+                subset = [r for r in rows if r["DATASET"] == dataset]
+                correct = sum(r["EXPECTED_STRATEGY"] == r["DETECTED_STRATEGY"] for r in subset)
+                self.assertEqual(record["metrics"]["sample_count"], len(subset))
+                self.assertEqual(record["metrics"]["correct_count"], correct)
+                self.assertEqual(record["metrics"]["accuracy"], correct / len(subset))
+            for record in summary["figures"].values():
+                content = (figure_dir / record["filename"]).read_bytes()
+                self.assertEqual(len(content), record["size_bytes"])
+                self.assertEqual(hashlib.sha256(content).hexdigest(), record["sha256"])
             datasets = {row["DATASET"] for row in rows}
             self.assertEqual(
                 datasets,
