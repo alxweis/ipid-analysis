@@ -14,6 +14,8 @@ from time import perf_counter
 from typing import Any
 import zipfile
 
+from paper_values.diagnostics import Diagnostics
+
 SITES = ("af", "as", "au", "eu", "na", "sa")
 
 
@@ -160,7 +162,9 @@ class Plot:
 
 
 class Inputs:
-    def __init__(self, paths=(), archive=None, *, workers=8, contexts=(), plot_contexts=()):
+    def __init__(
+        self, paths=(), archive=None, *, workers=8, contexts=(), plot_contexts=(), diagnostics=None
+    ):
         self.reports_root = Path(paths[0]) if paths and paths[0] is not None else None
         self.paths = [Path(p) for p in paths if p is not None and Path(p).is_dir()]
         self.archive = zipfile.ZipFile(archive) if archive else None
@@ -171,6 +175,7 @@ class Inputs:
         self.inventory = {}
         self.timings = {}
         self.archive_stamp = stamp(archive) if archive else None
+        self.diagnostics = diagnostics or Diagnostics()
 
     def close(self):
         if self.archive:
@@ -272,30 +277,33 @@ class Inputs:
 
     def read_payload(self, operation, name, origin, site, relative, read):
         """Check source freshness and optional receipts while reading once."""
-        marker = self.read_marker(name, origin)
-        before = self.fingerprint(name, origin, marker)
+        checks = "json.check" if operation == "metadata" else "pdf.check"
+        with self.diagnostics.measure(checks):
+            marker = self.read_marker(name, origin)
+            before = self.fingerprint(name, origin, marker)
         size = before["source"][-1 if origin == "archive" else 0]
         payload = read(size)
-        if self.fingerprint(name, origin, self.read_marker(name, origin)) != before:
-            raise ValueError(f"{operation} changed while reading")
-        if marker is not None:
-            valid = (
-                isinstance(marker, dict)
-                and marker.get("status") == "complete"
-                and marker.get("size_bytes") == payload["size_bytes"]
-            )
-            if valid:
+        with self.diagnostics.measure(checks):
+            if self.fingerprint(name, origin, self.read_marker(name, origin)) != before:
+                raise ValueError(f"{operation} changed while reading")
+            if marker is not None:
                 valid = (
-                    marker.get("sha256") == payload["sha256"]
-                    if operation == "metadata"
-                    else re.fullmatch(r"[a-fA-F0-9]{64}", str(marker.get("sha256", "")))
+                    isinstance(marker, dict)
+                    and marker.get("status") == "complete"
+                    and marker.get("size_bytes") == payload["size_bytes"]
                 )
-            if not valid:
-                raise ValueError(
-                    "completion receipt does not match artifact bytes"
-                    if operation == "metadata"
-                    else "PDF completion receipt does not match file metadata"
-                )
+                if valid:
+                    valid = (
+                        marker.get("sha256") == payload["sha256"]
+                        if operation == "metadata"
+                        else re.fullmatch(r"[a-fA-F0-9]{64}", str(marker.get("sha256", "")))
+                    )
+                if not valid:
+                    raise ValueError(
+                        "completion receipt does not match artifact bytes"
+                        if operation == "metadata"
+                        else "PDF completion receipt does not match file metadata"
+                    )
         return payload, marker
 
     def load_artifact(self, entry):
@@ -303,9 +311,9 @@ class Inputs:
         try:
 
             def metadata(size):
-                content = read()
+                content = self.diagnostics.call("json.read", read)
                 return dict(
-                    data=json.loads(content),
+                    data=self.diagnostics.call("json.decode", json.loads, content),
                     sha256=hashlib.sha256(content).hexdigest(),
                     size_bytes=len(content),
                 )
@@ -402,7 +410,14 @@ class Inputs:
                         raise ValueError("report file has no PDF signature")
                 return dict(size_bytes=size)
 
-            payload, marker = self.read_payload("pdf", name, origin, site, relative, signature)
+            payload, marker = self.read_payload(
+                "pdf",
+                name,
+                origin,
+                site,
+                relative,
+                lambda size: self.diagnostics.call("pdf.read", signature, size),
+            )
             plot.size_bytes = payload["size_bytes"]
             plot.receipt_sha256 = marker["sha256"] if marker is not None else None
         except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:

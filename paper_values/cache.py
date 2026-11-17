@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from paper_values.diagnostics import Diagnostics
+
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
@@ -42,8 +44,9 @@ def verify_file(path):
 
 
 class ValueCache:
-    def __init__(self, path, campaign, *, recompute=False, enabled=True):
+    def __init__(self, path, campaign, *, recompute=False, enabled=True, diagnostics=None):
         self.path, self.recompute, self.enabled = Path(path), recompute, enabled
+        self.diagnostics = diagnostics or Diagnostics()
         self.stats = Counter()
         self.document = {"schema_version": 2, "contexts": {}}
         try:
@@ -78,27 +81,29 @@ class ValueCache:
     def derive(self, operation, path, report_sha256, compute):
         """Return cached raw scalars when inputs are unchanged; never cache a missing file."""
         path = Path(path)
-        if not path.is_file():
-            return {}
-        before = fingerprint(path)
-        key = digest([operation, before["path"], report_sha256])
-        entry = self.entries.get(key)
-        try:
-            if (
-                self.enabled
-                and not self.recompute
-                and entry["input"] == before
-                and entry["sha256"] == digest(entry["values"])
-            ):
-                self.stats[operation + "_hits"] += 1
-                return entry["values"]
-        except (KeyError, TypeError, ValueError):
-            pass
+        with self.diagnostics.measure("cache.check"):
+            if not path.is_file():
+                return {}
+            before = fingerprint(path)
+            key = digest([operation, before["path"], report_sha256])
+            entry = self.entries.get(key)
+            try:
+                if (
+                    self.enabled
+                    and not self.recompute
+                    and entry["input"] == before
+                    and entry["sha256"] == digest(entry["values"])
+                ):
+                    self.stats[operation + "_hits"] += 1
+                    return entry["values"]
+            except (KeyError, TypeError, ValueError):
+                pass
         self.stats[operation + "_misses"] += 1
-        verify_file(path)
-        values = compute()
-        if fingerprint(path) != before:
-            raise ValueError(f"aggregate changed while reading: {path}")
+        self.diagnostics.call("cache.verify", verify_file, path)
+        values = self.diagnostics.call("cache.compute", compute)
+        with self.diagnostics.measure("cache.check"):
+            if fingerprint(path) != before:
+                raise ValueError(f"aggregate changed while reading: {path}")
         if self.enabled:
             self.entries[key] = {
                 "input": before,
