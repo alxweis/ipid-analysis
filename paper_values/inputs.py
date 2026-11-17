@@ -105,6 +105,21 @@ PREFIXES = (
     "c-fi-b_",
 )
 
+PHASE_DIRECTORIES = {
+    "rt-base": ("rt-based-base",),
+    "fi-base": ("fixed-interval-base",),
+    "fi-mass": ("fixed-interval-mass",),
+    "rt-fi-merged": ("merged", "rt-based-base_fixed-interval-mass"),
+    "rt-base-vs-fi-base": ("comparison", "rt-based-base_fixed-interval-base"),
+}
+
+
+def protocol_from_run(token):
+    for prefix, protocol in (("icmp_", "icmp"), ("tcp-", "tcp"), ("udp-dns-", "udp")):
+        if token.startswith(prefix):
+            return protocol
+    return ""
+
 
 def component(value: Any) -> str:
     value = str(value).lower().replace("_", "-")
@@ -163,21 +178,60 @@ class Inputs:
 
     def scan(self):
         start = perf_counter()
+        self.inventory = {root: [] for root in self.paths}
+        jobs = []
         for root in self.paths:
-            files = []
-
-            def failed(error):
+            try:
+                with os.scandir(root) as entries:
+                    jobs.extend(
+                        (root, Path(entry.path))
+                        for entry in entries
+                        if entry.name in SITES and entry.is_dir(follow_symlinks=False)
+                    )
+            except OSError as error:
                 self.errors.append({"source": str(root), "error": str(error)})
-
-            for directory, directories, names in os.walk(root, onerror=failed):
-                directories[:] = [d for d in directories if not d.startswith(".")]
-                files.extend(
-                    Path(directory) / name
-                    for name in names
-                    if not name.startswith(".") and name.endswith((".json", ".pdf"))
-                )
-            self.inventory[root] = sorted(files)
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            for root, files, errors in pool.map(self.scan_site, sorted(jobs)):
+                self.inventory[root].extend(files)
+                self.errors.extend(errors)
+        for files in self.inventory.values():
+            files.sort()
         self.timings["inventory"] = perf_counter() - start
+
+    def scan_site(self, job):
+        """Walk one VP; prune branches before their directory listings are requested."""
+        root, site = job
+        files, errors = [], []
+        branches = defaultdict(set)
+        contexts = self.contexts | {tuple(scope.split(".")) for scope in self.plot_contexts}
+        for protocol, connection, phase, kind in contexts:
+            if phase not in PHASE_DIRECTORIES:
+                continue
+            path = (connection, *PHASE_DIRECTORIES[phase])
+            if kind == "random-reproducibility-evaluation":
+                path += ("random-reproducibility",)
+            branches[protocol].update(path[:i] for i in range(1, len(path) + 1))
+
+        def failed(error):
+            errors.append({"source": str(site), "error": str(error)})
+
+        for directory, directories, names in os.walk(site, onerror=failed):
+            directories[:] = [d for d in directories if not d.startswith(".")]
+            parts = Path(directory).relative_to(site).parts
+            run_index = 1 if parts and parts[0] == "figures" else 0
+            if len(parts) > run_index:
+                protocol = protocol_from_run(parts[run_index])
+                # Unknown layouts retain the previous recursive behavior. Only
+                # recognized measurement directories can be pruned safely.
+                if protocol and contexts:
+                    tail = parts[run_index + 1 :]
+                    directories[:] = [d for d in directories if (*tail, d) in branches[protocol]]
+            files.extend(
+                Path(directory) / name
+                for name in names
+                if not name.startswith(".") and name.endswith((".json", ".pdf"))
+            )
+        return root, files, errors
 
     def files(self):
         if self.archive:
@@ -398,15 +452,7 @@ def identify(artifact, relative, *, allow_unknown_kind=False):
     parts = PurePosixPath(relative).parts
     if protocol not in PROTOCOLS and parts:
         token = parts[0] if parts[0] != "figures" else parts[1] if len(parts) > 1 else ""
-        protocol = (
-            "icmp"
-            if token.startswith("icmp_")
-            else "tcp"
-            if token.startswith("tcp-")
-            else "udp"
-            if token.startswith("udp-dns-")
-            else ""
-        )
+        protocol = protocol_from_run(token)
     stem = PurePosixPath(relative).stem
     if stem in ("shared-os-coverage", "os-coverage") and protocol in PROTOCOLS:
         artifact.protocol, artifact.connection = protocol, "no-connection"

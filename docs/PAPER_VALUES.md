@@ -99,9 +99,19 @@ make paper-values CAMPAIGN_ID=geo-full-20261107-r1 \
 ```
 
 `--recompute` ignores cached derived values. It does not bypass a mounted S3
-filesystem's own caches. `--io-workers 1` selects serial reads; the default is 8
-(maximum 32). ZIP reads are serial. Local ZIP timings are not performance promises
-for the S3 mounts.
+filesystem's own caches. `--io-workers` bounds both directory inventory and file
+reads: the default is 8 (maximum 32); 1 selects serial operation. Inventory jobs
+cover one existing VP directory in either the reports or processed campaign root
+(at most 12 jobs). Only the six VP directories are searched. Within recognized
+measurement directories, the metric definitions select connection modes, phases,
+merge/comparison pairs and the random-reproducibility evaluation subdirectory
+before their directory listings are requested. Unknown layouts inside a VP retain
+recursive discovery. Results are sorted independently of worker completion order.
+
+The inventory is rebuilt on every invocation; it is not stored in `values.json`.
+New reports are rediscovered, and listing/read errors still fail strict export.
+ZIP reads remain serial. Compare `inventory` and `total` in `--timings` on the
+actual Analysis VM; local ZIP or filesystem timings do not predict S3 mount speed.
 
 ## Partial archives and missing results
 
