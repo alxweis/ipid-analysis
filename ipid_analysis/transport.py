@@ -67,7 +67,7 @@ def _mount(destination: Path):
         os.close(descriptor)
 
 
-def native_put(source: Path, destination: Path) -> None:
+def native_put(source: Path, destination: Path, *, immutable: bool = False) -> None:
     """Known-size object upload; never terminate an unknown-length FUSE stream.
 
     SIGHUP only clears the mount's directory cache. It does not restart the mount
@@ -87,6 +87,7 @@ def native_put(source: Path, destination: Path) -> None:
                     "--ignore-times",
                     "--no-traverse",
                     "--s3-no-check-bucket",
+                    *(["--immutable"] if immutable else []),
                     str(source),
                     remote,
                 ],

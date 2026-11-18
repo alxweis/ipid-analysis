@@ -15,6 +15,7 @@ from pathlib import Path
 import platform
 import shutil
 import sys
+import tempfile
 
 import pyarrow.parquet as pq
 
@@ -236,6 +237,70 @@ def publish_file(
                 temporary.unlink(missing_ok=True)
         info["mtime_ns"] = destination.stat().st_mtime_ns
         _write_json(marker, info, remote=remote)
+        inventory = _publications.get()
+        if inventory is not None:
+            inventory.append(destination)
+    return destination
+
+
+def _create_file(source: Path, destination: Path, *, remote: bool) -> None:
+    """Publish new bytes only; a local hard link is an atomic no-replace commit."""
+    if remote:
+        native_put(source, destination, immutable=True)
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".new-", dir=destination.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream, source.open("rb") as input_stream:
+            shutil.copyfileobj(input_stream, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def publish_new_file(source: Path, destination: Path, *, inputs=(), parameters=None) -> Path:
+    """Create an additional artifact and receipt without replacing existing files.
+
+    Unlike publish_file, this never invalidates or repairs an existing receipt.
+    Existing destinations, dangling symlinks and orphan receipts are conflicts.
+    """
+    source, destination = Path(source), Path(destination)
+    check_scratch_budget()
+    persistent = any(
+        root.absolute() in destination.absolute().parents for root in persistent_roots()
+    )
+    remote = mounted_storage() and persistent
+    if persistent:
+        validate_storage()
+    marker = completion_path(destination)
+    with exclusive_lock(str(destination.resolve())):
+        if os.path.lexists(destination) or os.path.lexists(marker):
+            raise FileExistsError(
+                f"refusing to replace existing artifact or receipt: {destination}"
+            )
+        info = {
+            "version": 1,
+            "status": "complete",
+            "operation": "create-only-publication",
+            "size_bytes": source.stat().st_size,
+            "sha256": file_digest(source),
+            "sources": fingerprints(inputs),
+            "parameters": parameters or {},
+            **provenance(),
+        }
+        _create_file(source, destination, remote=remote)
+        info["mtime_ns"] = destination.stat().st_mtime_ns
+        temporary = temporary_path(marker)
+        try:
+            temporary.write_text(
+                json.dumps(info, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+            )
+            _create_file(temporary, marker, remote=remote)
+        finally:
+            temporary.unlink(missing_ok=True)
         inventory = _publications.get()
         if inventory is not None:
             inventory.append(destination)
