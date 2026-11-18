@@ -81,6 +81,12 @@ paper-values:
 	@test -n "$(CAMPAIGN_ID)" || { echo 'Usage: make paper-values CAMPAIGN_ID=...'; exit 2; }
 	$(PYTHON_INTERPRETER) -B -m paper_values --campaign "$(CAMPAIGN_ID)" $(if $(strip $(ARGS)),$(ARGS),$(args))
 
+## Render additional paper PDFs from existing small JSON reports (never overwrite)
+##   usage: make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"
+.PHONY: paper-plots
+paper-plots:
+	$(PYTHON_INTERPRETER) -B -m ipid_analysis.paper_ready $(if $(CAMPAIGN_ID),--campaign "$(CAMPAIGN_ID)",) $(ARGS)
+
 ## Download/import and cache RIPE Atlas traceroute roles for one campaign
 ##   usage: make prepare-ripe-atlas ARGS="--campaign-start 2026-09-21T02:09:12Z"
 .PHONY: prepare-ripe-atlas

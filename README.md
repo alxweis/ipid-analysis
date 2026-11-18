@@ -1,5 +1,12 @@
 # ipid-analysis
 
+Create additional single-column IMC figures from existing small result JSONs with
+`make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"`.
+The command supports the stateless RT-base/FI-mass measurement-type and ITDK-role
+plots and writes sibling `__paper.pdf` variants. Original artifacts and existing
+paper variants are never overwritten. See [Paper-ready plots](docs/PAPER_PLOTS.md)
+for selection, RAM/S3 publication, the design profile and read-only repeat runs.
+
 Export geographic measurement results for LaTeX with
 `make paper-values CAMPAIGN_ID=geo-full-20261107-r1`.
 The default export contains only the current manuscript's selected values and

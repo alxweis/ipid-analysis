@@ -163,7 +163,15 @@ class Plot:
 
 class Inputs:
     def __init__(
-        self, paths=(), archive=None, *, workers=8, contexts=(), plot_contexts=(), diagnostics=None
+        self,
+        paths=(),
+        archive=None,
+        *,
+        workers=8,
+        contexts=(),
+        plot_contexts=(),
+        diagnostics=None,
+        sites=SITES,
     ):
         self.reports_root = Path(paths[0]) if paths and paths[0] is not None else None
         self.paths = [Path(p) for p in paths if p is not None and Path(p).is_dir()]
@@ -172,6 +180,7 @@ class Inputs:
         self.contexts = set(contexts)
         self.plot_contexts = set(plot_contexts)
         self.workers = 1 if archive else workers
+        self.sites = frozenset(sites)
         self.inventory = {}
         self.timings = {}
         self.archive_stamp = stamp(archive) if archive else None
@@ -191,7 +200,7 @@ class Inputs:
                     jobs.extend(
                         (root, Path(entry.path))
                         for entry in entries
-                        if entry.name in SITES and entry.is_dir(follow_symlinks=False)
+                        if entry.name in self.sites and entry.is_dir(follow_symlinks=False)
                     )
             except OSError as error:
                 self.errors.append({"source": str(root), "error": str(error)})
