@@ -11,12 +11,18 @@ Supported input/output pairs, in the same directory:
 | --- | --- |
 | `n-rt-b_fi-m_measurement-type-by-strategy.json` | `n-rt-b_fi-m_measurement-type-by-strategy__paper.pdf` |
 | `n-rt-b_fi-m_itdk-role-by-strategy.json` | `n-rt-b_fi-m_itdk-role-by-strategy__paper.pdf` |
+| `n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json` | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
 
 The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
 recomputed or renormalized. Unsupported schemas and invalid percentages fail
 without changing their sources. Empty ITDK role populations remain empty rows.
+
+The TCP three-bar adapter also reads `bars["RT-based & Connection-oriented"].percentages`.
+Each bar retains its independent normalization from the report. No per-IP data,
+Parquet or original PDF is read for this variant. A missing or invalid third bar
+fails without replacing any artifact; there is no fallback to the two-bar plot.
 
 The increment adapter reads the exact compact `.pq` histogram named by the
 report's `aggregate` field, not the per-IP `n-rt-b_increments.pq` or
@@ -65,10 +71,11 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the three exact stateless report names above are supported.
-The two bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
+Only the four exact report names above are supported.
+The bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
 the increment plot under `no-connection/comparison/rt-based-base_fixed-interval-base`.
-Connection-oriented three-bar plots, individual-measurement variants and all
+The three-bar refinement variant is selected only for TCP runs, not under a
+`connection/` directory or for ICMP/UDP. Individual-measurement variants and all
 other plots retain their existing behavior. New plot types can be registered
 with an adapter and a design without changing the original analysis renderers.
 
@@ -84,10 +91,20 @@ retains its chosen light gray. The ITDK labels are `Router`, `All Other`, and
 `Device Type`; these are display aliases for the original report's two roles.
 The original role definitions, populations and totals in its JSON remain intact.
 
-The `Device Type` title is centered on the frame. `Measurement Type` is centered
-on the combined frame/x-label height. Outer padding targets approximately one
-pixel in a 300-dpi preview; PDFs themselves have physical units, not pixels.
+The `Device Type` title is centered on the frame. In the two-bar variant,
+`Measurement Type` is centered on the combined frame/x-label height. Outer padding
+targets approximately one pixel in a 300-dpi preview; PDFs themselves have
+physical units, not pixels.
 Very narrow >=1% segments keep the agreed font size and integer label.
+
+The approved TCP three-bar design reuses the same renderer, palette, text size,
+4-point legend squares, 8.316-point bar thickness and free inter-bar gaps.
+The frame is 0.6325 inches high; its left edge is at 1.01 inches to fit the
+two-line `RT-based &` / `Connection-oriented` tick label. `Measurement Type` is
+centered on that frame with a 2-point downward offset. The legend keeps the
+original five-column/two-row distribution; the compact centered experiment is
+not applied. The gray refinement guide connects only the top RT-based
+Unclassified segment to the Fixed-Interval bar, never to the independent third bar.
 
 The approved increment design shares the same width, font, pastel colors and
 4-point strategy swatches. Its three-column/two-row legend is a compact centered
@@ -148,6 +165,11 @@ histogram PDFs in 2.5 seconds; its completed repeat took 0.18 seconds, preservin
 all existing bytes and timestamps. A dense fixture with all 524,280 possible
 series/bin cells (3.7 MB compressed) rendered and published locally in 1.4 seconds.
 These are offline fixture timings, not live-S3 or scientific measurement results.
+
+A mixed four-type fixture run skipped eighteen existing paper PDFs and added
+six three-bar TCP PDFs in 2.6 seconds; its completed repeat took 0.13 seconds.
+All existing bytes/timestamps remained unchanged. The six inputs repeat one
+existing EU/TCP report, so this is a local rendering check, not six-VP results.
 
 `make paper-values` prefers an available sibling `__paper.pdf` for each selected
 figure and falls back to its original PDF otherwise. The existing `fig.*` keys
