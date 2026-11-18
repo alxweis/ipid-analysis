@@ -253,6 +253,7 @@ def export(
     metrics, sites = definitions["metrics"], definitions["sites"]
     contexts, plot_contexts = required_contexts(metrics)
     details = Diagnostics(enabled=diagnostics)
+    details.progress("scanning campaign reports and figure metadata")
     inputs = Inputs(
         (reports_root, processed_root),
         archive,
@@ -266,6 +267,7 @@ def export(
         plots = list(inputs.plots(campaign))
     finally:
         inputs.close()
+    details.progress(f"inventory complete: {len(artifacts)} reports, {len(plots)} figures")
     errors = inputs.errors + conflicts
     valid = []
     for a in artifacts:
@@ -290,7 +292,9 @@ def export(
         # Include snapshot I/O and parsing without changing calculation code or
         # its cache identity; prefetch times one access per distinct request.
         readers.snapshot = partial(details.call, "snapshot.access", readers.snapshot)
+    details.progress("reading measurement snapshots")
     details.call("snapshot.prefetch", prefetch_snapshots, readers, metrics, sites, inputs.workers)
+    details.progress("extracting paper values")
     values = {}
     for metric in metrics:
         for site in sites if "{vp}" in metric["key"] else (None,):
@@ -387,7 +391,7 @@ def main():
     parser.add_argument(
         "--timings",
         action="store_true",
-        help="show wall-clock phases and operation counts/summed elapsed times",
+        help="show resources, live derived-operation progress and final timings",
     )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -400,6 +404,15 @@ def main():
         ):
             roots[name] = roots[name] or root / directory / "continental" / args.campaign
     try:
+        if args.timings:
+            from paper_values.paired import connection_config
+
+            config = connection_config()
+            print(
+                f"Paired resources: memory={config['memory_limit']}, "
+                f"threads={config['threads']}, file spilling=disabled",
+                flush=True,
+            )
         result = export(
             args.campaign,
             reports_root=roots["reports"],

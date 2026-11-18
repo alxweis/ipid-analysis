@@ -99,10 +99,12 @@ class ValueCache:
                     and entry["sha256"] == digest(entry["values"])
                 ):
                     self.stats[operation + "_hits"] += 1
+                    self.diagnostics.progress(f"{operation}: cache hit: {paths[0]}")
                     return entry["values"]
             except (KeyError, TypeError, ValueError):
                 pass
         self.stats[operation + "_misses"] += 1
+        self.diagnostics.progress(f"{operation}: starting: {paths[0]}")
         for p in paths:
             self.diagnostics.call("cache.verify", verify_file, p)
         values = self.diagnostics.call("cache.compute", compute)
@@ -116,6 +118,7 @@ class ValueCache:
                 "values": values,
                 "sha256": digest(values),
             }
+        self.diagnostics.progress(f"{operation}: completed: {paths[0]}")
         return values
 
     def serialize(self):
