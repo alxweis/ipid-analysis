@@ -378,7 +378,7 @@ def draw(kind, rows, output):
                 borderaxespad=0.4,
                 labelspacing=0.2,
                 handlelength=4 / FONT_SIZE,
-                handletextpad=0.4,
+                handletextpad=1.2 / FONT_SIZE,
                 handler_map={Patch: SquareHandler()},
             )
             legend.get_frame().set_linewidth(0.45)

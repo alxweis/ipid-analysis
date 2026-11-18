@@ -188,6 +188,9 @@ class PaperProbingTest(unittest.TestCase):
             for handle in legend.legend_handles:
                 self.assertAlmostEqual(handle.get_width(), 4)
                 self.assertAlmostEqual(handle.get_height(), 4)
+            for handle, text in zip(legend.legend_handles, legend.get_texts()):
+                gap = text.get_window_extent(renderer).x0 - handle.get_window_extent(renderer).x1
+                self.assertAlmostEqual(gap * 72 / fig.dpi, 1.2)
             return savefig(fig, *args, **kwargs)
 
         with (

@@ -165,7 +165,8 @@ constant intervals these lines can coincide visually. Major ticks adapt to the
 data range, with exactly one minor tick between adjacent majors. No new tail
 taper is fabricated to hide a nonzero density at the p99.9 cutoff.
 
-The framed white legend keeps 4 pt square swatches. It checks nine standard
+The framed white legend keeps 4 pt square swatches and a 1.2 pt swatch-to-label
+gap, independent of font-size units. It checks nine standard
 positions plus fine horizontal positions along the upper edge against actual
 violin contours with a small clearance. A nonintersecting position is preferred;
 when none fits, sampled covered area is minimized. Thus its location can differ
