@@ -386,7 +386,12 @@ returns stored values unchanged. Its generated fallback uses the existing
 consumer macros can override the provided fallback.
 
 Percentages retain the existing two-decimal display and escaped percent sign;
-time strings retain their recorded unit. Counts and exact thresholds are not
+time strings retain their recorded unit, with a nonbreaking TeX space between
+number and unit (`20ms` becomes `20~ms`, `2s` becomes `2~s`). This happens only
+when rendering `values.tex`: raw values, calculations and the derived-cache
+identity are unchanged. An existing valid `values.json` is reused without
+recomputing unchanged inputs; source inventory and integrity checks still run.
+Counts and exact thresholds are not
 compacted. Other floats retain their raw Python precision rather than twelve
 significant digits. Raw cached values are never rounded.
 

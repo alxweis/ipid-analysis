@@ -825,12 +825,22 @@ class PaperValuesTest(unittest.TestCase):
                 "example": dict(raw=None, unit=""),
                 "count": dict(raw=1234567, unit="ips"),
                 "pct": dict(raw=4.30974178195464, unit="percent"),
+                "interval": dict(raw="20ms", unit=""),
+                "timeout": dict(raw="2s", unit=""),
+                "fractional-time": dict(raw="0.5ms", unit=""),
+                "spaced-time": dict(raw="20 ms", unit=""),
+                "literal": dict(raw="a~b_20ms", unit=""),
             },
             CAMPAIGN,
         )
         self.assertIn(r"\todo[inline]", text)
         self.assertIn(r"\setval{count}{1234567}", text)
         self.assertIn(r"\setval{pct}{4.31\%}", text)
+        self.assertIn(r"\setval{interval}{20~ms}", text)
+        self.assertIn(r"\setval{timeout}{2~s}", text)
+        self.assertIn(r"\setval{fractional-time}{0.5~ms}", text)
+        self.assertIn(r"\setval{spaced-time}{20~ms}", text)
+        self.assertIn(r"\setval{literal}{a\textasciitilde{}b\_20ms}", text)
         self.assertNotIn("texmeta@", text)
 
     def test_target_continent_is_not_mistaken_for_vp_scope(self):
@@ -999,8 +1009,12 @@ class DerivedCacheTest(unittest.TestCase):
 
     def test_cached_histogram_is_not_read_again(self):
         self.histogram(counts=(98, 2), total=100)
+        self.f.snapshot(protocol="tcp", phase="fi-mass")
+        self.f.snapshot(protocol="tcp", phase="rt-base")
         first = self.f.run(strict=True)
         self.assertEqual(first["cache"]["histogram_misses"], 1)
+        cache_path = self.f.root / "tmp/values.json"
+        cached = cache_path.read_bytes()
         with patch(
             "paper_values.readers.increment_histogram",
             side_effect=AssertionError("must use cache"),
@@ -1008,6 +1022,12 @@ class DerivedCacheTest(unittest.TestCase):
             second = self.f.run(strict=True)
         self.assertEqual(second["cache"]["histogram_hits"], 1)
         self.assertEqual(first["values"], second["values"])
+        self.assertEqual(cache_path.read_bytes(), cached)
+        self.assertEqual(second["values"]["params.fi-mass.request-interval"]["raw"], "20ms")
+        self.assertEqual(second["values"]["params.rt-base.reply-timeout"]["raw"], "2s")
+        tex = (self.f.root / "tmp/values.tex").read_text()
+        self.assertIn(r"\setval{params.fi-mass.request-interval}{20~ms}", tex)
+        self.assertIn(r"\setval{params.rt-base.reply-timeout}{2~s}", tex)
 
     def test_diagnostics_keep_warm_cache_and_identical_outputs(self):
         self.histogram(counts=(98, 2), total=100)
