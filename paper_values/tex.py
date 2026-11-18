@@ -72,6 +72,13 @@ def render(values, campaign):
             text = r"\detokenize{" + validate_plot_path(text) + "}"
         else:
             text = escape(text)
+            if value["unit"] == "" and isinstance(value["raw"], str):
+                # Insert TeX spacing only here; recorded values and caches stay raw.
+                text = re.sub(
+                    r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(ns|us|µs|μs|ms|s|m|h)$",
+                    r"\1~\2",
+                    text,
+                )
         metric = key_order(key)[1]
         if previous is not None and metric != previous:
             lines.append("")
