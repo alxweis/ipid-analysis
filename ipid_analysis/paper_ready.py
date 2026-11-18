@@ -20,6 +20,8 @@ from paper_values.inputs import PROTOCOLS, SITES, Inputs, protocol_from_run
 
 KINDS = ("itdk-role-by-strategy", "measurement-type-by-strategy")
 REPORTS = {f"n-rt-b_fi-m_{kind}.json": kind for kind in KINDS}
+OS_KIND = "itdk-role-by-os"
+REPORTS[f"n-rt-b_fi-m_{OS_KIND}.json"] = OS_KIND
 CONNECTION_KIND = "measurement-type-by-strategy-with-connection"
 REPORTS[f"n-rt-b_fi-m_{CONNECTION_KIND}.json"] = CONNECTION_KIND
 TCP_FLAGS_KIND = "tcp-flags-by-strategy"
@@ -28,6 +30,7 @@ REPORTS[f"n-rt-b_fi-m_{TCP_FLAGS_KIND}.json"] = TCP_FLAGS_KIND
 REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
 PHASES = {
     **{kind: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass") for kind in KINDS},
+    OS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     CONNECTION_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     TCP_FLAGS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     "increment-distributions": (
@@ -131,6 +134,10 @@ def _shares(values, *, zero_allowed=False):
 
 def plot_data(kind, report):
     """Read the actual analysis report schema; do not reconstruct values from PDFs."""
+    if kind == OS_KIND:
+        from ipid_analysis.paper_os_plot import load_data
+
+        return load_data(report)
     if kind == TCP_FLAGS_KIND:
         from ipid_analysis.plot_tcp_flags_strategy import FLAG_GROUPS
 
@@ -218,6 +225,9 @@ def worker(job: Job) -> Result:
             from ipid_analysis.paper_plot_style import draw
 
             data = plot_data(job.kind, report)
+            if job.kind == OS_KIND:
+                for name in ("paper_os_plot.py", "plot_os_group_strategy.py", "plot_itdk_os.py"):
+                    profile_bytes += Path(__file__).with_name(name).read_bytes()
         parameters = {
             "operation": "paper-ready-v1",
             "kind": job.kind,

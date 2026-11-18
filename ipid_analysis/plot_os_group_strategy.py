@@ -221,36 +221,36 @@ PAPER_OS_GROUP_ORDER = PAPER_OS_GROUP_PRIORITY + tuple(
     group for group in GROUP_INFO if group not in PAPER_OS_GROUP_PRIORITY
 )
 
-# Interleaved qualitative colors keep adjacent high-priority groups visually
-# distinct.  Mapping by the stable order means one OS group always has the same
-# color across protocols and figures.
+# Approved pastel anchors and companion shades match the strategy paper plots.
+# Preserve the stable assignment and 20-color cycling across all OS groups.
+# Color correspondence with strategies is visual only, not a semantic mapping.
 PAPER_OS_COLOR_PALETTE = (
-    "#E6C84F",
-    "#4E79A7",
-    "#F28E2B",
-    "#E15759",
-    "#76B7B2",
-    "#B07AA1",
-    "#59A14F",
-    "#ED7DB4",
-    "#9C755F",
-    "#86BCB6",
-    "#FF9DA7",
-    "#AF7AA1",
-    "#8CD17D",
-    "#B6992D",
-    "#499894",
-    "#D37295",
-    "#79706E",
-    "#D4A6C8",
-    "#FABFD2",
-    "#A0CBE8",
+    "#ECD37E",
+    "#94AECB",
+    "#F5AA60",
+    "#ED9393",
+    "#9ACBC7",
+    "#C5A0BC",
+    "#82D486",
+    "#EDA7D2",
+    "#BE9D8B",
+    "#AED3CE",
+    "#F5B2BA",
+    "#BC9AE6",
+    "#A7DDA0",
+    "#D5BF7A",
+    "#83B9B5",
+    "#E4A0BA",
+    "#B1A7A3",
+    "#E2BBD9",
+    "#F7D2DF",
+    "#9AD4EC",
 )
 PAPER_OS_GROUP_COLORS = {
     group: PAPER_OS_COLOR_PALETTE[index % len(PAPER_OS_COLOR_PALETTE)]
     for index, group in enumerate(PAPER_OS_GROUP_ORDER)
 }
-PAPER_OS_OTHER_COLOR = "#A6A6A6"
+PAPER_OS_OTHER_COLOR = "#D0C8C4"
 
 # Every canonical measurement tag maps to exactly one analysis group. Product
 # variants are combined only where the group represents the same vendor/family.
