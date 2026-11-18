@@ -7,6 +7,8 @@ and RT-base/FI-base increment ECDFs, writing sibling `__paper.pdf` variants.
 Original artifacts and existing paper variants are never overwritten.
 See [Paper-ready plots](docs/PAPER_PLOTS.md)
 for selection, RAM/S3 publication, the design profile and read-only repeat runs.
+`make paper-values` automatically prefers available sibling `__paper.pdf` paths
+for its existing `fig.*` keys, falling back to the original PDF otherwise.
 
 Export geographic measurement results for LaTeX with
 `make paper-values CAMPAIGN_ID=geo-full-20261107-r1`.

@@ -64,8 +64,17 @@ class Validation:
                 or hashlib.sha256(content).hexdigest() != info["sha256"]
             ):
                 raise ValueError("validation PDF differs from its generating summary")
+            sources = (str(source), str(path))
+            paper = path.with_name(path.stem + "__paper.pdf")
+            if paper.is_file():
+                verify_file(paper)
+                with paper.open("rb") as stream:
+                    if stream.read(5) != b"%PDF-":
+                        raise ValueError("validation paper file has no PDF signature")
+                path = paper
+                sources += (str(paper),)
             # A global generated figure has the same destination as the analysis output.
-            return "reports/figures/classifier-validation/" + path.name, (str(source), str(path))
+            return "reports/figures/classifier-validation/" + path.name, sources
         if stat == "minimum-recall":
             classes = [
                 data["datasets"][name]["metrics"]["classes"][strategy]

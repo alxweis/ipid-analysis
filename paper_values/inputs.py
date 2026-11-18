@@ -160,6 +160,12 @@ class Plot:
     receipt_sha256: str | None = None
     error: str | None = None
 
+    @property
+    def original_path(self):
+        """Stable figure identity shared by the original and its paper variant."""
+        path = PurePosixPath(self.paper_path)
+        return path.with_name(path.stem.removesuffix("__paper") + path.suffix).as_posix()
+
 
 class Inputs:
     def __init__(
@@ -544,7 +550,9 @@ def validate_plot_path(path):
 
 
 def identify_plot(name, site, relative, campaign):
-    stem = PurePosixPath(relative).stem
+    path = PurePosixPath(relative)
+    stem = path.stem.removesuffix("__paper")
+    identity = path.with_name(stem + path.suffix).as_posix()
     if stem.startswith(("interprotocol-campaign-", "interprotocol-upset-")):
         scope = "interprotocol." + stem.removeprefix("interprotocol-").replace("-", ".", 1)
         # Keep multi-word strategy names as a single component (e.g. per-bucket).
@@ -556,7 +564,7 @@ def identify_plot(name, site, relative, campaign):
             "interprotocol",
         )
     else:
-        a = identify(Artifact(name, {}, "", 0, "", site), relative, allow_unknown_kind=True)
+        a = identify(Artifact(name, {}, "", 0, "", site), identity, allow_unknown_kind=True)
         if a is None:
             return None
         scope = f"{a.protocol}.{a.connection}.{a.phase}.{component(a.kind)}"

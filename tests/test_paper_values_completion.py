@@ -338,6 +338,35 @@ class CompletionTest(unittest.TestCase):
             self.f.run(strict=True)
         self.assertEqual(previous, self.f.output_hashes())
 
+    def test_global_validation_figure_prefers_paper_with_original_summary_still_verified(self):
+        path, report = self.validation()
+        original = path.parent / report["figures"]["mass-ideal"]["filename"]
+        paper = original.with_name(original.stem + "__paper.pdf")
+        paper.write_bytes(b"%PDF-1.4\nvalidation paper figure")
+        self.f.receipt(paper)
+        key = "fig.validation.fi-ideal.confusion-matrix"
+        first = self.f.run(strict=True)
+        self.assertEqual(
+            first["values"][key]["raw"], "reports/figures/classifier-validation/" + paper.name
+        )
+        self.assertIn(str(original), first["values"][key]["sources"])
+        before = self.f.output_hashes()
+        original.write_bytes(b"%PDF-1.4\nchanged scientific source")
+        with self.assertRaisesRegex(ValueError, "PDF differs"):
+            self.f.run(strict=True)
+        self.assertEqual(before, self.f.output_hashes())
+
+    def test_invalid_global_paper_figure_does_not_replace_previous_export(self):
+        path, report = self.validation()
+        self.f.run(strict=True)
+        before = self.f.output_hashes()
+        original = path.parent / report["figures"]["mass-ideal"]["filename"]
+        paper = original.with_name(original.stem + "__paper.pdf")
+        paper.write_bytes(b"unfinished")
+        with self.assertRaisesRegex(ValueError, "PDF signature"):
+            self.f.run(strict=True)
+        self.assertEqual(before, self.f.output_hashes())
+
     def validation_overwrite(self, path, report):
         code = Path(__file__).resolve().parents[1] / "ipid_analysis/strategies.py"
         report["classifier_sources"]["strategies.py"] = hashlib.sha256(
