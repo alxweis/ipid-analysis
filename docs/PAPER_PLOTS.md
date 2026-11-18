@@ -1,7 +1,7 @@
 # Additional paper-ready plots
 
-The paper renderer reads existing small JSON reports and, for increment ECDFs,
-their compact histogram Parquet. It does not run
+The paper renderer reads existing small JSON reports and compact histogram or
+quantile Parquet. By default it does not run
 classification, open per-IP Parquet files, perform CAIDA joins, reconstruct data
 from PDFs, download reference datasets, or start analysis workflow tasks.
 
@@ -15,6 +15,7 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json` | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection__paper.pdf` |
 | `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
+| `n-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `n-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
 
 The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
@@ -53,6 +54,45 @@ a dictionary for every histogram bin. Inputs are limited to 128 MiB and
 8 * 65,535 rows, covering every positive 16-bit increment in each of eight series.
 Missing/inconsistent aggregates fail without starting a measurement-data fallback.
 
+The probing-interval violin uses the approved **p99.9 upper limit and 256 quantile
+points**. The old p99.5 aggregate cannot recover that tail. An explicit one-off
+preparation reads the already stored RT-base/FI-base probing intervals and
+continent map, reusing `aggregate_probing_intervals` and the bounded runtime
+connection. It does not probe IPs, read raw measurement files, fetch MaxMind, or
+repeat continent lookup/classification. The original aggregator's default
+p99.5 schema and output remain unchanged.
+
+```bash
+# Optional inventory first; dry-run never prepares or writes aggregates.
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--prepare-probing-intervals --dry-run"
+
+# One-off, potentially slow: query existing interval tables sequentially,
+# publish separate compact aggregates, then render with four workers.
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--prepare-probing-intervals --workers 4"
+
+# Subsequent runs read only reports and compact aggregates.
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"
+```
+
+The preparation writes `n-rt-b_fi-b_probing-intervals-by-continent__paper.pq` and
+`...__paper.json` beside the **processed** original aggregate, with completion
+receipts for both. It uses create-only publication, records the original report
+and interval/map inputs, checks for source changes, and reuses only a matching
+complete preparation. Conflicting/orphan/stale files are never overwritten or
+repaired automatically. Existing paper PDFs skip preparation as well as rendering.
+The normal command fails that violin job with a preparation hint when p99.9 data
+is missing; it never silently uses p99.5 or extrapolates the original PDF.
+
+The prepared table contains at most fourteen continent/mode rows. Its 256
+`QUANTILES_MS` points span probabilities 0 through 0.999. `Q1_MS`, `MEDIAN_MS` and
+`Q3_MS` are separately calculated approximate population quantiles at .25, .5
+and .75 from the per-IP interval medians, rather than inferred from the KDE or
+local dummy contours. Original union populations and mode-specific counts are
+retained; non-finite/negative medians and unmapped IPs are excluded. The reader
+validates schema, populations, monotonicity, finite values and p99.9/256 metadata
+before rendering, with a 1 MiB limit per compact input. Its PDF receipt tracks
+the original report, new quantile table and preparation metadata.
+
 ## Run on the Analysis VM
 
 Use the existing deployment and RAM/mounted-S3 environment. The normal worker
@@ -89,9 +129,9 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the six exact report names above are supported.
+Only the seven exact report names above are supported.
 The bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
-the increment plot under `no-connection/comparison/rt-based-base_fixed-interval-base`.
+the increment and continent violin plots under `no-connection/comparison/rt-based-base_fixed-interval-base`.
 The three-bar refinement and TCP-flags variants are selected only for TCP runs,
 not under a `connection/` directory or for ICMP/UDP. Individual-measurement variants and all
 other plots retain their existing behavior. New plot types can be registered
@@ -114,6 +154,22 @@ The `Device Type` title is centered on the frame. In the two-bar variant,
 targets approximately one pixel in a 300-dpi preview; PDFs themselves have
 physical units, not pixels.
 Very narrow >=1% segments keep the agreed font size and integer label.
+
+The approved continent violin design uses a 0.88-inch-high frame and 7 pt labels,
+including single-line `N. America` / `S. America` with IP counts below. RT-based
+is the left half in the approved pastel blue; Fixed-Interval is the right half
+in pastel red. Width-normalized halves reuse Matplotlib's original 0.82-width
+violin calculation and default Scott bandwidth. Q1/Q3 lines are dashed and the
+median is solid, bounded by the corresponding half-violin contour. At nearly
+constant intervals these lines can coincide visually. Major ticks adapt to the
+data range, with exactly one minor tick between adjacent majors. No new tail
+taper is fabricated to hide a nonzero density at the p99.9 cutoff.
+
+The framed white legend keeps 4 pt square swatches. It checks nine standard
+positions plus fine horizontal positions along the upper edge against actual
+violin contours with a small clearance. A nonintersecting position is preferred;
+when none fits, sampled covered area is minimized. Thus its location can differ
+across VPs and protocols. Font size, width and frame height remain fixed.
 
 The approved TCP three-bar design reuses the same renderer, palette, text size,
 4-point legend squares, 8.316-point bar thickness and free inter-bar gaps.
@@ -169,6 +225,11 @@ variants; there is deliberately no overwrite/force option. Repeating a completed
 batch skips rendering and does not update output timestamps or receipts.
 For increment figures, the new receipt tracks both the report and histogram;
 both inputs are checked for changes across rendering.
+The explicit probing preparation is the sole opt-in step here that reads large
+processed interval tables. It creates separate paper aggregates and does not
+mutate any source artifact. Preparation time depends on the existing tables,
+mounted-S3 throughput and available runtime resources; the small rendering
+benchmarks below do not predict the preparation time of a full campaign.
 If a previous receipt exists without its PDF, that job fails rather than
 rewriting the receipt or guessing a recovery action.
 
@@ -223,6 +284,13 @@ eighteen ITDK/OS PDFs in 4.0 seconds with four workers; the completed repeat too
 Fresh renders of all five prior paper types were pixel-identical to their
 baseline 300-dpi previews. Each fixture site repeats the same three existing
 EU/ICMP,TCP,UDP reports; these timings are not live-S3 or six-VP results.
+
+A probing-interval smoke run rendered eighteen prepared synthetic p99.9/256
+violin reports in 5.4 seconds with four workers; its completed repeat took
+0.12 seconds. Every existing fixture/input timestamp and byte remained unchanged.
+All six previous paper types rendered pixel-identically to their baseline
+previews. The tiny synthetic interval tables were prepared separately; these
+figures do not estimate full-campaign aggregation or live-S3 performance.
 
 `make paper-values` prefers an available sibling `__paper.pdf` for each selected
 figure and falls back to its original PDF otherwise. The existing `fig.*` keys
