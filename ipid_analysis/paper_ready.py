@@ -1,4 +1,4 @@
-"""Create additional __paper.pdf files from existing small reports, without reanalysis."""
+"""Create additional __paper.pdf files from existing small reports/aggregates."""
 
 from __future__ import annotations
 
@@ -20,6 +20,15 @@ from paper_values.inputs import PROTOCOLS, SITES, Inputs
 
 KINDS = ("itdk-role-by-strategy", "measurement-type-by-strategy")
 REPORTS = {f"n-rt-b_fi-m_{kind}.json": kind for kind in KINDS}
+REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
+PHASES = {
+    **{kind: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass") for kind in KINDS},
+    "increment-distributions": (
+        "rt-base-vs-fi-base",
+        "comparison",
+        "rt-based-base_fixed-interval-base",
+    ),
+}
 MAX_REPORT_BYTES = 4 << 20
 
 
@@ -27,6 +36,7 @@ MAX_REPORT_BYTES = 4 << 20
 class Job:
     source: Path
     kind: str
+    processed_root: Path | None = None
 
     @property
     def destination(self):
@@ -41,17 +51,19 @@ class Result:
     error: str = ""
 
 
-def job_for(path: Path) -> Job:
+def job_for(path: Path, *, processed_root: Path | None = None) -> Job:
     if path.suffix == ".pdf":
         path = path.with_suffix(".json")
     if path.name not in REPORTS:
         raise ValueError(f"unsupported report: {path}; expected one of {', '.join(REPORTS)}")
     if not path.is_file():
         raise FileNotFoundError(path)
-    return Job(path.absolute(), REPORTS[path.name])
+    return Job(path.absolute(), REPORTS[path.name], processed_root)
 
 
-def discover(reports_root: Path, campaign: str, *, sites=SITES, protocols=PROTOCOLS):
+def discover(
+    reports_root: Path, campaign: str, *, sites=SITES, protocols=PROTOCOLS, processed_root=None
+):
     """Reuse the existing pruned, parallel VP inventory, not a scan of raw data."""
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", campaign):
         raise ValueError("invalid campaign identifier")
@@ -59,9 +71,9 @@ def discover(reports_root: Path, campaign: str, *, sites=SITES, protocols=PROTOC
     if not root.is_dir():
         raise FileNotFoundError(root)
     contexts = [
-        (protocol, "no-connection", "rt-fi-merged", kind)
+        (protocol, "no-connection", phase[0], kind)
         for protocol in protocols
-        for kind in KINDS
+        for kind, phase in PHASES.items()
     ]
     inventory = Inputs([root], contexts=contexts, workers=min(8, len(sites)), sites=sites)
     try:
@@ -73,14 +85,15 @@ def discover(reports_root: Path, campaign: str, *, sites=SITES, protocols=PROTOC
             relative = path.relative_to(root)
             if relative.parts[0] not in sites or path.name not in REPORTS:
                 continue
-            # Only canonical stateless RT-base/FI-mass merged reports.
+            # Only the canonical stateless phase for each registered plot.
+            phase = PHASES[REPORTS[path.name]]
             if relative.parts[-4:-1] != (
                 "no-connection",
-                "merged",
-                "rt-based-base_fixed-interval-mass",
+                phase[1],
+                phase[2],
             ):
                 continue
-            jobs.append(job_for(path))
+            jobs.append(job_for(path, processed_root=processed_root))
         return jobs
     finally:
         inventory.close()
@@ -159,7 +172,8 @@ def worker(job: Job) -> Result:
         if os.path.lexists(completion_path(destination)):
             raise FileExistsError(f"existing receipt without PDF; left untouched: {destination}")
         assert_complete(job.source)
-        before = fingerprint(job.source)
+        inputs = [job.source]
+        before = [fingerprint(job.source)]
         with job.source.open("rb") as stream:
             content = stream.read(MAX_REPORT_BYTES + 1)
         if len(content) > MAX_REPORT_BYTES:
@@ -167,30 +181,40 @@ def worker(job: Job) -> Result:
                 "report is unexpectedly large; only small aggregate JSONs are supported"
             )
         report = json.loads(content)
-        percentages = plot_data(job.kind, report)
         profile = Path(__file__).with_name("paper_plot_style.py")
+        profile_bytes = profile.read_bytes()
+        if job.kind == "increment-distributions":
+            from ipid_analysis.paper_increment_plot import aggregate_path, draw, load_histogram
+
+            aggregate = aggregate_path(job.source, report, processed_root=job.processed_root)
+            inputs.append(aggregate)
+            before.append(fingerprint(aggregate))
+            data = load_histogram(aggregate, report)
+            profile_bytes += Path(__file__).with_name("paper_increment_plot.py").read_bytes()
+        else:
+            from ipid_analysis.paper_plot_style import draw
+
+            data = plot_data(job.kind, report)
         parameters = {
             "operation": "paper-ready-v1",
             "kind": job.kind,
-            "profile_sha256": hashlib.sha256(profile.read_bytes()).hexdigest(),
+            "profile_sha256": hashlib.sha256(profile_bytes).hexdigest(),
             "report_sha256": hashlib.sha256(content).hexdigest(),
         }
         # A competing renderer may have published while this report was read.
         if os.path.lexists(destination):
             status = (
                 "skipped-current"
-                if cache_current(destination, [job.source], parameters)
+                if cache_current(destination, inputs, parameters)
                 else "skipped-existing"
             )
             return Result(str(destination), status, perf_counter() - start)
-        from ipid_analysis.paper_plot_style import draw
-
         temporary = temporary_path(destination)
         try:
-            draw(job.kind, percentages, temporary)
-            if fingerprint(job.source) != before:
-                raise ValueError("source report changed during rendering; refusing publication")
-            publish_new_file(temporary, destination, inputs=[job.source], parameters=parameters)
+            draw(job.kind, data, temporary)
+            if [fingerprint(path) for path in inputs] != before:
+                raise ValueError("source input changed during rendering; refusing publication")
+            publish_new_file(temporary, destination, inputs=inputs, parameters=parameters)
         finally:
             temporary.unlink(missing_ok=True)
         return Result(str(destination), "created", perf_counter() - start)
@@ -255,6 +279,11 @@ def main(argv=None):
     parser.add_argument(
         "--reports-root", type=Path, default=Path(__file__).resolve().parents[1] / "reports"
     )
+    parser.add_argument(
+        "--processed-root",
+        type=Path,
+        help="remap a campaign histogram's recorded continental/ path to this processed root",
+    )
     parser.add_argument("--sites", nargs="+", choices=SITES, default=list(SITES))
     parser.add_argument("--protocols", nargs="+", choices=PROTOCOLS, default=list(PROTOCOLS))
     parser.add_argument("--workers", type=int, default=4)
@@ -267,15 +296,19 @@ def main(argv=None):
     if args.workers < 1:
         parser.error("--workers must be positive")
     try:
-        jobs = [job_for(path) for path in args.paths]
+        jobs = [job_for(path, processed_root=args.processed_root) for path in args.paths]
         if args.campaign:
             jobs.extend(
                 discover(
-                    args.reports_root, args.campaign, sites=args.sites, protocols=args.protocols
+                    args.reports_root,
+                    args.campaign,
+                    sites=args.sites,
+                    protocols=args.protocols,
+                    processed_root=args.processed_root,
                 )
             )
         if not jobs:
-            raise ValueError("no supported RT-base/FI-mass reports found")
+            raise ValueError("no supported paper-plot reports found")
         start = perf_counter()
         results = run(jobs, workers=args.workers, dry_run=args.dry_run)
     except (OSError, ValueError) as exc:
