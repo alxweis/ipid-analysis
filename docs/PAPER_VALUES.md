@@ -177,7 +177,8 @@ actual Analysis VM; local ZIP or filesystem timings do not predict S3 mount spee
 
 ### Diagnosing slow mounted inputs
 
-`--timings` additionally prints operation counts, summed elapsed seconds and the
+`--timings` additionally prints live derived-operation progress, operation counts,
+summed elapsed seconds and the
 longest individual call. These details are console-only: they do not enter either
 export file and do not invalidate the derived-value cache. Without `--timings`,
 operation timing is disabled. Existing phase timings remain wall-clock durations.
@@ -305,8 +306,41 @@ Both readers require matching discovery/classifier identities and verify that
 Parquet class counts agree with the selected JSON reports. Duplicate IPs in the
 joined populations, invalid target membership or inconsistent identities reject
 strict export. They never reclassify sequences or rebuild existing analyses.
-DuckDB uses at most 2 GB and eight threads, with isolated temporary spill files
-removed on completion. Only the small resulting counts are cached in `values.json`.
+The readers use the existing `IPID_ANALYSIS_DUCKDB_MEMORY` and
+`IPID_ANALYSIS_THREADS` environment variables. Defaults remain 2 GB and at most
+eight threads. For the 24-vCPU/256-GB analysis VM, with enough RAM currently free,
+a larger budget can be selected for this invocation without changing workers:
+
+```sh
+IPID_ANALYSIS_DUCKDB_MEMORY=64GB IPID_ANALYSIS_THREADS=12 \
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+```
+
+Measurement inputs continue to be read through the existing S3 mounts. FI labels
+and TCP connection labels are materialized once per comparison, using only
+`IP_ADDR` and `IPID_SELECTION_STRATEGY`; subsequent checks and joins reuse the
+RAM table. The much larger full RT population remains a projected view, so it
+is not copied wholesale into RAM. All scientific checks and denominators remain
+unchanged.
+
+**File spilling is disabled**, with both an empty `temp_directory` and a zero
+`max_temp_directory_size`. There is no `/tmp`, local-disk, or S3-file fallback for
+intermediate query data. If the selected memory budget is insufficient, the
+calculation fails with an explicit RAM-budget error. `memory_limit` is DuckDB's
+buffer-manager budget, not a hard limit on total process RSS. Keep headroom for
+other allocations and the running analysis workers.
+
+`--timings` prints the selected resources immediately and reports each derived
+operation's start, completion or cache hit while the export is running. Output
+values and formatting are unaffected. A different environment budget can reuse
+the same derived cache; the calculation-code update itself invalidates the old
+cache once. Only the small resulting counts are cached in `values.json`.
+The existing final output files remain `tmp/values.tex` and `tmp/values.json`;
+the exporter creates no persistent bulk-data copies.
+
+An already running process does not adopt the new settings. Finish or interrupt
+that export before starting the updated version; completed derivations from an
+interrupted run have not yet been written to the cache.
 All contributing Parquets, target metadata and report hashes invalidate the cache
 when changed. A warm export avoids repeating the joins.
 

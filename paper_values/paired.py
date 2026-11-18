@@ -3,29 +3,40 @@
 from contextlib import contextmanager
 import json
 import os
-import tempfile
+
+
+def connection_config():
+    threads = int(os.environ.get("IPID_ANALYSIS_THREADS", min(os.cpu_count() or 1, 8)))
+    if threads < 1:
+        raise ValueError("IPID_ANALYSIS_THREADS must be positive")
+    return {
+        "threads": threads,
+        "memory_limit": os.environ.get("IPID_ANALYSIS_DUCKDB_MEMORY", "2GB"),
+        # No scratch file can fall back to /tmp, a local disk or the S3 mount.
+        "temp_directory": "",
+        "max_temp_directory_size": "0B",
+        "preserve_insertion_order": False,
+    }
 
 
 @contextmanager
 def connection():
     import duckdb
 
-    # Bounded memory and isolated, temporary spill files; input/analysis trees are read-only.
-    with tempfile.TemporaryDirectory(prefix="paper-values-") as directory:
-        try:
-            with duckdb.connect(
-                config={
-                    "threads": min(os.cpu_count() or 1, 8),
-                    "memory_limit": "2GB",
-                    "temp_directory": directory,
-                }
-            ) as con:
-                yield con
-        except duckdb.Error as exc:
-            raise ValueError(f"cannot read paired strategy populations: {exc}") from exc
+    try:
+        with duckdb.connect(config=connection_config()) as con:
+            yield con
+    except duckdb.OutOfMemoryException as exc:
+        raise ValueError(
+            "paired calculation exhausted its RAM budget; file spilling is disabled. "
+            "Increase IPID_ANALYSIS_DUCKDB_MEMORY or reduce IPID_ANALYSIS_THREADS. "
+            f"DuckDB: {exc}"
+        ) from exc
+    except duckdb.Error as exc:
+        raise ValueError(f"cannot read paired strategy populations: {exc}") from exc
 
 
-def labels(con, name, path, report, classifier_version):
+def labels(con, name, path, report, classifier_version, *, materialize=False):
     import pyarrow.parquet as pq
 
     with pq.ParquetFile(path) as parquet:
@@ -34,7 +45,11 @@ def labels(con, name, path, report, classifier_version):
             raise ValueError("paired labels do not match the production classifier version")
         if parquet.metadata.num_rows != report["total_ips"]:
             raise ValueError("paired label population differs from its strategy report")
-    con.read_parquet(str(path)).project("IP_ADDR, IPID_SELECTION_STRATEGY").create_view(name)
+    data = con.read_parquet(str(path)).project("IP_ADDR, IPID_SELECTION_STRATEGY")
+    if materialize:
+        data.create(name)
+    else:
+        data.create_view(name)
     actual = dict(
         con.execute(f"SELECT IPID_SELECTION_STRATEGY, count(*) FROM {name} GROUP BY 1").fetchall()
     )
@@ -66,7 +81,7 @@ def fi_rt(paths, rt, fi, coverage, classifier_version, *, connection_mode):
         raise ValueError("target sample metadata differs from the paired measurements")
     with connection() as con:
         labels(con, "rt_source", rt_path, rt, classifier_version)
-        labels(con, "fi_source", fi_path, fi, classifier_version)
+        labels(con, "fi_source", fi_path, fi, classifier_version, materialize=True)
         con.read_parquet(str(target_path)).project("IP_ADDR").create_view("target_source")
         con.execute("CREATE TEMP TABLE targets AS SELECT * FROM target_source")
         n = unique(con, "targets")
@@ -99,7 +114,7 @@ def fi_rt(paths, rt, fi, coverage, classifier_version, *, connection_mode):
 def tcp_transition(paths, before, after, classifier_version):
     with connection() as con:
         labels(con, "before_source", paths[0], before, classifier_version)
-        labels(con, "after_source", paths[1], after, classifier_version)
+        labels(con, "after_source", paths[1], after, classifier_version, materialize=True)
         con.execute(
             "CREATE TEMP TABLE after_valid AS SELECT * FROM after_source "
             "WHERE IPID_SELECTION_STRATEGY != 'NOT_ENOUGH_SAMPLES'"

@@ -1,6 +1,7 @@
 """Optional operation timings; worker elapsed sums are not wall-clock phases."""
 
 from contextlib import contextmanager
+import sys
 from threading import Lock
 from time import perf_counter
 
@@ -32,6 +33,10 @@ class Diagnostics:
             return function(*args, **kwargs)
         with self.measure(name):
             return function(*args, **kwargs)
+
+    def progress(self, message):
+        if self.enabled:
+            print(f"paper-values: {message}", file=sys.stderr, flush=True)
 
     def summary(self):
         with self.lock:
