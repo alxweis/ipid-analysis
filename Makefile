@@ -81,6 +81,12 @@ paper-values:
 	@test -n "$(CAMPAIGN_ID)" || { echo 'Usage: make paper-values CAMPAIGN_ID=...'; exit 2; }
 	$(PYTHON_INTERPRETER) -B -m paper_values --campaign "$(CAMPAIGN_ID)" $(if $(strip $(ARGS)),$(ARGS),$(args))
 
+## ZIP exactly the PDFs named in tmp/values.tex, preserving reports/... paths
+##   usage: make paper-figures-zip
+.PHONY: paper-figures-zip
+paper-figures-zip:
+	$(PYTHON_INTERPRETER) -B -m paper_values.figure_zip $(if $(strip $(ARGS)),$(ARGS),$(args))
+
 ## Render additional paper PDFs from existing reports/compact aggregates (never overwrite)
 ##   usage: make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"
 .PHONY: paper-plots

@@ -12,6 +12,46 @@ Uppercase `ARGS` takes precedence over lowercase `args`. The command writes only
 does not run a workflow, start measurements, import `ipid_analysis`, or rebuild
 large raw-data joins. Existing analysis workers can continue running.
 
+## ZIP the figures referenced by values.tex
+
+```sh
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1
+make paper-figures-zip
+```
+
+The second command writes `tmp/paper-figures.zip`. It reads the existing
+`tmp/values.tex` and includes exactly the nonempty `fig.*` PDF paths recorded
+there, deduplicating repeated references. It does not regenerate the values,
+select other figure variants, render plots, or read measurement tables.
+Consequently, a `__paper.pdf` is included precisely when the exported value
+references it; otherwise the named original PDF is included.
+
+Archive members start directly with `reports/continental/...` or
+`reports/figures/...`, without an extra wrapping directory. Extract the ZIP at
+the root of the paper repository; its paths then match the exported values.
+The ZIP contains only those PDFs, not `values.tex`, reports, caches or receipts.
+Copy `values.tex` to the manuscript as usual. No manuscript files are modified
+by the packaging command.
+
+Optional alternate inputs/output name:
+
+```sh
+make paper-figures-zip \
+  ARGS="--values tmp/other-values.tex --output-name other-figures.zip"
+```
+
+`--reports-root /path/to/reports` maps the same paper-relative paths onto another
+mounted or local reports directory. Output names must be plain ZIP filenames;
+the archive always stays under the checkout's local `tmp/` directory.
+
+Empty figure values are skipped and counted. Missing named PDFs, malformed
+assignments, invalid PDF signatures or publication receipts, and inputs changing
+during packaging fail clearly. PDFs are streamed in bounded chunks, with stored
+checksums verified when a receipt exists. The ZIP is CRC-checked and committed
+atomically only after all references have been copied successfully. On failure,
+an existing `tmp/paper-figures.zip` is retained and temporary files are removed.
+All source PDFs, source receipts, `values.tex` and the numeric cache remain unchanged.
+
 ## Sources and keys
 
 `paper_values/metrics.json` is the single definition of the selected paper scope:
