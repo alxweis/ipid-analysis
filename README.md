@@ -9,6 +9,9 @@ See [Paper-ready plots](docs/PAPER_PLOTS.md)
 for selection, RAM/S3 publication, the design profile and read-only repeat runs.
 `make paper-values` automatically prefers available sibling `__paper.pdf` paths
 for its existing `fig.*` keys, falling back to the original PDF otherwise.
+After exporting values, run `make paper-figures-zip` to bundle exactly their
+referenced PDFs into `tmp/paper-figures.zip`, preserving the `reports/...` paths
+for extraction at the manuscript repository root.
 
 Export geographic measurement results for LaTeX with
 `make paper-values CAMPAIGN_ID=geo-full-20261107-r1`.
