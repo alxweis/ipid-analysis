@@ -133,6 +133,25 @@ match the full hashes in their generating summary. Missing
 receipts remain supported for legacy reports. The output contains paper-relative
 PDF paths; copy `reports/` without changing its relative structure.
 
+### Paper-ready figure paths
+
+For each selected `fig.*` value, the exporter prefers the sibling
+`<original-stem>__paper.pdf` when present; otherwise it exports the original PDF.
+This works for mounted directories, ZIP archives and mixed inputs, without
+changing public keys or selecting a different measurement run. Canonical-run
+selection happens first; paper/original variants of the same figure are then
+resolved. Ambiguous runs or conflicting copies of the preferred PDF still fail
+strict export. PDF signatures and existing completion receipts remain checked;
+a broken preferred variant is reported rather than silently accepted.
+
+The global validation figure paths use the same preference, while the original
+PDF must still match the full hash in its generating classifier summary.
+No plots or source data are created, modified or renamed by this selection.
+After `make paper-plots`, rerun `make paper-values` to refresh `tmp/values.tex`.
+Figure availability is inventoried each run, so neither `--recompute` nor cache
+deletion is needed. If a paper variant later disappears, the original path is
+selected again. Existing numeric derived-value cache entries remain reusable.
+
 ## Derived-value cache
 
 `values.json` caches only derived scalar tables from existing processed inputs:

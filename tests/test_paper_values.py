@@ -1029,6 +1029,35 @@ class DerivedCacheTest(unittest.TestCase):
         self.assertIn(r"\setval{params.fi-mass.request-interval}{20~ms}", tex)
         self.assertIn(r"\setval{params.rt-base.reply-timeout}{2~s}", tex)
 
+    def test_new_paper_pdf_updates_figure_path_without_recomputing_cached_values(self):
+        _, report = self.histogram(counts=(98, 2), total=100)
+        original = report.with_suffix(".pdf")
+        original.write_bytes(b"%PDF-1.4\noriginal figure")
+        first = self.f.run(strict=True)
+        key = "fig.eu.tcp.no-conn.rt-vs-fi-base.inc-distributions"
+        self.assertTrue(first["values"][key]["raw"].endswith("increment-distributions.pdf"))
+        cache_path = self.f.root / "tmp/values.json"
+        cached = cache_path.read_bytes()
+        paper = original.with_name(original.stem + "__paper.pdf")
+        paper.write_bytes(b"%PDF-1.4\npaper figure")
+        self.f.receipt(paper)
+        with patch(
+            "paper_values.readers.increment_histogram", side_effect=AssertionError("cache")
+        ):
+            second = self.f.run(strict=True)
+            self.assertTrue(second["values"][key]["raw"].endswith("__paper.pdf"))
+            self.assertEqual(second["cache"]["histogram_hits"], 1)
+            self.assertEqual(cache_path.read_bytes(), cached)
+            paper.unlink()
+            third = self.f.run(strict=True)
+        self.assertEqual(first["values"][key]["raw"], third["values"][key]["raw"])
+        self.assertEqual(third["cache"]["histogram_hits"], 1)
+        self.assertEqual(cache_path.read_bytes(), cached)
+        self.assertEqual(
+            {k: v for k, v in first["values"].items() if k != key},
+            {k: v for k, v in second["values"].items() if k != key},
+        )
+
     def test_diagnostics_keep_warm_cache_and_identical_outputs(self):
         self.histogram(counts=(98, 2), total=100)
         cold = self.f.run(strict=True, diagnostics=True)

@@ -149,6 +149,7 @@ all existing bytes and timestamps. A dense fixture with all 524,280 possible
 series/bin cells (3.7 MB compressed) rendered and published locally in 1.4 seconds.
 These are offline fixture timings, not live-S3 or scientific measurement results.
 
-`make paper-values` continues to export the original figure paths. Selecting the
-new variants in the manuscript is a separate action; this command does not edit
-LaTeX files or existing path exports.
+`make paper-values` prefers an available sibling `__paper.pdf` for each selected
+figure and falls back to its original PDF otherwise. The existing `fig.*` keys
+stay unchanged. Rerun the export after generating paper plots to refresh the
+paths; no `--recompute` is needed. Neither command edits manuscript files.
