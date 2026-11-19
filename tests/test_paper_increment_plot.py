@@ -23,10 +23,11 @@ def stamp(path):
     return path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def fixture(directory):
+def fixture(directory, *, connection=False):
     directory.mkdir(parents=True, exist_ok=True)
-    source = directory / "n-rt-b_fi-b_increment-distributions.json"
-    aggregate = directory / "n-rt-b_fi-b_increment-distributions.pq"
+    prefix = "c" if connection else "n"
+    source = directory / f"{prefix}-rt-b_fi-b_increment-distributions.json"
+    aggregate = source.with_suffix(".pq")
     rows, summaries = [], {}
     for strategy in INCREMENT_STRATEGIES:
         for mode in MODES:
@@ -56,7 +57,23 @@ def fixture(directory):
                 )
     pq.write_table(pa.Table.from_pylist(rows, schema=INCREMENT_SCHEMA), aggregate)
     source.write_text(
-        json.dumps(dict(aggregate=str(aggregate.absolute()), percentile=0.999, series=summaries))
+        json.dumps(
+            dict(
+                aggregate=str(aggregate.absolute()),
+                percentile=0.999,
+                series=summaries,
+                **(
+                    dict(
+                        figure="increment-distributions",
+                        protocol="tcp",
+                        connection_mode="connection",
+                        target="tcp.ipid.connection.rt-based.base+tcp.ipid.connection.fixed-interval.base",
+                    )
+                    if connection
+                    else {}
+                ),
+            )
+        )
     )
     source.with_suffix(".pdf").write_bytes(b"existing original PDF; never parse or replace")
     return source, aggregate

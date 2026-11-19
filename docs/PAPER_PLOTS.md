@@ -16,9 +16,11 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json` | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection__paper.pdf` |
 | `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
+| `c-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `c-rt-b_fi-b_increment-distributions__paper.pdf` |
 | `n-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `n-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
 | `c-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `c-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
 | `n-rt-b_fi-b_strategy-intersection.json` plus its existing 49-cell aggregate | `n-rt-b_fi-b_strategy-intersection__paper.pdf` |
+| `c-rt-b_fi-b_strategy-intersection.json` plus its existing 49-cell aggregate | `c-rt-b_fi-b_strategy-intersection__paper.pdf` |
 | `n-rt-b_fi-m_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `n-rt-b_fi-m_operating-system-group-by-strategy__paper.pdf` |
 | `c-rt-b_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `c-rt-b_operating-system-group-by-strategy__paper.pdf` |
 
@@ -79,6 +81,21 @@ values retain the original one-decimal formatting, including small positive
 shares displayed as `0.0`. Missing/invalid aggregates fail without a PDF or
 per-IP-data fallback. Its receipt tracks the original JSON and compact table;
 the input is bounded to 49 rows and 1 MiB. This variant needs no preparation flag.
+
+The connection-oriented TCP increment and intersection variants reuse these same
+loaders and renderers, including their fonts, physical geometry, colors, legends,
+annotations and validation limits. They are discovered only in TCP
+`connection/comparison/rt-based-base_fixed-interval-base` directories. Each report
+must identify the expected figure, TCP, connection mode and the combined
+`tcp.ipid.connection.rt-based.base+tcp.ipid.connection.fixed-interval.base` target;
+its exact aggregate must belong to the matching comparison. `--processed-root`
+retains the same mode and phase restrictions. Neither variant requires a
+preparation flag: they read the already stored `c-rt-b_fi-b_...` compact table,
+without interval queries, new histograms, strategy joins, source-PDF extraction
+or renormalization. Isolated ECDF increments retain their vertical zero-to-100%
+jump. Heatmap zeros remain dashes, and small positive shares rounding to `0.0`
+remain numeric. Missing/invalid aggregates fail without an analysis fallback.
+Existing original and paper artifacts remain immutable.
 
 The OS-group adapter reads only its report and existing compact OS/strategy
 aggregate (at most 4 MiB and ten cells per canonical OS group). It validates the
