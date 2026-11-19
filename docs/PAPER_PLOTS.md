@@ -87,6 +87,8 @@ one decimal, including small positive values displayed as `0.0`.
 The approved 3.33-inch, Linux Libertine 7-pt design has two stacked heatmaps with
 headings centered over their own frames, inline parenthesized IP counts using
 the original k/M formatting, and `Operating-System Group (#IP Addr.)` as y title.
+The upper heatmap has ten bottom x ticks without labels. Its frame is separated
+from the lower frame by 0.20 inches, with room for the lower section heading.
 The 0.05-inch percentage bar is centered vertically on the combined heatmap
 frames and has exactly the same height as the seven-row intersection bar,
 using shared font measurement rather than platform-specific hardcoded pixels.

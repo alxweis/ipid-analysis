@@ -124,6 +124,11 @@ class PaperOSGroupTest(unittest.TestCase):
             self.assertEqual({t.get_fontsize() for t in fig.findobj(Text)}, {7.0})
             self.assertEqual(general.title.get_text(), "General-Purpose OS")
             self.assertEqual(network.title.get_text(), "Network OS")
+            self.assertAlmostEqual((general.bbox.y0 - network.bbox.y1) / fig.dpi, 0.20)
+            ticks = general.xaxis.get_major_ticks()
+            self.assertEqual(len(ticks), 10)
+            self.assertTrue(all(t.tick1line.get_visible() for t in ticks))
+            self.assertFalse(any(t.label1.get_visible() for t in ticks))
             for ax, (_, keys) in zip((general, network), plot.SELECTION):
                 self.assertEqual(len(ax.texts), 10 * len(keys))
                 self.assertTrue(all("\n" not in t.get_text() for t in ax.get_yticklabels()))

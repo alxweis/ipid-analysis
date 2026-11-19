@@ -204,7 +204,7 @@ def _draw(data, output, *, wrap_width=None):
             colorbar_width, colorbar_height = 0.05, 7 * reference_cell_height / DPI
             matrix_width = 10 * cell_width_px / DPI
             row_height = cell_height_px / DPI
-            left, bottom, section_gap = 1.04, 0.9, 0.27
+            left, bottom, section_gap = 1.04, 0.9, 0.20
             network_height, general_height = 12 * row_height, 8 * row_height
             height_needed = bottom + network_height + section_gap + general_height + 0.24
             HEIGHT = max(HEIGHT, height_needed)
@@ -229,7 +229,7 @@ def _draw(data, output, *, wrap_width=None):
                     plt.setp(ax.get_xticklabels(), rotation=30, ha="right", rotation_mode="anchor")
                     ax.set_xlabel("IP-ID Selection Strategy", labelpad=2)
                 else:
-                    ax.tick_params(axis="x", bottom=False)
+                    ax.tick_params(axis="x", bottom=True, labelbottom=False)
                 ax.set_title(title, loc="center", fontsize=FONT_SIZE, pad=3)
                 for i, (_, percentages, annotations) in enumerate(rows):
                     for j, label in enumerate(annotations):
