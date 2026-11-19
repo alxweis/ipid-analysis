@@ -11,6 +11,7 @@ Supported input/output pairs, in the same directory:
 | --- | --- |
 | `n-rt-b_fi-m_measurement-type-by-strategy.json` | `n-rt-b_fi-m_measurement-type-by-strategy__paper.pdf` |
 | `n-rt-b_fi-m_itdk-role-by-strategy.json` | `n-rt-b_fi-m_itdk-role-by-strategy__paper.pdf` |
+| `c-rt-b_itdk-role-by-strategy.json` | `c-rt-b_itdk-role-by-strategy__paper.pdf` |
 | `n-rt-b_fi-m_itdk-role-by-os.json` | `n-rt-b_fi-m_itdk-role-by-os__paper.pdf` |
 | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json` | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection__paper.pdf` |
 | `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
@@ -23,6 +24,16 @@ The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
 recomputed or renormalized. Unsupported schemas and invalid percentages fail
 without changing their sources. Empty ITDK role populations remain empty rows.
+
+The connection-oriented TCP ITDK variant reads the same exact `plot_percentages`
+and `plot_role_totals` fields. It is discovered only in TCP
+`connection/rt-based-base` directories, independently of the stateless merged
+variant. The report must identify TCP, connection mode, RT-based interval and
+base scale. It uses the very same ITDK paper renderer, palette, font, geometry,
+legend and annotations as the stateless variant; only its source population and
+percentages differ. No new renderer, original PDF, Parquet, ITDK join or
+measurement input is required. Create-only publication and existing-output
+skipping apply unchanged.
 
 The TCP three-bar adapter also reads `bars["RT-based & Connection-oriented"].percentages`.
 Each bar retains its independent normalization from the report. No per-IP data,
@@ -173,11 +184,12 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the nine exact report names above are supported.
-The bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
+Only the ten exact report names above are supported.
+The `c-rt-b` ITDK bar plot is discovered under TCP `connection/rt-based-base`.
+The other bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
 the increment, intersection and continent violin plots under `no-connection/comparison/rt-based-base_fixed-interval-base`.
 The three-bar refinement and TCP-flags variants are selected only for TCP runs,
-not under a `connection/` directory or for ICMP/UDP. Individual-measurement variants and all
+not under a `connection/` directory or for ICMP/UDP. Other individual-measurement variants and all
 other plots retain their existing behavior. New plot types can be registered
 with an adapter and a design without changing the original analysis renderers.
 
