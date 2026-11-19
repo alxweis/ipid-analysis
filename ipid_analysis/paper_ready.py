@@ -32,9 +32,12 @@ PROBING_KIND = "probing-intervals-by-continent"
 REPORTS[f"n-rt-b_fi-b_{PROBING_KIND}.json"] = PROBING_KIND
 INTERSECTION_KIND = "strategy-intersection"
 REPORTS[f"n-rt-b_fi-b_{INTERSECTION_KIND}.json"] = INTERSECTION_KIND
+OS_GROUP_KIND = "operating-system-group-by-strategy"
+REPORTS[f"n-rt-b_fi-m_{OS_GROUP_KIND}.json"] = OS_GROUP_KIND
 PHASES = {
     **{kind: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass") for kind in KINDS},
     OS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
+    OS_GROUP_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     CONNECTION_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     TCP_FLAGS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     "increment-distributions": (
@@ -231,6 +234,25 @@ def worker(job: Job) -> Result:
             before.extend(fingerprint(path) for path in (aggregate, metadata))
             data = load_series(aggregate, metadata, job.source)
             for name in ("paper_probing_plot.py", "paper_figures.py"):
+                profile_bytes += Path(__file__).with_name(name).read_bytes()
+        elif job.kind == OS_GROUP_KIND:
+            from ipid_analysis.paper_increment_plot import aggregate_path
+            from ipid_analysis.paper_os_group_plot import draw, load_data
+
+            aggregate = aggregate_path(
+                job.source,
+                report,
+                processed_root=job.processed_root,
+                phase=PHASES[OS_GROUP_KIND][1:],
+            )
+            inputs.append(aggregate)
+            before.append(fingerprint(aggregate))
+            data = load_data(aggregate, report)
+            for name in (
+                "paper_os_group_plot.py",
+                "paper_figures.py",
+                "plot_os_group_strategy.py",
+            ):
                 profile_bytes += Path(__file__).with_name(name).read_bytes()
         elif job.kind == INTERSECTION_KIND:
             from ipid_analysis.paper_increment_plot import aggregate_path

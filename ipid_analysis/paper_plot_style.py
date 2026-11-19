@@ -38,6 +38,17 @@ MODES = ("RT-based", "Fixed-Interval")
 ROLES = ("Transit-Observed", "No Transit Evidence")
 
 
+def measure_heatmap_cell(fig, font, text="100.0"):
+    """Measure 7-pt annotations with the approved 5 px padding at 300 dpi."""
+    probe = fig.text(0.5, 0.5, text, ha="center", va="center", fontproperties=font)
+    try:
+        fig.canvas.draw()
+        box = probe.get_window_extent(fig.canvas.get_renderer())
+        return box.width + 10, box.height + 10
+    finally:
+        probe.remove()
+
+
 @lru_cache(maxsize=1)
 def _font():
     """Reuse font discovery; convert CFF outlines once per worker for valid Type42 PDFs."""
