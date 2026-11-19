@@ -27,10 +27,11 @@ def stamp(path):
     return path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def fixture(directory, *, empty=False, no_hundred=False):
+def fixture(directory, *, empty=False, no_hundred=False, connection=False):
     directory.mkdir(parents=True, exist_ok=True)
-    report = directory / (NAME + ".json")
-    aggregate = directory / (NAME + ".pq")
+    name = NAME.replace("n-", "c-", 1) if connection else NAME
+    report = directory / (name + ".json")
+    aggregate = directory / (name + ".pq")
     rows, included = [], 0
     for i, rt in enumerate(INTERSECTION_STRATEGIES):
         counts = [0] * 7
@@ -65,6 +66,15 @@ def fixture(directory, *, empty=False, no_hundred=False):
                 intersection_ip_count=included + 3,
                 excluded_strategy_ip_count=3,
                 sources={"rt_based": "/do-not-read/rt.pq", "fixed_interval": "/do-not-read/fi.pq"},
+                **(
+                    dict(
+                        protocol="tcp",
+                        connection_mode="connection",
+                        target="tcp.ipid.connection.rt-based.base+tcp.ipid.connection.fixed-interval.base",
+                    )
+                    if connection
+                    else {}
+                ),
             )
         )
     )

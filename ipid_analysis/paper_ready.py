@@ -39,9 +39,20 @@ REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
 PROBING_KIND = "probing-intervals-by-continent"
 CONNECTION_PROBING_KIND = PROBING_KIND + "-connection"
 PROBING_KINDS = (PROBING_KIND, CONNECTION_PROBING_KIND)
-CONNECTION_KINDS = (*CONNECTION_BASE_KINDS, CONNECTION_PROBING_KIND)
+CONNECTION_INCREMENT_KIND = "increment-distributions-connection"
+CONNECTION_INTERSECTION_KIND = "strategy-intersection-connection"
+CONNECTION_COMPARISON_KINDS = (CONNECTION_INCREMENT_KIND, CONNECTION_INTERSECTION_KIND)
+CONNECTION_KINDS = (
+    *CONNECTION_BASE_KINDS,
+    CONNECTION_PROBING_KIND,
+    *CONNECTION_COMPARISON_KINDS,
+)
 TCP_ONLY_KINDS = (CONNECTION_KIND, TCP_FLAGS_KIND, *CONNECTION_KINDS)
 PLOT_KINDS[CONNECTION_PROBING_KIND] = PROBING_KIND
+PLOT_KINDS[CONNECTION_INCREMENT_KIND] = "increment-distributions"
+PLOT_KINDS[CONNECTION_INTERSECTION_KIND] = "strategy-intersection"
+REPORTS["c-rt-b_fi-b_increment-distributions.json"] = CONNECTION_INCREMENT_KIND
+REPORTS["c-rt-b_fi-b_strategy-intersection.json"] = CONNECTION_INTERSECTION_KIND
 REPORTS[f"n-rt-b_fi-b_{PROBING_KIND}.json"] = PROBING_KIND
 REPORTS[f"c-rt-b_fi-b_{PROBING_KIND}.json"] = CONNECTION_PROBING_KIND
 INTERSECTION_KIND = "strategy-intersection"
@@ -68,6 +79,10 @@ PHASES = {
         "rt-based-base_fixed-interval-base",
     ),
     INTERSECTION_KIND: ("rt-base-vs-fi-base", "comparison", "rt-based-base_fixed-interval-base"),
+    **{
+        kind: ("rt-base-vs-fi-base", "comparison", "rt-based-base_fixed-interval-base")
+        for kind in CONNECTION_COMPARISON_KINDS
+    },
 }
 MAX_REPORT_BYTES = 4 << 20
 
@@ -208,6 +223,27 @@ def plot_data(kind, report):
     return result
 
 
+def _comparison_aggregate(job, report):
+    """Resolve existing exact aggregates without crossing connection modes/phases."""
+    from ipid_analysis.paper_increment_plot import aggregate_path
+
+    connection = job.kind in CONNECTION_COMPARISON_KINDS
+    mode = "connection" if connection else "no-connection"
+    if connection and tuple(
+        report.get(key) for key in ("figure", "protocol", "connection_mode", "target")
+    ) != (
+        PLOT_KINDS[job.kind],
+        "tcp",
+        mode,
+        "tcp.ipid.connection.rt-based.base+tcp.ipid.connection.fixed-interval.base",
+    ):
+        raise ValueError("expected a connection-oriented TCP RT-base/FI-base comparison report")
+    path = aggregate_path(job.source, report, processed_root=job.processed_root, mode=mode)
+    if connection and path.parts[-4:-1] != (mode, *PHASES[job.kind][1:]):
+        raise ValueError("expected the connection RT-base/FI-base comparison aggregate")
+    return path
+
+
 def _initialize_worker(directory):
     # Imports in worker() remain lazy, so these limits precede NumPy/Matplotlib.
     for name in (
@@ -287,20 +323,19 @@ def worker(job: Job) -> Result:
                 "plot_os_group_strategy.py",
             ):
                 profile_bytes += Path(__file__).with_name(name).read_bytes()
-        elif job.kind == INTERSECTION_KIND:
-            from ipid_analysis.paper_increment_plot import aggregate_path
+        elif job.kind in (INTERSECTION_KIND, CONNECTION_INTERSECTION_KIND):
             from ipid_analysis.paper_intersection_plot import draw, load_matrix
 
-            aggregate = aggregate_path(job.source, report, processed_root=job.processed_root)
+            aggregate = _comparison_aggregate(job, report)
             inputs.append(aggregate)
             before.append(fingerprint(aggregate))
             data = load_matrix(aggregate, report)
             for name in ("paper_intersection_plot.py", "paper_figures.py"):
                 profile_bytes += Path(__file__).with_name(name).read_bytes()
-        elif job.kind == "increment-distributions":
-            from ipid_analysis.paper_increment_plot import aggregate_path, draw, load_histogram
+        elif job.kind in ("increment-distributions", CONNECTION_INCREMENT_KIND):
+            from ipid_analysis.paper_increment_plot import draw, load_histogram
 
-            aggregate = aggregate_path(job.source, report, processed_root=job.processed_root)
+            aggregate = _comparison_aggregate(job, report)
             inputs.append(aggregate)
             before.append(fingerprint(aggregate))
             data = load_histogram(aggregate, report)
