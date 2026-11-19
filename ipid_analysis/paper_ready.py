@@ -25,7 +25,10 @@ REPORTS[f"n-rt-b_fi-m_{OS_KIND}.json"] = OS_KIND
 CONNECTION_KIND = "measurement-type-by-strategy-with-connection"
 REPORTS[f"n-rt-b_fi-m_{CONNECTION_KIND}.json"] = CONNECTION_KIND
 TCP_FLAGS_KIND = "tcp-flags-by-strategy"
-TCP_ONLY_KINDS = (CONNECTION_KIND, TCP_FLAGS_KIND)
+CONNECTION_ITDK_KIND = "itdk-role-by-strategy-connection"
+PLOT_KINDS = {CONNECTION_ITDK_KIND: "itdk-role-by-strategy"}
+TCP_ONLY_KINDS = (CONNECTION_KIND, TCP_FLAGS_KIND, CONNECTION_ITDK_KIND)
+REPORTS["c-rt-b_itdk-role-by-strategy.json"] = CONNECTION_ITDK_KIND
 REPORTS[f"n-rt-b_fi-m_{TCP_FLAGS_KIND}.json"] = TCP_FLAGS_KIND
 REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
 PROBING_KIND = "probing-intervals-by-continent"
@@ -39,6 +42,7 @@ PHASES = {
     OS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     OS_GROUP_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     CONNECTION_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
+    CONNECTION_ITDK_KIND: ("rt-base", "rt-based-base"),
     TCP_FLAGS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     "increment-distributions": (
         "rt-base-vs-fi-base",
@@ -90,7 +94,12 @@ def discover(
     if not root.is_dir():
         raise FileNotFoundError(root)
     contexts = [
-        (protocol, "no-connection", phase[0], kind)
+        (
+            protocol,
+            "connection" if kind == CONNECTION_ITDK_KIND else "no-connection",
+            phase[0],
+            PLOT_KINDS.get(kind, kind),
+        )
         for protocol in protocols
         for kind, phase in PHASES.items()
         if kind not in TCP_ONLY_KINDS or protocol == "tcp"
@@ -109,13 +118,11 @@ def discover(
                 run_index = 2 if relative.parts[1] == "figures" else 1
                 if protocol_from_run(relative.parts[run_index]) != "tcp":
                     continue
-            # Only the canonical stateless phase for each registered plot.
-            phase = PHASES[REPORTS[path.name]]
-            if relative.parts[-4:-1] != (
-                "no-connection",
-                phase[1],
-                phase[2],
-            ):
+            # Select each report's own canonical connection mode and phase.
+            kind = REPORTS[path.name]
+            mode = "connection" if kind == CONNECTION_ITDK_KIND else "no-connection"
+            suffix = (mode, *PHASES[kind][1:])
+            if relative.parts[-len(suffix) - 1 : -1] != suffix:
                 continue
             jobs.append(job_for(path, processed_root=processed_root))
         return jobs
@@ -143,6 +150,12 @@ def _shares(values, *, zero_allowed=False):
 
 def plot_data(kind, report):
     """Read the actual analysis report schema; do not reconstruct values from PDFs."""
+    if kind == CONNECTION_ITDK_KIND:
+        if tuple(
+            report.get(field) for field in ("protocol", "connection_mode", "interval", "scale")
+        ) != ("tcp", "connection", "rt-based", "base"):
+            raise ValueError("expected a connection-oriented TCP RT-base ITDK report")
+        return plot_data(PLOT_KINDS[kind], report)
     if kind == OS_KIND:
         from ipid_analysis.paper_os_plot import load_data
 
@@ -295,7 +308,7 @@ def worker(job: Job) -> Result:
             return Result(str(destination), status, perf_counter() - start)
         temporary = temporary_path(destination)
         try:
-            draw(job.kind, data, temporary)
+            draw(PLOT_KINDS.get(job.kind, job.kind), data, temporary)
             if [fingerprint(path) for path in inputs] != before:
                 raise ValueError("source input changed during rendering; refusing publication")
             publish_new_file(temporary, destination, inputs=inputs, parameters=parameters)
