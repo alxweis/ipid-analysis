@@ -32,12 +32,22 @@ SELECTION = (
     ),
 )
 Y_LABEL = "Operating-System Group (#IP Addr.)"
+BASE_OMITTED = ("MULTI", "RANDOM", "NOT_ENOUGH_SAMPLES")
+BASE_STRATEGIES = tuple(key for key in HEATMAP_STRATEGIES if key not in BASE_OMITTED)
+# Physical measurements from the approved drafts; no PDF is read at runtime.
+BASE_CELL_POINTS = (11.9145, 9.1275)
+BASE_COLORBAR_POINTS = (3.6, 63.8925)
+BASE_COLORBAR_GAP_POINTS = 5.04
 
 
-def load_data(path, report):
+def load_data(path, report, *, connection_base=False):
     """Validate the complete small table, then select rows without renormalizing."""
     if report.get("figure") != "operating-system-group-by-strategy":
         raise ValueError("expected the OS-group strategy report")
+    if connection_base and tuple(
+        report.get(k) for k in ("protocol", "connection_mode", "target")
+    ) != ("tcp", "connection", "tcp.ipid.connection.rt-based.base"):
+        raise ValueError("expected the connection-oriented TCP RT-base OS-group report")
     if path.stat().st_size > MAX_AGGREGATE_BYTES:
         raise ValueError("expected a compact OS-group aggregate (at most 4 MiB)")
     with pq.ParquetFile(path) as source:
@@ -94,9 +104,13 @@ def load_data(path, report):
     }
     if any(type(report.get(k)) is not int or report[k] != value for k, value in expected.items()):
         raise ValueError("OS-group report totals disagree with aggregate")
+    if connection_base:
+        omitted = [indices[key] for key in BASE_OMITTED]
+        if any(counts[g][omitted].any() or percentages[g][omitted].any() for g in groups):
+            raise ValueError("BASE-only omitted strategy columns must be exactly zero")
     # Absence from the validated complete table means zero observed IPs, not
     # permission to drop/reorder the user's fixed selection.
-    return {
+    result = {
         "sections": [
             {
                 "title": title,
@@ -108,6 +122,13 @@ def load_data(path, report):
             for title, keys in SELECTION
         ]
     }
+    if connection_base:
+        result.update(connection_base=True, strategies=BASE_STRATEGIES)
+        columns = [indices[key] for key in BASE_STRATEGIES]
+        for section in result["sections"]:
+            for field in ("counts", "percentages"):
+                section[field] = section[field][:, columns]
+    return result
 
 
 def draw(kind, data, output):
@@ -126,7 +147,24 @@ def _draw(data, output, *, wrap_width=None):
 
     DPI, HEIGHT = 300, 4.6
     font, _ = _font()
-    LABELS = [STRATEGY_PRETTY[key] for key in HEATMAP_STRATEGIES]
+    connection_base = data.get("connection_base", False)
+    strategies = data.get("strategies", HEATMAP_STRATEGIES)
+    column_count = len(strategies)
+    LABELS = [STRATEGY_PRETTY[key] for key in strategies]
+
+    def population(total):
+        if connection_base and total > 100_000:
+            return f"{total / 1000:.0f}k"
+        return _format_ip_count(total)
+
+    def annotation(count, share):
+        if count == 0:
+            return "-"
+        text = f"{share:.1f}"
+        # The exact endpoint fits a fixed 7-pt cell as 100, with no information
+        # lost relative to its 100.0 annotation. Other cells keep one decimal.
+        return "100" if connection_base and text == "100.0" else text
+
     cmap = PERCENTAGE_CMAP
     selected = [
         (
@@ -135,10 +173,7 @@ def _draw(data, output, *, wrap_width=None):
                 (
                     GROUP_INFO[key],
                     shares,
-                    [
-                        "-" if count == 0 else f"{share:.1f}"
-                        for count, share in zip(counts, shares)
-                    ],
+                    [annotation(count, share) for count, share in zip(counts, shares)],
                 )
                 for key, counts, shares in zip(
                     section["groups"], section["counts"], section["percentages"]
@@ -171,9 +206,11 @@ def _draw(data, output, *, wrap_width=None):
                 probe.set_text(label)
                 annotation_sizes.append(probe.get_window_extent(renderer).size)
             cell_width_px, cell_height_px = np.max(annotation_sizes, axis=0) + 10
+            if connection_base:
+                cell_width_px, cell_height_px = np.asarray(BASE_CELL_POINTS) * DPI / 72
             labels_by_section = [
                 [
-                    f"{GROUP_INFO[key][1]} ({_format_ip_count(total)})"
+                    f"{GROUP_INFO[key][1]} ({population(total)})"
                     for key, total in zip(section["groups"], section["totals"])
                 ]
                 for section in data["sections"]
@@ -202,7 +239,11 @@ def _draw(data, output, *, wrap_width=None):
             probe.remove()
             _, reference_cell_height = measure_heatmap_cell(fig, font)
             colorbar_width, colorbar_height = 0.05, 7 * reference_cell_height / DPI
-            matrix_width = 10 * cell_width_px / DPI
+            colorbar_gap = 0.02
+            if connection_base:
+                colorbar_width, colorbar_height = np.asarray(BASE_COLORBAR_POINTS) / 72
+                colorbar_gap = BASE_COLORBAR_GAP_POINTS / 72
+            matrix_width = column_count * cell_width_px / DPI
             row_height = cell_height_px / DPI
             left, bottom, section_gap = 1.04, 0.9, 0.20
             network_height, general_height = 12 * row_height, 8 * row_height
@@ -223,7 +264,7 @@ def _draw(data, output, *, wrap_width=None):
                 values = np.asarray([row[1] for row in rows])
                 ax.imshow(values, cmap=cmap, vmin=0, vmax=100, interpolation="none", aspect="auto")
                 ax.set_yticks(range(len(rows)), row_labels)
-                ax.set_xticks(range(10), LABELS if title == "Network OS" else [])
+                ax.set_xticks(range(column_count), LABELS if title == "Network OS" else [])
                 ax.tick_params(axis="both", length=2.5, width=0.45, pad=1.5)
                 if title == "Network OS":
                     plt.setp(ax.get_xticklabels(), rotation=30, ha="right", rotation_mode="anchor")
@@ -247,7 +288,7 @@ def _draw(data, output, *, wrap_width=None):
             colorbar_bottom = bottom + (total_height - colorbar_height) / 2
             cax = fig.add_axes(
                 [
-                    (left + matrix_width + 0.02) / WIDTH,
+                    (left + matrix_width + colorbar_gap) / WIDTH,
                     colorbar_bottom / HEIGHT,
                     colorbar_width / WIDTH,
                     colorbar_height / HEIGHT,
@@ -279,7 +320,7 @@ def _draw(data, output, *, wrap_width=None):
             required_width = max_x - min_x + title_width + gap
             # Make space for the requested inline populations without shrinking
             # the 7-pt text, changing row heights, or widening the paper column.
-            if required_width > fig.bbox.width - 2:
+            if not connection_base and required_width > fig.bbox.width - 2:
                 reduction = required_width - (fig.bbox.width - 2)
                 cell_width_px -= reduction / 10
                 minimum_width = np.max(annotation_sizes, axis=0)[0] + 1
@@ -301,7 +342,8 @@ def _draw(data, output, *, wrap_width=None):
                 bounds = [a.get_tightbbox(renderer) for a in (*axes, cax)]
                 min_x, max_x = min(b.x0 for b in bounds), max(b.x1 for b in bounds)
                 required_width = max_x - min_x + title_width + gap
-            assert required_width <= fig.bbox.width - 2 + 0.01, required_width
+            if required_width > fig.bbox.width - 2 + 0.01:
+                raise ValueError("OS labels cannot fit the fixed paper cells at 7 pt")
             offset = (fig.bbox.width - required_width) / 2 + title_width + gap - min_x
             for ax in (*axes, cax):
                 box = ax.get_position()
@@ -325,7 +367,7 @@ def _draw(data, output, *, wrap_width=None):
                         or b.y1 > fig.bbox.height + 0.5
                     ):
                         raise ValueError(f"paper label would be clipped: {text.get_text()}")
-            assert sum(len(a.texts) for a in axes) == 200
+            assert sum(len(a.texts) for a in axes) == 20 * column_count
             image = np.asarray(fig.canvas.buffer_rgba())[:, :, :3]
             ys = np.flatnonzero(np.any(image < 250, axis=2).any(axis=1))
             crop_bottom = max(0, (len(image) - ys[-1] - 1) / DPI - 1 / DPI)

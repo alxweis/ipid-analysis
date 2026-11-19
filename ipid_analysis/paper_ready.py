@@ -26,9 +26,15 @@ CONNECTION_KIND = "measurement-type-by-strategy-with-connection"
 REPORTS[f"n-rt-b_fi-m_{CONNECTION_KIND}.json"] = CONNECTION_KIND
 TCP_FLAGS_KIND = "tcp-flags-by-strategy"
 CONNECTION_ITDK_KIND = "itdk-role-by-strategy-connection"
-PLOT_KINDS = {CONNECTION_ITDK_KIND: "itdk-role-by-strategy"}
-TCP_ONLY_KINDS = (CONNECTION_KIND, TCP_FLAGS_KIND, CONNECTION_ITDK_KIND)
+CONNECTION_OS_GROUP_KIND = "operating-system-group-by-strategy-connection"
+CONNECTION_BASE_KINDS = (CONNECTION_ITDK_KIND, CONNECTION_OS_GROUP_KIND)
+PLOT_KINDS = {
+    CONNECTION_ITDK_KIND: "itdk-role-by-strategy",
+    CONNECTION_OS_GROUP_KIND: "operating-system-group-by-strategy",
+}
+TCP_ONLY_KINDS = (CONNECTION_KIND, TCP_FLAGS_KIND, *CONNECTION_BASE_KINDS)
 REPORTS["c-rt-b_itdk-role-by-strategy.json"] = CONNECTION_ITDK_KIND
+REPORTS["c-rt-b_operating-system-group-by-strategy.json"] = CONNECTION_OS_GROUP_KIND
 REPORTS[f"n-rt-b_fi-m_{TCP_FLAGS_KIND}.json"] = TCP_FLAGS_KIND
 REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
 PROBING_KIND = "probing-intervals-by-continent"
@@ -43,6 +49,7 @@ PHASES = {
     OS_GROUP_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     CONNECTION_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     CONNECTION_ITDK_KIND: ("rt-base", "rt-based-base"),
+    CONNECTION_OS_GROUP_KIND: ("rt-base", "rt-based-base"),
     TCP_FLAGS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     "increment-distributions": (
         "rt-base-vs-fi-base",
@@ -96,7 +103,7 @@ def discover(
     contexts = [
         (
             protocol,
-            "connection" if kind == CONNECTION_ITDK_KIND else "no-connection",
+            "connection" if kind in CONNECTION_BASE_KINDS else "no-connection",
             phase[0],
             PLOT_KINDS.get(kind, kind),
         )
@@ -120,7 +127,7 @@ def discover(
                     continue
             # Select each report's own canonical connection mode and phase.
             kind = REPORTS[path.name]
-            mode = "connection" if kind == CONNECTION_ITDK_KIND else "no-connection"
+            mode = "connection" if kind in CONNECTION_BASE_KINDS else "no-connection"
             suffix = (mode, *PHASES[kind][1:])
             if relative.parts[-len(suffix) - 1 : -1] != suffix:
                 continue
@@ -248,7 +255,7 @@ def worker(job: Job) -> Result:
             data = load_series(aggregate, metadata, job.source)
             for name in ("paper_probing_plot.py", "paper_figures.py"):
                 profile_bytes += Path(__file__).with_name(name).read_bytes()
-        elif job.kind == OS_GROUP_KIND:
+        elif job.kind in (OS_GROUP_KIND, CONNECTION_OS_GROUP_KIND):
             from ipid_analysis.paper_increment_plot import aggregate_path
             from ipid_analysis.paper_os_group_plot import draw, load_data
 
@@ -256,11 +263,14 @@ def worker(job: Job) -> Result:
                 job.source,
                 report,
                 processed_root=job.processed_root,
-                phase=PHASES[OS_GROUP_KIND][1:],
+                phase=PHASES[job.kind][1:],
+                mode="connection" if job.kind == CONNECTION_OS_GROUP_KIND else "no-connection",
             )
             inputs.append(aggregate)
             before.append(fingerprint(aggregate))
-            data = load_data(aggregate, report)
+            data = load_data(
+                aggregate, report, connection_base=job.kind == CONNECTION_OS_GROUP_KIND
+            )
             for name in (
                 "paper_os_group_plot.py",
                 "paper_figures.py",
