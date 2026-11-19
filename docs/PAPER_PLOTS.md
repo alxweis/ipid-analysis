@@ -17,6 +17,7 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
 | `n-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `n-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
 | `n-rt-b_fi-b_strategy-intersection.json` plus its existing 49-cell aggregate | `n-rt-b_fi-b_strategy-intersection__paper.pdf` |
+| `n-rt-b_fi-m_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `n-rt-b_fi-m_operating-system-group-by-strategy__paper.pdf` |
 
 The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
@@ -65,6 +66,35 @@ values retain the original one-decimal formatting, including small positive
 shares displayed as `0.0`. Missing/invalid aggregates fail without a PDF or
 per-IP-data fallback. Its receipt tracks the original JSON and compact table;
 the input is bounded to 49 rows and 1 MiB. This variant needs no preparation flag.
+
+The OS-group adapter reads only its report and existing compact OS/strategy
+aggregate (at most 4 MiB and ten cells per canonical OS group). It validates the
+schema, unique/complete cells, taxonomy labels, counts, percentages and report
+populations before selecting these groups in this fixed order:
+
+- **General-Purpose OS:** Ubuntu, Debian, RHEL, CentOS, Fedora, FreeBSD, OpenBSD,
+  Microsoft Windows.
+- **Network OS:** MikroTik, F5, Cisco, SonicWall, ZTE, HPE Network OS, Check Point,
+  OPNsense, Huawei, DrayTek, Zyxel, Aruba.
+
+All ten strategy columns retain their original order and row-wise normalization.
+There is no ranking, reclassification, per-IP join, PDF extraction or preparation
+step. A selected OS absent from the validated complete aggregate remains a
+zero-population `(0)` row with dashes; other OS groups are not displayed. Stored
+percentages are used unchanged. Exact-zero cells show `-`; positive shares use
+one decimal, including small positive values displayed as `0.0`.
+
+The approved 3.33-inch, Linux Libertine 7-pt design has two stacked heatmaps with
+headings centered over their own frames, inline parenthesized IP counts using
+the original k/M formatting, and `Operating-System Group (#IP Addr.)` as y title.
+The 0.05-inch percentage bar is centered vertically on the combined heatmap
+frames and has exactly the same height as the seven-row intersection bar,
+using shared font measurement rather than platform-specific hardcoded pixels.
+The palette, canonical labels, population formatting, colorbar helper and cached
+font are reused. Columns are fitted to the available width without reducing text
+size. Longer populations or `100.0` cells can require OS labels to wrap and taller
+rows; no labels or cells are silently dropped or clipped. Publication and repeats
+use the existing create-only, bounded multiprocessing path.
 
 The probing-interval violin uses the approved **p99.9 upper limit and 256 quantile
 points**. The old p99.5 aggregate cannot recover that tail. An explicit one-off
@@ -141,7 +171,7 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the eight exact report names above are supported.
+Only the nine exact report names above are supported.
 The bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
 the increment, intersection and continent violin plots under `no-connection/comparison/rt-based-base_fixed-interval-base`.
 The three-bar refinement and TCP-flags variants are selected only for TCP runs,

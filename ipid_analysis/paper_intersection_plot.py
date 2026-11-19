@@ -81,7 +81,7 @@ def draw(kind, data, output):
         PERCENTAGE_CMAP,
         draw_percentage_colorbar_axis,
     )
-    from ipid_analysis.paper_plot_style import FONT_SIZE, WIDTH, _font
+    from ipid_analysis.paper_plot_style import FONT_SIZE, WIDTH, _font, measure_heatmap_cell
     from ipid_analysis.strategies import STRATEGY_PRETTY
 
     font, _ = _font()
@@ -135,11 +135,7 @@ def draw(kind, data, output):
             box = ax.get_position()
             ax.set_position([box.x0 + shift, box.y0, box.width - shift, box.height])
             # Always measure 100.0, even when no input cell happens to contain it.
-            probe = fig.text(0.5, 0.5, "100.0", ha="center", va="center", fontproperties=font)
-            fig.canvas.draw()
-            box = probe.get_window_extent(fig.canvas.get_renderer())
-            cell_width, cell_height = box.width + 10, box.height + 10
-            probe.remove()
+            cell_width, cell_height = measure_heatmap_cell(fig, font)
             box = ax.get_position()
             ax.set_position(
                 [
