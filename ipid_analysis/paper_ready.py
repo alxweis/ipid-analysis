@@ -28,6 +28,8 @@ TCP_FLAGS_KIND = "tcp-flags-by-strategy"
 TCP_ONLY_KINDS = (CONNECTION_KIND, TCP_FLAGS_KIND)
 REPORTS[f"n-rt-b_fi-m_{TCP_FLAGS_KIND}.json"] = TCP_FLAGS_KIND
 REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
+PROBING_KIND = "probing-intervals-by-continent"
+REPORTS[f"n-rt-b_fi-b_{PROBING_KIND}.json"] = PROBING_KIND
 PHASES = {
     **{kind: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass") for kind in KINDS},
     OS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
@@ -38,6 +40,7 @@ PHASES = {
         "comparison",
         "rt-based-base_fixed-interval-base",
     ),
+    PROBING_KIND: ("rt-base-vs-fi-base", "comparison", "rt-based-base_fixed-interval-base"),
 }
 MAX_REPORT_BYTES = 4 << 20
 
@@ -213,7 +216,20 @@ def worker(job: Job) -> Result:
         report = json.loads(content)
         profile = Path(__file__).with_name("paper_plot_style.py")
         profile_bytes = profile.read_bytes()
-        if job.kind == "increment-distributions":
+        if job.kind == PROBING_KIND:
+            from ipid_analysis.paper_probing_plot import draw, load_series, paths
+
+            aggregate, metadata = paths(job.source, report, job.processed_root)
+            if not aggregate.is_file() or not metadata.is_file():
+                raise ValueError(
+                    "p99.9/256 paper quantiles missing; run paper-plots with --prepare-probing-intervals once"
+                )
+            inputs.extend((aggregate, metadata))
+            before.extend(fingerprint(path) for path in (aggregate, metadata))
+            data = load_series(aggregate, metadata, job.source)
+            for name in ("paper_probing_plot.py", "paper_figures.py"):
+                profile_bytes += Path(__file__).with_name(name).read_bytes()
+        elif job.kind == "increment-distributions":
             from ipid_analysis.paper_increment_plot import aggregate_path, draw, load_histogram
 
             aggregate = aggregate_path(job.source, report, processed_root=job.processed_root)
@@ -321,6 +337,11 @@ def main(argv=None):
     parser.add_argument("--protocols", nargs="+", choices=PROTOCOLS, default=list(PROTOCOLS))
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument(
+        "--prepare-probing-intervals",
+        action="store_true",
+        help="explicit one-off p99.9/256 aggregation from stored intervals into new paper-only files; sequential and potentially slow",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="list destinations without writing anything"
     )
     args = parser.parse_args(argv)
@@ -343,6 +364,13 @@ def main(argv=None):
         if not jobs:
             raise ValueError("no supported paper-plot reports found")
         start = perf_counter()
+        if args.prepare_probing_intervals and not args.dry_run:
+            from ipid_analysis.paper_probing_plot import prepare
+
+            for job in sorted(set(jobs), key=lambda job: str(job.source)):
+                if job.kind == PROBING_KIND and not os.path.lexists(job.destination):
+                    print(f"preparing p99.9/256 probing intervals: {job.source}", flush=True)
+                    print(f"paper quantiles: {prepare(job)}", flush=True)
         results = run(jobs, workers=args.workers, dry_run=args.dry_run)
     except (OSError, ValueError) as exc:
         parser.exit(1, f"paper-plots: {exc}\n")
