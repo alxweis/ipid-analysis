@@ -20,6 +20,7 @@ def aggregate_path(
     *,
     processed_root=None,
     phase=("comparison", "rt-based-base_fixed-interval-base"),
+    mode="no-connection",
 ):
     """Use the report's exact aggregate; never fall back to per-IP increments."""
     recorded = report.get("aggregate")
@@ -33,7 +34,12 @@ def aggregate_path(
         if parts.count("continental") != 1:
             raise ValueError("--processed-root requires a continental histogram path")
         relative = parts[parts.index("continental") :]
-        if len(relative) != 8 or ".." in relative or relative[-4:-1] != ("no-connection", *phase):
+        suffix = (mode, *phase)
+        if (
+            len(relative) != 6 + len(phase)
+            or ".." in relative
+            or relative[-len(suffix) - 1 : -1] != suffix
+        ):
             raise ValueError("unexpected continental histogram layout")
         path = Path(processed_root).joinpath(*relative)
     return path

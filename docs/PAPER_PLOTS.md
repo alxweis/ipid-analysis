@@ -19,6 +19,7 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `n-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
 | `n-rt-b_fi-b_strategy-intersection.json` plus its existing 49-cell aggregate | `n-rt-b_fi-b_strategy-intersection__paper.pdf` |
 | `n-rt-b_fi-m_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `n-rt-b_fi-m_operating-system-group-by-strategy__paper.pdf` |
+| `c-rt-b_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `c-rt-b_operating-system-group-by-strategy__paper.pdf` |
 
 The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
@@ -109,6 +110,29 @@ size. Longer populations or `100.0` cells can require OS labels to wrap and tall
 rows; no labels or cells are silently dropped or clipped. Publication and repeats
 use the existing create-only, bounded multiprocessing path.
 
+The connection-oriented TCP OS-group variant reuses this adapter and renderer
+in `connection/rt-based-base`. Its report must identify TCP, connection mode
+and the `tcp.ipid.connection.rt-based.base` target. It keeps the same 20 selected
+OS rows and order, but displays seven BASE columns: Reflection, Constant, Single,
+Per-Connection, Per-Destination, Per-Bucket and Unclassified. The complete exact
+aggregate is validated first; Multi, Random and Not Enough Samples must have
+zero counts **and** zero percentages in every source OS group, including groups
+not selected for display. Otherwise rendering fails without hiding observations.
+The retained percentages are not renormalized, and an absent selected OS remains
+a `(0)` row of dashes.
+
+This variant uses the approved fixed physical cell size of 11.9145 by 9.1275 pt,
+the 3.6-by-63.8925-pt percentage bar and a 5.04-pt horizontal bar gap. The heatmap
+gap remains 0.20 inches; the y-title/OS-label layout gap remains 2 pt. No reference
+PDF or existing paper output is read to determine geometry. Names and populations
+remain on one line, with counts above 100,000 rounded to whole thousands (for
+example 162197 -> `162k`). Other population labels keep the original format.
+The 3.33-inch canvas, Linux Libertine 7 pt, palette, zero dashes, centered headings,
+30-degree strategy labels and upper unlabeled ticks are shared. Ordinary numeric
+annotations retain one decimal; the rounded `100.0` endpoint is shown as `100`
+so its text fits the approved fixed-width cells. Source values remain exact.
+The stateless OS renderer retains its existing sizing and population formatting.
+
 The probing-interval violin uses the approved **p99.9 upper limit and 256 quantile
 points**. The old p99.5 aggregate cannot recover that tail. An explicit one-off
 preparation reads the already stored RT-base/FI-base probing intervals and
@@ -184,8 +208,8 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the ten exact report names above are supported.
-The `c-rt-b` ITDK bar plot is discovered under TCP `connection/rt-based-base`.
+Only the eleven exact report names above are supported.
+The `c-rt-b` ITDK and OS-group plots are discovered under TCP `connection/rt-based-base`.
 The other bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
 the increment, intersection and continent violin plots under `no-connection/comparison/rt-based-base_fixed-interval-base`.
 The three-bar refinement and TCP-flags variants are selected only for TCP runs,

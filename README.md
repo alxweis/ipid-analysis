@@ -5,6 +5,7 @@ Create additional single-column IMC figures from existing small reports/aggregat
 The command supports stateless RT-base/FI-mass measurement-type, ITDK-role-by-strategy
 and ITDK-role-by-OS plots with the approved shared OS pastel palette,
 the connection-oriented TCP RT-base ITDK-role-by-strategy plot,
+the connection-oriented TCP RT-base OS-group/strategy heatmap,
 the three-bar TCP refinement with a connection-oriented RT-based bar, TCP flags
 by strategy, selected OS-group/strategy heatmaps, RT-base/FI-base increment ECDFs, strategy-intersection heatmaps
 and continent probing-interval violins,
