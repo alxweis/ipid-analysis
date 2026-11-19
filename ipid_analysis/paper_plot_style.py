@@ -118,6 +118,7 @@ def draw(kind: str, percentages: dict, output: Path) -> None:
     font, _ = _font()
     itdk = kind == "itdk-role-by-strategy"
     connection = kind == "measurement-type-by-strategy-with-connection"
+    tcp_flags = kind == "tcp-flags-by-strategy"
     rows = ROLES if itdk else MODES
     labels = ("Router", "All Other") if itdk else MODES
     height = HEIGHT
@@ -126,6 +127,11 @@ def draw(kind: str, percentages: dict, output: Path) -> None:
 
         rows = MODES_WITH_CONNECTION
         labels = tuple(MODE_LABELS.get(row, row) for row in rows)
+        height = 1.4025
+    elif tcp_flags:
+        from ipid_analysis.plot_tcp_flags_strategy import FLAG_GROUPS
+
+        rows = labels = FLAG_GROUPS
         height = 1.4025
     with plt.rc_context(
         {
@@ -139,22 +145,35 @@ def draw(kind: str, percentages: dict, output: Path) -> None:
             "ps.fonttype": 42,
         }
     ):
-        fig = plt.figure(figsize=(WIDTH, height), dpi=300 if connection else 240)
+        fig = plt.figure(figsize=(WIDTH, height), dpi=300 if connection or tcp_flags else 240)
         try:
-            _draw(fig, font, itdk, rows, labels, percentages, output, connection=connection)
+            _draw(
+                fig,
+                font,
+                itdk,
+                rows,
+                labels,
+                percentages,
+                output,
+                connection=connection,
+                tcp_flags=tcp_flags,
+            )
         finally:
             plt.close(fig)
 
 
-def _draw(fig, font, itdk, rows, labels, percentages, output, *, connection=False):
+def _draw(
+    fig, font, itdk, rows, labels, percentages, output, *, connection=False, tcp_flags=False
+):
     height = fig.get_size_inches()[1]
-    left = 1.01 if connection else 0.59 if itdk else 0.77
-    axes_height = 0.6325 if connection else 0.4015
-    centers = (1.68, 0.84, 0) if connection else (0.84, 0)
+    three_rows = connection or tcp_flags
+    left = 1.01 if connection else 0.80 if tcp_flags else 0.59 if itdk else 0.77
+    axes_height = 0.6325 if three_rows else 0.4015
+    centers = (1.68, 0.84, 0) if three_rows else (0.84, 0)
     ax = fig.add_axes(
         [left / WIDTH, 0.43 / height, (WIDTH - left - 0.1) / WIDTH, axes_height / height]
     )
-    ax.set(xlim=(0, 100), ylim=(-0.31, 1.99 if connection else 1.15))
+    ax.set(xlim=(0, 100), ylim=(-0.31, 1.99 if three_rows else 1.15))
     ax.set_yticks(centers, labels)
     ax.set_xticks(range(0, 101, 20))
     ax.set_xticks([n for n in range(5, 100, 5) if n % 20], minor=True)
@@ -167,14 +186,14 @@ def _draw(fig, font, itdk, rows, labels, percentages, output, *, connection=Fals
     title = fig.text(
         0.075 / WIDTH,
         0.5,
-        "Device Type" if itdk else "Measurement Type",
+        "TCP Flags" if tcp_flags else "Device Type" if itdk else "Measurement Type",
         rotation=90,
         rotation_mode="anchor",
         ha="center",
         va="center",
         fontproperties=font,
     )
-    if not itdk:
+    if not itdk and not tcp_flags:
         upper, lower = (1.47, 1.05) if connection else (0.63, 0.21)
         rt = percentages[MODES[0]]
         begin = sum(rt.get(key, 0) for key in ORDER[: ORDER.index("UNCLASSIFIED")])
@@ -233,7 +252,7 @@ def _draw(fig, font, itdk, rows, labels, percentages, output, *, connection=Fals
     renderer = fig.canvas.get_renderer()
     bottom = (
         ax.bbox.y0
-        if itdk or connection
+        if itdk or three_rows
         else min(ax.bbox.y0, ax.xaxis.label.get_window_extent(renderer).y0)
     )
     title.set_y((bottom + ax.bbox.y1) / (2 * fig.bbox.height))
@@ -283,7 +302,11 @@ def _draw(fig, font, itdk, rows, labels, percentages, output, *, connection=Fals
         bbox_inches=Bbox.from_extents(0, bottom, WIDTH, top),
         pad_inches=0,
         metadata={
-            "Title": "Device type by strategy" if itdk else "Measurement type by strategy",
+            "Title": "TCP flags by strategy"
+            if tcp_flags
+            else "Device type by strategy"
+            if itdk
+            else "Measurement type by strategy",
             "Subject": f"{STYLE_VERSION}; Linux Libertine 7 pt; 3.33 inches",
             "Creator": "ipid-analysis paper-ready renderer",
         },

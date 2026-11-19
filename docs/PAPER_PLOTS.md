@@ -12,6 +12,7 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-m_measurement-type-by-strategy.json` | `n-rt-b_fi-m_measurement-type-by-strategy__paper.pdf` |
 | `n-rt-b_fi-m_itdk-role-by-strategy.json` | `n-rt-b_fi-m_itdk-role-by-strategy__paper.pdf` |
 | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json` | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection__paper.pdf` |
+| `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
 
 The first adapter reads `bars[mode].percentages`; the second reads
@@ -23,6 +24,12 @@ The TCP three-bar adapter also reads `bars["RT-based & Connection-oriented"].per
 Each bar retains its independent normalization from the report. No per-IP data,
 Parquet or original PDF is read for this variant. A missing or invalid third bar
 fails without replacing any artifact; there is no fallback to the two-bar plot.
+
+The TCP-flags adapter reads the existing `bars[flags].percentages` for
+`SYN-ACK/RST`, `SYN-ACK`, and `RST` in that order. Each distribution retains its
+existing normalization; the combined bar is not recomputed as an average of the
+two subgroups. No ZMap join, per-IP strategy table, Parquet or source PDF is read.
+Missing/invalid groups fail without triggering reanalysis.
 
 The increment adapter reads the exact compact `.pq` histogram named by the
 report's `aggregate` field, not the per-IP `n-rt-b_increments.pq` or
@@ -71,11 +78,11 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the four exact report names above are supported.
+Only the five exact report names above are supported.
 The bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
 the increment plot under `no-connection/comparison/rt-based-base_fixed-interval-base`.
-The three-bar refinement variant is selected only for TCP runs, not under a
-`connection/` directory or for ICMP/UDP. Individual-measurement variants and all
+The three-bar refinement and TCP-flags variants are selected only for TCP runs,
+not under a `connection/` directory or for ICMP/UDP. Individual-measurement variants and all
 other plots retain their existing behavior. New plot types can be registered
 with an adapter and a design without changing the original analysis renderers.
 
@@ -105,6 +112,13 @@ centered on that frame with a 2-point downward offset. The legend keeps the
 original five-column/two-row distribution; the compact centered experiment is
 not applied. The gray refinement guide connects only the top RT-based
 Unclassified segment to the Fixed-Interval bar, never to the independent third bar.
+
+The approved TCP-flags design uses the same three-bar frame, spacing and legend.
+Its left edge is at 0.80 inches; the `TCP Flags` title is centered vertically on
+the frame. The three rows have no refinement guide between them. Percentage
+labels keep the shared >=1% threshold and integer rounding, including narrow
+one-percent segments. It reuses the bar renderer rather than introducing a
+second plotting or publication pipeline.
 
 The approved increment design shares the same width, font, pastel colors and
 4-point strategy swatches. Its three-column/two-row legend is a compact centered
@@ -170,6 +184,12 @@ A mixed four-type fixture run skipped eighteen existing paper PDFs and added
 six three-bar TCP PDFs in 2.6 seconds; its completed repeat took 0.13 seconds.
 All existing bytes/timestamps remained unchanged. The six inputs repeat one
 existing EU/TCP report, so this is a local rendering check, not six-VP results.
+
+A mixed five-type fixture run skipped twenty-four existing paper PDFs and added
+six TCP-flags PDFs in 2.7 seconds; the completed repeat took 0.14 seconds. Existing
+bytes/timestamps were unchanged, and fresh renders of the four prior plot types
+were pixel-identical to their baseline previews. The six flags reports repeat
+one EU/TCP input; these are offline checks, not live-S3 or six-VP measurements.
 
 `make paper-values` prefers an available sibling `__paper.pdf` for each selected
 figure and falls back to its original PDF otherwise. The existing `fig.*` keys
