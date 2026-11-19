@@ -71,22 +71,34 @@ def _font():
     return font_manager.FontProperties(fname=path, size=FONT_SIZE), temporary
 
 
-def _legend(fig, font, *, itdk):
+def _legend(fig, font, *, itdk, entries=None):
     # Reserve the same five columns in both figures, even when the last entry
     # is absent because the ITDK report combines insufficient samples with Unclassified.
-    widths = [TextPath((0, 0), STRATEGY_PRETTY[key], prop=font).get_extents().x1 for key in ORDER]
+    strategy_legend = entries is None
+    if strategy_legend:
+        entries = [(key, STRATEGY_PRETTY[key], COLORS[key]) for key in ORDER]
+    if not entries:
+        return []
+    widths = [TextPath((0, 0), label, prop=font).get_extents().x1 for _, label, _ in entries]
     handle, gap = 4.0, 1.2
     height = fig.get_size_inches()[1]
-    columns = [handle + gap + max(widths[i : i + 2]) for i in range(0, 10, 2)]
+    column_count = min(5, len(entries))
+    row_count = (len(entries) + column_count - 1) // column_count
+    columns = [
+        handle + gap + max(widths[i : i + row_count]) for i in range(0, len(entries), row_count)
+    ]
     x = 72 / 300
-    between = (WIDTH * 72 - 2 * x - sum(columns)) / 4
+    between = (WIDTH * 72 - 2 * x - sum(columns)) / max(1, len(columns) - 1)
     if between <= 0:
         raise ValueError("Linux Libertine legend does not fit the 3.33-inch page")
     texts = []
-    for column in range(5):
-        for row in range(2):
-            key = ORDER[column * 2 + row]
-            if itdk and key == "NOT_ENOUGH_SAMPLES":
+    for column in range(len(columns)):
+        for row in range(row_count):
+            index = column * row_count + row
+            if index >= len(entries):
+                continue
+            key, label, color = entries[index]
+            if strategy_legend and itdk and key == "NOT_ENOUGH_SAMPLES":
                 continue
             y = height * 72 - 5.5 - row * 9
             fig.add_artist(
@@ -95,7 +107,7 @@ def _legend(fig, font, *, itdk):
                     4 / (WIDTH * 72),
                     4 / (height * 72),
                     transform=fig.transFigure,
-                    facecolor=COLORS[key],
+                    facecolor=color,
                     edgecolor="none",
                 )
             )
@@ -103,7 +115,7 @@ def _legend(fig, font, *, itdk):
                 fig.text(
                     (x + handle + gap) / (WIDTH * 72),
                     y / (height * 72),
-                    STRATEGY_PRETTY[key],
+                    label,
                     ha="left",
                     va="center",
                     fontproperties=font,
@@ -113,10 +125,17 @@ def _legend(fig, font, *, itdk):
     return texts
 
 
-def draw(kind: str, percentages: dict, output: Path) -> None:
+def draw(kind: str, percentages, output: Path) -> None:
     """Render normalized rows; no analysis, joins, or source-file writes."""
     font, _ = _font()
-    itdk = kind == "itdk-role-by-strategy"
+    os_roles = kind == "itdk-role-by-os"
+    itdk = kind in ("itdk-role-by-strategy", "itdk-role-by-os")
+    entries = None
+    if os_roles:
+        from ipid_analysis.plot_itdk_os import _group_color, _group_label
+
+        entries = [(key, _group_label(key), _group_color(key)) for key in percentages.groups]
+        percentages = percentages.percentages
     connection = kind == "measurement-type-by-strategy-with-connection"
     tcp_flags = kind == "tcp-flags-by-strategy"
     rows = ROLES if itdk else MODES
@@ -145,7 +164,9 @@ def draw(kind: str, percentages: dict, output: Path) -> None:
             "ps.fonttype": 42,
         }
     ):
-        fig = plt.figure(figsize=(WIDTH, height), dpi=300 if connection or tcp_flags else 240)
+        fig = plt.figure(
+            figsize=(WIDTH, height), dpi=300 if connection or tcp_flags or os_roles else 240
+        )
         try:
             _draw(
                 fig,
@@ -157,14 +178,28 @@ def draw(kind: str, percentages: dict, output: Path) -> None:
                 output,
                 connection=connection,
                 tcp_flags=tcp_flags,
+                os_entries=entries,
             )
         finally:
             plt.close(fig)
 
 
 def _draw(
-    fig, font, itdk, rows, labels, percentages, output, *, connection=False, tcp_flags=False
+    fig,
+    font,
+    itdk,
+    rows,
+    labels,
+    percentages,
+    output,
+    *,
+    connection=False,
+    tcp_flags=False,
+    os_entries=None,
 ):
+    os_roles = os_entries is not None
+    order = tuple(key for key, _, _ in os_entries) if os_roles else ORDER
+    colors = {key: color for key, _, color in os_entries} if os_roles else COLORS
     height = fig.get_size_inches()[1]
     three_rows = connection or tcp_flags
     left = 1.01 if connection else 0.80 if tcp_flags else 0.59 if itdk else 0.77
@@ -177,7 +212,9 @@ def _draw(
     ax.set_yticks(centers, labels)
     ax.set_xticks(range(0, 101, 20))
     ax.set_xticks([n for n in range(5, 100, 5) if n % 20], minor=True)
-    ax.set_xlabel("IP-ID Selection Strategy [%]", labelpad=1)
+    ax.set_xlabel(
+        "OS Distribution [%]" if os_roles else "IP-ID Selection Strategy [%]", labelpad=1
+    )
     ax.tick_params(axis="x", which="major", length=2.5, width=0.45, pad=1)
     ax.tick_params(axis="x", which="minor", length=1.4, width=0.35)
     ax.tick_params(axis="y", length=2.5, width=0.45, pad=1.5)
@@ -221,15 +258,15 @@ def _draw(
     segments = []
     for y, row in zip(centers, rows):
         x = 0.0
-        for key in ORDER:
+        for key in order:
             value = percentages[row].get(key, 0)
             if value:
                 ax.barh(
-                    y, value, left=x, height=0.42, color=COLORS[key], edgecolor="none", zorder=2
+                    y, value, left=x, height=0.42, color=colors[key], edgecolor="none", zorder=2
                 )
                 segments.append((x, y, value))
             x += value
-    legends = _legend(fig, font, itdk=itdk)
+    legends = _legend(fig, font, itdk=itdk, entries=os_entries)
     for text in fig.findobj(match=Text):
         text.set_fontproperties(font)
     fig.canvas.draw()
@@ -302,7 +339,9 @@ def _draw(
         bbox_inches=Bbox.from_extents(0, bottom, WIDTH, top),
         pad_inches=0,
         metadata={
-            "Title": "TCP flags by strategy"
+            "Title": "Device type by operating system"
+            if os_roles
+            else "TCP flags by strategy"
             if tcp_flags
             else "Device type by strategy"
             if itdk

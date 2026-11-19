@@ -11,6 +11,7 @@ Supported input/output pairs, in the same directory:
 | --- | --- |
 | `n-rt-b_fi-m_measurement-type-by-strategy.json` | `n-rt-b_fi-m_measurement-type-by-strategy__paper.pdf` |
 | `n-rt-b_fi-m_itdk-role-by-strategy.json` | `n-rt-b_fi-m_itdk-role-by-strategy__paper.pdf` |
+| `n-rt-b_fi-m_itdk-role-by-os.json` | `n-rt-b_fi-m_itdk-role-by-os__paper.pdf` |
 | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json` | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection__paper.pdf` |
 | `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
@@ -30,6 +31,16 @@ The TCP-flags adapter reads the existing `bars[flags].percentages` for
 existing normalization; the combined bar is not recomputed as an average of the
 two subgroups. No ZMap join, per-IP strategy table, Parquet or source PDF is read.
 Missing/invalid groups fail without triggering reanalysis.
+
+The ITDK/OS adapter reads `plot_groups`, `plot_percentages` and `plot_counts`.
+It preserves the existing selection/order of at most ten groups, including the
+already-combined `Other`, and each role's independent normalization. Counts and
+percentages are checked for consistency; they are never recomputed for plotting.
+Zero-population roles remain empty. Unknown/duplicate groups, inconsistent counts,
+missing rows and non-finite percentages fail before publication. No OS scan,
+taxonomy remapping, ITDK join, ranking, Parquet or source PDF is needed.
+Canonical display names and colors reuse the original OS renderer's helpers;
+old JSON colors do not override the current style.
 
 The increment adapter reads the exact compact `.pq` histogram named by the
 report's `aggregate` field, not the per-IP `n-rt-b_increments.pq` or
@@ -78,7 +89,7 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the five exact report names above are supported.
+Only the six exact report names above are supported.
 The bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
 the increment plot under `no-connection/comparison/rt-based-base_fixed-interval-base`.
 The three-bar refinement and TCP-flags variants are selected only for TCP runs,
@@ -119,6 +130,21 @@ the frame. The three rows have no refinement guide between them. Percentage
 labels keep the shared >=1% threshold and integer rounding, including narrow
 one-percent segments. It reuses the bar renderer rather than introducing a
 second plotting or publication pipeline.
+
+The approved ITDK/OS design reuses the same two-bar renderer: frame left at
+0.59 inches, frame height 0.4015 inches, `Router` / `All Other`, and `Device Type`
+centered on the frame. Its x-label is `OS Distribution [%]`; no refinement guide
+is drawn. The source OS-group order also controls the legend and stacked segments.
+The full ten-entry legend uses the approved five-column/two-row layout and
+4-point squares; shorter selections use fewer entries without invented categories.
+
+The centrally defined `PAPER_OS_COLOR_PALETTE` in `plot_os_group_strategy` now uses
+the approved 20 pastel colors and matching companion shades. The stable group
+order and 20-color cycling for all 94 OS groups are unchanged. `Other` uses
+`#D0C8C4`. The new variant and future original OS renders use the same definitions;
+the shared hues do not imply any OS-to-IP-ID-strategy association. This does not
+rewrite existing original PDFs, reports, caches or paper variants. The paper
+completion receipt includes the OS adapter and palette source in its style hash.
 
 The approved increment design shares the same width, font, pastel colors and
 4-point strategy swatches. Its three-column/two-row legend is a compact centered
@@ -190,6 +216,13 @@ six TCP-flags PDFs in 2.7 seconds; the completed repeat took 0.14 seconds. Exist
 bytes/timestamps were unchanged, and fresh renders of the four prior plot types
 were pixel-identical to their baseline previews. The six flags reports repeat
 one EU/TCP input; these are offline checks, not live-S3 or six-VP measurements.
+
+A mixed six-type run preserved/skipped thirty existing paper PDFs and added
+eighteen ITDK/OS PDFs in 4.0 seconds with four workers; the completed repeat took
+0.15 seconds. Every existing file's bytes and timestamp remained unchanged.
+Fresh renders of all five prior paper types were pixel-identical to their
+baseline 300-dpi previews. Each fixture site repeats the same three existing
+EU/ICMP,TCP,UDP reports; these timings are not live-S3 or six-VP results.
 
 `make paper-values` prefers an available sibling `__paper.pdf` for each selected
 figure and falls back to its original PDF otherwise. The existing `fig.*` keys

@@ -2,7 +2,8 @@
 
 Create additional single-column IMC figures from existing small reports/aggregates with
 `make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"`.
-The command supports stateless RT-base/FI-mass measurement-type and ITDK-role plots,
+The command supports stateless RT-base/FI-mass measurement-type, ITDK-role-by-strategy
+and ITDK-role-by-OS plots with the approved shared OS pastel palette,
 the three-bar TCP refinement with a connection-oriented RT-based bar, TCP flags
 by strategy, and RT-base/FI-base increment ECDFs, writing sibling `__paper.pdf` variants.
 Original artifacts and existing paper variants are never overwritten.
