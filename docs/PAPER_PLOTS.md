@@ -17,6 +17,7 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
 | `n-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `n-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
+| `c-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `c-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
 | `n-rt-b_fi-b_strategy-intersection.json` plus its existing 49-cell aggregate | `n-rt-b_fi-b_strategy-intersection__paper.pdf` |
 | `n-rt-b_fi-m_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `n-rt-b_fi-m_operating-system-group-by-strategy__paper.pdf` |
 | `c-rt-b_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `c-rt-b_operating-system-group-by-strategy__paper.pdf` |
@@ -141,6 +142,19 @@ connection. It does not probe IPs, read raw measurement files, fetch MaxMind, or
 repeat continent lookup/classification. The original aggregator's default
 p99.5 schema and output remain unchanged.
 
+The connection-oriented TCP violin uses this same preparation and renderer,
+with the same p99.9/256 definition and population Q1/median/Q3. It is discovered
+only under TCP `connection/comparison/rt-based-base_fixed-interval-base`.
+Its original report must identify TCP, connection mode and the combined
+`tcp.ipid.connection.rt-based.base+tcp.ipid.connection.fixed-interval.base`
+target. Preparation reads that comparison's `c-rt-b_probing-intervals.pq`,
+`c-fi-b_probing-intervals.pq` and `c-rt-b_fi-b_ip-continents.pq`, never the
+stateless interval tables or a FI-mass comparison. Report fingerprints bind
+each prepared aggregate to its own source. The same flag below prepares both
+modes, sequentially, without changing existing artifacts. `--processed-root`
+remaps both the seven-component interval paths and eight-component comparison
+paths while preserving their connection mode and canonical comparison.
+
 ```bash
 # Optional inventory first; dry-run never prepares or writes aggregates.
 make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--prepare-probing-intervals --dry-run"
@@ -155,7 +169,8 @@ make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"
 
 The preparation writes `n-rt-b_fi-b_probing-intervals-by-continent__paper.pq` and
 `...__paper.json` beside the **processed** original aggregate, with completion
-receipts for both. It uses create-only publication, records the original report
+receipts for both (or the corresponding `c-rt-b_fi-b_...` names for connection
+mode). It uses create-only publication, records the original report
 and interval/map inputs, checks for source changes, and reuses only a matching
 complete preparation. Conflicting/orphan/stale files are never overwritten or
 repaired automatically. Existing paper PDFs skip preparation as well as rendering.

@@ -32,13 +32,18 @@ PLOT_KINDS = {
     CONNECTION_ITDK_KIND: "itdk-role-by-strategy",
     CONNECTION_OS_GROUP_KIND: "operating-system-group-by-strategy",
 }
-TCP_ONLY_KINDS = (CONNECTION_KIND, TCP_FLAGS_KIND, *CONNECTION_BASE_KINDS)
 REPORTS["c-rt-b_itdk-role-by-strategy.json"] = CONNECTION_ITDK_KIND
 REPORTS["c-rt-b_operating-system-group-by-strategy.json"] = CONNECTION_OS_GROUP_KIND
 REPORTS[f"n-rt-b_fi-m_{TCP_FLAGS_KIND}.json"] = TCP_FLAGS_KIND
 REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
 PROBING_KIND = "probing-intervals-by-continent"
+CONNECTION_PROBING_KIND = PROBING_KIND + "-connection"
+PROBING_KINDS = (PROBING_KIND, CONNECTION_PROBING_KIND)
+CONNECTION_KINDS = (*CONNECTION_BASE_KINDS, CONNECTION_PROBING_KIND)
+TCP_ONLY_KINDS = (CONNECTION_KIND, TCP_FLAGS_KIND, *CONNECTION_KINDS)
+PLOT_KINDS[CONNECTION_PROBING_KIND] = PROBING_KIND
 REPORTS[f"n-rt-b_fi-b_{PROBING_KIND}.json"] = PROBING_KIND
+REPORTS[f"c-rt-b_fi-b_{PROBING_KIND}.json"] = CONNECTION_PROBING_KIND
 INTERSECTION_KIND = "strategy-intersection"
 REPORTS[f"n-rt-b_fi-b_{INTERSECTION_KIND}.json"] = INTERSECTION_KIND
 OS_GROUP_KIND = "operating-system-group-by-strategy"
@@ -57,6 +62,11 @@ PHASES = {
         "rt-based-base_fixed-interval-base",
     ),
     PROBING_KIND: ("rt-base-vs-fi-base", "comparison", "rt-based-base_fixed-interval-base"),
+    CONNECTION_PROBING_KIND: (
+        "rt-base-vs-fi-base",
+        "comparison",
+        "rt-based-base_fixed-interval-base",
+    ),
     INTERSECTION_KIND: ("rt-base-vs-fi-base", "comparison", "rt-based-base_fixed-interval-base"),
 }
 MAX_REPORT_BYTES = 4 << 20
@@ -103,7 +113,7 @@ def discover(
     contexts = [
         (
             protocol,
-            "connection" if kind in CONNECTION_BASE_KINDS else "no-connection",
+            "connection" if kind in CONNECTION_KINDS else "no-connection",
             phase[0],
             PLOT_KINDS.get(kind, kind),
         )
@@ -127,7 +137,7 @@ def discover(
                     continue
             # Select each report's own canonical connection mode and phase.
             kind = REPORTS[path.name]
-            mode = "connection" if kind in CONNECTION_BASE_KINDS else "no-connection"
+            mode = "connection" if kind in CONNECTION_KINDS else "no-connection"
             suffix = (mode, *PHASES[kind][1:])
             if relative.parts[-len(suffix) - 1 : -1] != suffix:
                 continue
@@ -242,7 +252,7 @@ def worker(job: Job) -> Result:
         report = json.loads(content)
         profile = Path(__file__).with_name("paper_plot_style.py")
         profile_bytes = profile.read_bytes()
-        if job.kind == PROBING_KIND:
+        if job.kind in PROBING_KINDS:
             from ipid_analysis.paper_probing_plot import draw, load_series, paths
 
             aggregate, metadata = paths(job.source, report, job.processed_root)
@@ -426,7 +436,7 @@ def main(argv=None):
             from ipid_analysis.paper_probing_plot import prepare
 
             for job in sorted(set(jobs), key=lambda job: str(job.source)):
-                if job.kind == PROBING_KIND and not os.path.lexists(job.destination):
+                if job.kind in PROBING_KINDS and not os.path.lexists(job.destination):
                     print(f"preparing p99.9/256 probing intervals: {job.source}", flush=True)
                     print(f"paper quantiles: {prepare(job)}", flush=True)
         results = run(jobs, workers=args.workers, dry_run=args.dry_run)
