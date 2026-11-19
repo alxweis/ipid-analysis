@@ -31,17 +31,20 @@ def stamp(path):
     return path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def fixture(root, site="eu", protocol="icmp"):
+def fixture(root, site="eu", protocol="icmp", *, connection=False):
+    prefix = "c" if connection else "n"
+    name = f"{prefix}-rt-b_fi-b_probing-intervals-by-continent"
     stem = protocol + "_fixture"
-    relative = Path("continental/campaign") / site / stem / "no-connection"
+    mode = "connection" if connection else "no-connection"
+    relative = Path("continental/campaign") / site / stem / mode
     phase = relative / "comparison/rt-based-base_fixed-interval-base"
-    report = root / "reports" / phase / (NAME + ".json")
-    aggregate = root / "processed" / phase / (NAME + ".pq")
+    report = root / "reports" / phase / (name + ".json")
+    aggregate = root / "processed" / phase / (name + ".pq")
     report.parent.mkdir(parents=True)
     aggregate.parent.mkdir(parents=True)
-    rt = root / "processed" / relative / "rt-based-base/n-rt-b_probing-intervals.pq"
-    fi = root / "processed" / relative / "fixed-interval-base/n-fi-b_probing-intervals.pq"
-    geo = aggregate.with_name("n-rt-b_fi-b_ip-continents.pq")
+    rt = root / "processed" / relative / f"rt-based-base/{prefix}-rt-b_probing-intervals.pq"
+    fi = root / "processed" / relative / f"fixed-interval-base/{prefix}-fi-b_probing-intervals.pq"
+    geo = aggregate.with_name(f"{prefix}-rt-b_fi-b_ip-continents.pq")
     addresses, codes, values = [], [], []
     for index, code in enumerate(CONTINENT_ORDER):
         for n in range(400):
@@ -83,6 +86,15 @@ def fixture(root, site="eu", protocol="icmp"):
                     "continent_map": str(geo),
                 },
                 "methodology": {"display_limit": "99.5th percentile"},
+                **(
+                    {
+                        "protocol": "tcp",
+                        "connection_mode": mode,
+                        "target": "tcp.ipid.connection.rt-based.base+tcp.ipid.connection.fixed-interval.base",
+                    }
+                    if connection
+                    else {}
+                ),
             }
         )
     )

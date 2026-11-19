@@ -15,23 +15,47 @@ HEIGHT, AXES_HEIGHT = 1.74, 0.88
 MAX_AGGREGATE_BYTES = 1 << 20
 
 
-def _remap(path, processed_root):
+def _remap(path, processed_root, mode):
     if processed_root is None:
         return path
     parts = path.parts
     if parts.count("continental") != 1:
         raise ValueError("--processed-root requires a continental probing-interval path")
     relative = parts[parts.index("continental") :]
-    if len(relative) != 8 or ".." in relative or relative[3] != "no-connection":
+    if len(relative) not in (7, 8) or ".." in relative or relative[4] != mode:
         raise ValueError("unexpected continental probing-interval layout")
     return Path(processed_root).joinpath(*relative)
+
+
+def _context(source, report):
+    """Keep connection quantiles separate from the stateless comparison."""
+    if source.name == f"c-rt-b_fi-b_{KIND}.json":
+        target = "tcp.ipid.connection.rt-based.base+tcp.ipid.connection.fixed-interval.base"
+        if tuple(
+            report.get(key) for key in ("figure", "protocol", "connection_mode", "target")
+        ) != (
+            KIND,
+            "tcp",
+            "connection",
+            target,
+        ):
+            raise ValueError("expected a connection-oriented TCP RT-base/FI-base interval report")
+        return "c", "connection"
+    return "n", "no-connection"
 
 
 def paths(source, report, processed_root=None):
     """Resolve separate paper aggregates without changing the original report."""
     from ipid_analysis.paper_increment_plot import aggregate_path
 
-    original = aggregate_path(source, report, processed_root=processed_root)
+    prefix, mode = _context(source, report)
+    original = aggregate_path(source, report, processed_root=processed_root, mode=mode)
+    if prefix == "c" and original.parts[-4:-1] != (
+        mode,
+        "comparison",
+        "rt-based-base_fixed-interval-base",
+    ):
+        raise ValueError("expected the connection RT-base/FI-base comparison aggregate")
     aggregate = original.with_name(original.stem + "__paper.pq")
     return aggregate, aggregate.with_suffix(".json")
 
@@ -57,18 +81,19 @@ def prepare(job):
     report = json.loads(job.source.read_text())
     if report.get("figure") != KIND:
         raise ValueError("expected the original probing-interval report")
+    prefix, mode = _context(job.source, report)
     aggregate, metadata = paths(job.source, report, job.processed_root)
     source_paths = {}
     for key in ("rt_based", "fixed_interval", "continent_map"):
         recorded = Path(report["sources"][key])
         if not recorded.is_absolute():
             raise ValueError("expected absolute original interval/map paths")
-        source_paths[key] = _remap(recorded, job.processed_root)
+        source_paths[key] = _remap(recorded, job.processed_root, mode)
     phase = aggregate.parents[2]
     expected = {
-        "rt_based": phase / "rt-based-base/n-rt-b_probing-intervals.pq",
-        "fixed_interval": phase / "fixed-interval-base/n-fi-b_probing-intervals.pq",
-        "continent_map": aggregate.with_name("n-rt-b_fi-b_ip-continents.pq"),
+        "rt_based": phase / f"rt-based-base/{prefix}-rt-b_probing-intervals.pq",
+        "fixed_interval": phase / f"fixed-interval-base/{prefix}-fi-b_probing-intervals.pq",
+        "continent_map": aggregate.with_name(f"{prefix}-rt-b_fi-b_ip-continents.pq"),
     }
     if source_paths != expected:
         raise ValueError("probing-interval sources do not belong to the original comparison")

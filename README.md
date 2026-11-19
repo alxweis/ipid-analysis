@@ -8,7 +8,7 @@ the connection-oriented TCP RT-base ITDK-role-by-strategy plot,
 the connection-oriented TCP RT-base OS-group/strategy heatmap,
 the three-bar TCP refinement with a connection-oriented RT-based bar, TCP flags
 by strategy, selected OS-group/strategy heatmaps, RT-base/FI-base increment ECDFs, strategy-intersection heatmaps
-and continent probing-interval violins,
+and stateless/connection-oriented continent probing-interval violins,
 writing sibling `__paper.pdf` variants. The violins require a separate p99.9/256
 aggregate, prepared once with `ARGS="--prepare-probing-intervals --workers 4"`.
 Original artifacts and existing paper variants are never overwritten.
