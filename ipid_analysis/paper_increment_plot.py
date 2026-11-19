@@ -14,7 +14,14 @@ HEIGHT, AXES_HEIGHT = 1.44, 0.80
 XTICK_SUPERSCRIPTS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 
-def aggregate_path(source, report, *, processed_root=None):
+def aggregate_path(
+    source,
+    report,
+    *,
+    processed_root=None,
+    phase=("comparison", "rt-based-base_fixed-interval-base"),
+    mode="no-connection",
+):
     """Use the report's exact aggregate; never fall back to per-IP increments."""
     recorded = report.get("aggregate")
     if not isinstance(recorded, str) or not recorded:
@@ -27,11 +34,11 @@ def aggregate_path(source, report, *, processed_root=None):
         if parts.count("continental") != 1:
             raise ValueError("--processed-root requires a continental histogram path")
         relative = parts[parts.index("continental") :]
+        suffix = (mode, *phase)
         if (
-            len(relative) != 8
+            len(relative) != 6 + len(phase)
             or ".." in relative
-            or relative[-4:-1]
-            != ("no-connection", "comparison", "rt-based-base_fixed-interval-base")
+            or relative[-len(suffix) - 1 : -1] != suffix
         ):
             raise ValueError("unexpected continental histogram layout")
         path = Path(processed_root).joinpath(*relative)

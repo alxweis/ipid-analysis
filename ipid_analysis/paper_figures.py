@@ -214,6 +214,16 @@ INTERVAL_SCHEMA = pa.schema(
         ("QUANTILES_MS", pa.list_(pa.float64())),
     ]
 )
+PAPER_INTERVAL_SCHEMA = pa.schema(
+    [field for field in INTERVAL_SCHEMA if field.name not in ("P99_5_MS", "QUANTILES_MS")]
+    + [
+        ("CUTOFF_MS", pa.float64()),
+        ("Q1_MS", pa.float64()),
+        ("MEDIAN_MS", pa.float64()),
+        ("Q3_MS", pa.float64()),
+        ("QUANTILES_MS", pa.list_(pa.float64())),
+    ]
+)
 
 INCREMENT_SCHEMA = pa.schema(
     [
@@ -505,11 +515,27 @@ def aggregate_probing_intervals(
     quantile_points: int = 256,
     compression: str | None = "zstd",
     threads: int = 0,
+    upper_quantile: float = 0.995,
 ) -> dict:
-    """Aggregate one per-IP interval median into continent/mode quantiles."""
+    """Aggregate per-IP medians; p99.5 remains the original default.
+
+    The opt-in p99.9 paper aggregate includes separate population quartiles.
+    Callers must choose a new destination; no original artifact is migrated.
+    """
+    if upper_quantile not in (0.995, 0.999) or quantile_points < 2:
+        raise ValueError("expected p99.5 or p99.9 and at least two quantile points")
+    paper = upper_quantile == 0.999
+    if paper and quantile_points != 256:
+        raise ValueError("paper probing intervals require 256 quantile points")
     _require_files(rt_path, fixed_path, continent_map_path)
-    probabilities = np.linspace(0.0, 0.995, quantile_points)
+    probabilities = np.linspace(0.0, upper_quantile, quantile_points)
     probabilities_sql = "[" + ",".join(f"{p:.8f}" for p in probabilities) + "]"
+    summary_sql = (
+        "approx_quantile(l.INTERVAL_MS, [0.25,0.5,0.75]) AS INNER_QUARTILES_MS,"
+        if paper
+        else "approx_quantile(l.INTERVAL_MS, 0.995)::DOUBLE AS P99_5_MS,"
+    )
+    finite_sql = " AND isfinite(p.INTERVAL_MS)" if paper else ""
     with connect(config={"threads": threads} if threads else {}) as con:
         table = con.execute(
             f"""
@@ -526,6 +552,7 @@ def aggregate_probing_intervals(
                 SELECT g.CONTINENT_CODE, g.CONTINENT, p.MODE, p.INTERVAL_MS
                 FROM per_ip p JOIN read_parquet($geo) g USING (IP_ADDR)
                 WHERE g.CONTINENT_CODE <> 'ZZ' AND p.INTERVAL_MS IS NOT NULL AND p.INTERVAL_MS >= 0
+                {finite_sql}
             ),
             union_counts AS (
                 SELECT CONTINENT_CODE, count(*)::BIGINT AS IP_COUNT_UNION
@@ -533,7 +560,7 @@ def aggregate_probing_intervals(
             )
             SELECT l.CONTINENT_CODE, any_value(l.CONTINENT) AS CONTINENT, l.MODE,
                    count(*)::BIGINT AS IP_COUNT_MODE, u.IP_COUNT_UNION,
-                   approx_quantile(l.INTERVAL_MS, 0.995)::DOUBLE AS P99_5_MS,
+                   {summary_sql}
                    approx_quantile(l.INTERVAL_MS, {probabilities_sql})::DOUBLE[] AS QUANTILES_MS
             FROM located l JOIN union_counts u USING (CONTINENT_CODE)
             GROUP BY l.CONTINENT_CODE, l.MODE, u.IP_COUNT_UNION
@@ -542,7 +569,14 @@ def aggregate_probing_intervals(
             {"rt": str(rt_path), "fixed": str(fixed_path), "geo": str(continent_map_path)},
         ).to_arrow_table()
         con.close()
-        table = table.cast(INTERVAL_SCHEMA)
+        if paper:
+            rows = table.to_pylist()
+            for row in rows:
+                row["Q1_MS"], row["MEDIAN_MS"], row["Q3_MS"] = row.pop("INNER_QUARTILES_MS")
+                row["CUTOFF_MS"] = row["QUANTILES_MS"][-1]
+            table = pa.Table.from_pylist(rows, schema=PAPER_INTERVAL_SCHEMA)
+        else:
+            table = table.cast(INTERVAL_SCHEMA)
         _write_table(table, output_path, compression)
         return {
             "located_ip_count_union": sum(
@@ -552,6 +586,7 @@ def aggregate_probing_intervals(
             ),
             "groups": table.num_rows,
             "quantile_points": quantile_points,
+            **({"upper_quantile": upper_quantile} if paper else {}),
         }
 
 

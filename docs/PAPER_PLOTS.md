@@ -1,7 +1,7 @@
 # Additional paper-ready plots
 
-The paper renderer reads existing small JSON reports and, for increment ECDFs,
-their compact histogram Parquet. It does not run
+The paper renderer reads existing small JSON reports and compact histogram or
+quantile Parquet. By default it does not run
 classification, open per-IP Parquet files, perform CAIDA joins, reconstruct data
 from PDFs, download reference datasets, or start analysis workflow tasks.
 
@@ -11,18 +11,51 @@ Supported input/output pairs, in the same directory:
 | --- | --- |
 | `n-rt-b_fi-m_measurement-type-by-strategy.json` | `n-rt-b_fi-m_measurement-type-by-strategy__paper.pdf` |
 | `n-rt-b_fi-m_itdk-role-by-strategy.json` | `n-rt-b_fi-m_itdk-role-by-strategy__paper.pdf` |
+| `c-rt-b_itdk-role-by-strategy.json` | `c-rt-b_itdk-role-by-strategy__paper.pdf` |
+| `n-rt-b_fi-m_itdk-role-by-os.json` | `n-rt-b_fi-m_itdk-role-by-os__paper.pdf` |
 | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json` | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection__paper.pdf` |
+| `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
+| `n-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `n-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
+| `n-rt-b_fi-b_strategy-intersection.json` plus its existing 49-cell aggregate | `n-rt-b_fi-b_strategy-intersection__paper.pdf` |
+| `n-rt-b_fi-m_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `n-rt-b_fi-m_operating-system-group-by-strategy__paper.pdf` |
+| `c-rt-b_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `c-rt-b_operating-system-group-by-strategy__paper.pdf` |
 
 The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
 recomputed or renormalized. Unsupported schemas and invalid percentages fail
 without changing their sources. Empty ITDK role populations remain empty rows.
 
+The connection-oriented TCP ITDK variant reads the same exact `plot_percentages`
+and `plot_role_totals` fields. It is discovered only in TCP
+`connection/rt-based-base` directories, independently of the stateless merged
+variant. The report must identify TCP, connection mode, RT-based interval and
+base scale. It uses the very same ITDK paper renderer, palette, font, geometry,
+legend and annotations as the stateless variant; only its source population and
+percentages differ. No new renderer, original PDF, Parquet, ITDK join or
+measurement input is required. Create-only publication and existing-output
+skipping apply unchanged.
+
 The TCP three-bar adapter also reads `bars["RT-based & Connection-oriented"].percentages`.
 Each bar retains its independent normalization from the report. No per-IP data,
 Parquet or original PDF is read for this variant. A missing or invalid third bar
 fails without replacing any artifact; there is no fallback to the two-bar plot.
+
+The TCP-flags adapter reads the existing `bars[flags].percentages` for
+`SYN-ACK/RST`, `SYN-ACK`, and `RST` in that order. Each distribution retains its
+existing normalization; the combined bar is not recomputed as an average of the
+two subgroups. No ZMap join, per-IP strategy table, Parquet or source PDF is read.
+Missing/invalid groups fail without triggering reanalysis.
+
+The ITDK/OS adapter reads `plot_groups`, `plot_percentages` and `plot_counts`.
+It preserves the existing selection/order of at most ten groups, including the
+already-combined `Other`, and each role's independent normalization. Counts and
+percentages are checked for consistency; they are never recomputed for plotting.
+Zero-population roles remain empty. Unknown/duplicate groups, inconsistent counts,
+missing rows and non-finite percentages fail before publication. No OS scan,
+taxonomy remapping, ITDK join, ranking, Parquet or source PDF is needed.
+Canonical display names and colors reuse the original OS renderer's helpers;
+old JSON colors do not override the current style.
 
 The increment adapter reads the exact compact `.pq` histogram named by the
 report's `aggregate` field, not the per-IP `n-rt-b_increments.pq` or
@@ -34,6 +67,110 @@ retained-sample normalization remain unchanged. Columnar arrays avoid allocating
 a dictionary for every histogram bin. Inputs are limited to 128 MiB and
 8 * 65,535 rows, covering every positive 16-bit increment in each of eight series.
 Missing/inconsistent aggregates fail without starting a measurement-data fallback.
+
+The strategy-intersection adapter reads the report's exact compact 49-cell
+Parquet via the existing aggregate-path/remapping helper. It validates the
+original schema, all seven-by-seven strategy pairs, nonnegative counts,
+consistent RT-based row totals, finite percentages and report populations.
+Stored percentages are used unchanged, without another join, count query or
+renormalization. Empty rows remain zero rows. Exact zeros display `-`; positive
+values retain the original one-decimal formatting, including small positive
+shares displayed as `0.0`. Missing/invalid aggregates fail without a PDF or
+per-IP-data fallback. Its receipt tracks the original JSON and compact table;
+the input is bounded to 49 rows and 1 MiB. This variant needs no preparation flag.
+
+The OS-group adapter reads only its report and existing compact OS/strategy
+aggregate (at most 4 MiB and ten cells per canonical OS group). It validates the
+schema, unique/complete cells, taxonomy labels, counts, percentages and report
+populations before selecting these groups in this fixed order:
+
+- **General-Purpose OS:** Ubuntu, Debian, RHEL, CentOS, Fedora, FreeBSD, OpenBSD,
+  Microsoft Windows.
+- **Network OS:** MikroTik, F5, Cisco, SonicWall, ZTE, HPE Network OS, Check Point,
+  OPNsense, Huawei, DrayTek, Zyxel, Aruba.
+
+All ten strategy columns retain their original order and row-wise normalization.
+There is no ranking, reclassification, per-IP join, PDF extraction or preparation
+step. A selected OS absent from the validated complete aggregate remains a
+zero-population `(0)` row with dashes; other OS groups are not displayed. Stored
+percentages are used unchanged. Exact-zero cells show `-`; positive shares use
+one decimal, including small positive values displayed as `0.0`.
+
+The approved 3.33-inch, Linux Libertine 7-pt design has two stacked heatmaps with
+headings centered over their own frames, inline parenthesized IP counts using
+the original k/M formatting, and `Operating-System Group (#IP Addr.)` as y title.
+The upper heatmap has ten bottom x ticks without labels. Its frame is separated
+from the lower frame by 0.20 inches, with room for the lower section heading.
+The 0.05-inch percentage bar is centered vertically on the combined heatmap
+frames and has exactly the same height as the seven-row intersection bar,
+using shared font measurement rather than platform-specific hardcoded pixels.
+The palette, canonical labels, population formatting, colorbar helper and cached
+font are reused. Columns are fitted to the available width without reducing text
+size. Longer populations or `100.0` cells can require OS labels to wrap and taller
+rows; no labels or cells are silently dropped or clipped. Publication and repeats
+use the existing create-only, bounded multiprocessing path.
+
+The connection-oriented TCP OS-group variant reuses this adapter and renderer
+in `connection/rt-based-base`. Its report must identify TCP, connection mode
+and the `tcp.ipid.connection.rt-based.base` target. It keeps the same 20 selected
+OS rows and order, but displays seven BASE columns: Reflection, Constant, Single,
+Per-Connection, Per-Destination, Per-Bucket and Unclassified. The complete exact
+aggregate is validated first; Multi, Random and Not Enough Samples must have
+zero counts **and** zero percentages in every source OS group, including groups
+not selected for display. Otherwise rendering fails without hiding observations.
+The retained percentages are not renormalized, and an absent selected OS remains
+a `(0)` row of dashes.
+
+This variant uses the approved fixed physical cell size of 11.9145 by 9.1275 pt,
+the 3.6-by-63.8925-pt percentage bar and a 5.04-pt horizontal bar gap. The heatmap
+gap remains 0.20 inches; the y-title/OS-label layout gap remains 2 pt. No reference
+PDF or existing paper output is read to determine geometry. Names and populations
+remain on one line, with counts above 100,000 rounded to whole thousands (for
+example 162197 -> `162k`). Other population labels keep the original format.
+The 3.33-inch canvas, Linux Libertine 7 pt, palette, zero dashes, centered headings,
+30-degree strategy labels and upper unlabeled ticks are shared. Ordinary numeric
+annotations retain one decimal; the rounded `100.0` endpoint is shown as `100`
+so its text fits the approved fixed-width cells. Source values remain exact.
+The stateless OS renderer retains its existing sizing and population formatting.
+
+The probing-interval violin uses the approved **p99.9 upper limit and 256 quantile
+points**. The old p99.5 aggregate cannot recover that tail. An explicit one-off
+preparation reads the already stored RT-base/FI-base probing intervals and
+continent map, reusing `aggregate_probing_intervals` and the bounded runtime
+connection. It does not probe IPs, read raw measurement files, fetch MaxMind, or
+repeat continent lookup/classification. The original aggregator's default
+p99.5 schema and output remain unchanged.
+
+```bash
+# Optional inventory first; dry-run never prepares or writes aggregates.
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--prepare-probing-intervals --dry-run"
+
+# One-off, potentially slow: query existing interval tables sequentially,
+# publish separate compact aggregates, then render with four workers.
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--prepare-probing-intervals --workers 4"
+
+# Subsequent runs read only reports and compact aggregates.
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"
+```
+
+The preparation writes `n-rt-b_fi-b_probing-intervals-by-continent__paper.pq` and
+`...__paper.json` beside the **processed** original aggregate, with completion
+receipts for both. It uses create-only publication, records the original report
+and interval/map inputs, checks for source changes, and reuses only a matching
+complete preparation. Conflicting/orphan/stale files are never overwritten or
+repaired automatically. Existing paper PDFs skip preparation as well as rendering.
+The normal command fails that violin job with a preparation hint when p99.9 data
+is missing; it never silently uses p99.5 or extrapolates the original PDF.
+
+The prepared table contains at most fourteen continent/mode rows. Its 256
+`QUANTILES_MS` points span probabilities 0 through 0.999. `Q1_MS`, `MEDIAN_MS` and
+`Q3_MS` are separately calculated approximate population quantiles at .25, .5
+and .75 from the per-IP interval medians, rather than inferred from the KDE or
+local dummy contours. Original union populations and mode-specific counts are
+retained; non-finite/negative medians and unmapped IPs are excluded. The reader
+validates schema, populations, monotonicity, finite values and p99.9/256 metadata
+before rendering, with a 1 MiB limit per compact input. Its PDF receipt tracks
+the original report, new quantile table and preparation metadata.
 
 ## Run on the Analysis VM
 
@@ -71,11 +208,12 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the four exact report names above are supported.
-The bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
-the increment plot under `no-connection/comparison/rt-based-base_fixed-interval-base`.
-The three-bar refinement variant is selected only for TCP runs, not under a
-`connection/` directory or for ICMP/UDP. Individual-measurement variants and all
+Only the eleven exact report names above are supported.
+The `c-rt-b` ITDK and OS-group plots are discovered under TCP `connection/rt-based-base`.
+The other bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
+the increment, intersection and continent violin plots under `no-connection/comparison/rt-based-base_fixed-interval-base`.
+The three-bar refinement and TCP-flags variants are selected only for TCP runs,
+not under a `connection/` directory or for ICMP/UDP. Other individual-measurement variants and all
 other plots retain their existing behavior. New plot types can be registered
 with an adapter and a design without changing the original analysis renderers.
 
@@ -97,6 +235,39 @@ targets approximately one pixel in a 300-dpi preview; PDFs themselves have
 physical units, not pixels.
 Very narrow >=1% segments keep the agreed font size and integer label.
 
+The approved continent violin design uses a 0.88-inch-high frame and 7 pt labels,
+including single-line `N. America` / `S. America` with IP counts below. RT-based
+is the left half in the approved pastel blue; Fixed-Interval is the right half
+in pastel red. Width-normalized halves reuse Matplotlib's original 0.82-width
+violin calculation and default Scott bandwidth. Q1/Q3 lines are dashed and the
+median is solid, bounded by the corresponding half-violin contour. At nearly
+constant intervals these lines can coincide visually. Major ticks adapt to the
+data range, with exactly one minor tick between adjacent majors. No new tail
+taper is fabricated to hide a nonzero density at the p99.9 cutoff.
+
+The framed white legend keeps 4 pt square swatches and a 1.2 pt swatch-to-label
+gap, independent of font-size units. It checks nine standard
+positions plus fine horizontal positions along the upper edge against actual
+violin contours with a small clearance. A nonintersecting position is preferred;
+when none fits, sampled covered area is minimized. Thus its location can differ
+across VPs and protocols. Font size, width and frame height remain fixed.
+
+The approved intersection heatmap reuses the original strategy order,
+`PERCENTAGE_CMAP`, percentage-colorbar helper and shared cached 7 pt font. The
+0.05-inch-wide colorbar retains `Percentage [%]` and its 0-100 scale. Tick labels
+are rotated 30 degrees. Axis titles use the full original wording: one-line
+`Detected IP-ID Selection Strategy using Fixed-Interval probing` and three-line
+`Detected IP-ID Selection` / `Strategy using RT-based` / `probing`.
+
+All heatmap cells are measured around the rendered `100.0` text box with 5 px
+padding on each side at 300 dpi (1.2 pt per side). A temporary text measurement
+keeps that geometry even if the actual matrix has no `100.0` annotation. This
+preserves 7 pt text without spreading cells over the entire page. The resulting
+compact content is centered on the 3.33-inch canvas, with the long x-title kept
+inside its bounds. The y-title moves up to 4 pt farther left into available
+margin, while retaining a small clearance from the page edge. Only the design
+is changed; source percentages and populations remain unchanged.
+
 The approved TCP three-bar design reuses the same renderer, palette, text size,
 4-point legend squares, 8.316-point bar thickness and free inter-bar gaps.
 The frame is 0.6325 inches high; its left edge is at 1.01 inches to fit the
@@ -105,6 +276,28 @@ centered on that frame with a 2-point downward offset. The legend keeps the
 original five-column/two-row distribution; the compact centered experiment is
 not applied. The gray refinement guide connects only the top RT-based
 Unclassified segment to the Fixed-Interval bar, never to the independent third bar.
+
+The approved TCP-flags design uses the same three-bar frame, spacing and legend.
+Its left edge is at 0.80 inches; the `TCP Flags` title is centered vertically on
+the frame. The three rows have no refinement guide between them. Percentage
+labels keep the shared >=1% threshold and integer rounding, including narrow
+one-percent segments. It reuses the bar renderer rather than introducing a
+second plotting or publication pipeline.
+
+The approved ITDK/OS design reuses the same two-bar renderer: frame left at
+0.59 inches, frame height 0.4015 inches, `Router` / `All Other`, and `Device Type`
+centered on the frame. Its x-label is `OS Distribution [%]`; no refinement guide
+is drawn. The source OS-group order also controls the legend and stacked segments.
+The full ten-entry legend uses the approved five-column/two-row layout and
+4-point squares; shorter selections use fewer entries without invented categories.
+
+The centrally defined `PAPER_OS_COLOR_PALETTE` in `plot_os_group_strategy` now uses
+the approved 20 pastel colors and matching companion shades. The stable group
+order and 20-color cycling for all 94 OS groups are unchanged. `Other` uses
+`#D0C8C4`. The new variant and future original OS renders use the same definitions;
+the shared hues do not imply any OS-to-IP-ID-strategy association. This does not
+rewrite existing original PDFs, reports, caches or paper variants. The paper
+completion receipt includes the OS adapter and palette source in its style hash.
 
 The approved increment design shares the same width, font, pastel colors and
 4-point strategy swatches. Its three-column/two-row legend is a compact centered
@@ -129,6 +322,11 @@ variants; there is deliberately no overwrite/force option. Repeating a completed
 batch skips rendering and does not update output timestamps or receipts.
 For increment figures, the new receipt tracks both the report and histogram;
 both inputs are checked for changes across rendering.
+The explicit probing preparation is the sole opt-in step here that reads large
+processed interval tables. It creates separate paper aggregates and does not
+mutate any source artifact. Preparation time depends on the existing tables,
+mounted-S3 throughput and available runtime resources; the small rendering
+benchmarks below do not predict the preparation time of a full campaign.
 If a previous receipt exists without its PDF, that job fails rather than
 rewriting the receipt or guessing a recovery action.
 
@@ -170,6 +368,32 @@ A mixed four-type fixture run skipped eighteen existing paper PDFs and added
 six three-bar TCP PDFs in 2.6 seconds; its completed repeat took 0.13 seconds.
 All existing bytes/timestamps remained unchanged. The six inputs repeat one
 existing EU/TCP report, so this is a local rendering check, not six-VP results.
+
+A mixed five-type fixture run skipped twenty-four existing paper PDFs and added
+six TCP-flags PDFs in 2.7 seconds; the completed repeat took 0.14 seconds. Existing
+bytes/timestamps were unchanged, and fresh renders of the four prior plot types
+were pixel-identical to their baseline previews. The six flags reports repeat
+one EU/TCP input; these are offline checks, not live-S3 or six-VP measurements.
+
+A mixed six-type run preserved/skipped thirty existing paper PDFs and added
+eighteen ITDK/OS PDFs in 4.0 seconds with four workers; the completed repeat took
+0.15 seconds. Every existing file's bytes and timestamp remained unchanged.
+Fresh renders of all five prior paper types were pixel-identical to their
+baseline 300-dpi previews. Each fixture site repeats the same three existing
+EU/ICMP,TCP,UDP reports; these timings are not live-S3 or six-VP results.
+
+A probing-interval smoke run rendered eighteen prepared synthetic p99.9/256
+violin reports in 5.4 seconds with four workers; its completed repeat took
+0.12 seconds. Every existing fixture/input timestamp and byte remained unchanged.
+All six previous paper types rendered pixel-identically to their baseline
+previews. The tiny synthetic interval tables were prepared separately; these
+figures do not estimate full-campaign aggregation or live-S3 performance.
+
+An intersection smoke run rendered eighteen synthetic 49-cell aggregates in
+3.9 seconds with four workers; the repeat took 0.11 seconds. Existing input and
+output bytes/timestamps were preserved. Fresh renders of all seven prior paper
+types were pixel-identical to their 300-dpi baselines. These are local fixture
+timings, not live-S3 performance or scientific results for eighteen VP/protocols.
 
 `make paper-values` prefers an available sibling `__paper.pdf` for each selected
 figure and falls back to its original PDF otherwise. The existing `fig.*` keys
