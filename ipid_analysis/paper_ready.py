@@ -30,6 +30,8 @@ REPORTS[f"n-rt-b_fi-m_{TCP_FLAGS_KIND}.json"] = TCP_FLAGS_KIND
 REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
 PROBING_KIND = "probing-intervals-by-continent"
 REPORTS[f"n-rt-b_fi-b_{PROBING_KIND}.json"] = PROBING_KIND
+INTERSECTION_KIND = "strategy-intersection"
+REPORTS[f"n-rt-b_fi-b_{INTERSECTION_KIND}.json"] = INTERSECTION_KIND
 PHASES = {
     **{kind: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass") for kind in KINDS},
     OS_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
@@ -41,6 +43,7 @@ PHASES = {
         "rt-based-base_fixed-interval-base",
     ),
     PROBING_KIND: ("rt-base-vs-fi-base", "comparison", "rt-based-base_fixed-interval-base"),
+    INTERSECTION_KIND: ("rt-base-vs-fi-base", "comparison", "rt-based-base_fixed-interval-base"),
 }
 MAX_REPORT_BYTES = 4 << 20
 
@@ -228,6 +231,16 @@ def worker(job: Job) -> Result:
             before.extend(fingerprint(path) for path in (aggregate, metadata))
             data = load_series(aggregate, metadata, job.source)
             for name in ("paper_probing_plot.py", "paper_figures.py"):
+                profile_bytes += Path(__file__).with_name(name).read_bytes()
+        elif job.kind == INTERSECTION_KIND:
+            from ipid_analysis.paper_increment_plot import aggregate_path
+            from ipid_analysis.paper_intersection_plot import draw, load_matrix
+
+            aggregate = aggregate_path(job.source, report, processed_root=job.processed_root)
+            inputs.append(aggregate)
+            before.append(fingerprint(aggregate))
+            data = load_matrix(aggregate, report)
+            for name in ("paper_intersection_plot.py", "paper_figures.py"):
                 profile_bytes += Path(__file__).with_name(name).read_bytes()
         elif job.kind == "increment-distributions":
             from ipid_analysis.paper_increment_plot import aggregate_path, draw, load_histogram
