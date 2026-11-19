@@ -16,6 +16,7 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
 | `n-rt-b_fi-b_probing-intervals-by-continent.json` plus its prepared p99.9/256 paper aggregate | `n-rt-b_fi-b_probing-intervals-by-continent__paper.pdf` |
+| `n-rt-b_fi-b_strategy-intersection.json` plus its existing 49-cell aggregate | `n-rt-b_fi-b_strategy-intersection__paper.pdf` |
 
 The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
@@ -53,6 +54,17 @@ retained-sample normalization remain unchanged. Columnar arrays avoid allocating
 a dictionary for every histogram bin. Inputs are limited to 128 MiB and
 8 * 65,535 rows, covering every positive 16-bit increment in each of eight series.
 Missing/inconsistent aggregates fail without starting a measurement-data fallback.
+
+The strategy-intersection adapter reads the report's exact compact 49-cell
+Parquet via the existing aggregate-path/remapping helper. It validates the
+original schema, all seven-by-seven strategy pairs, nonnegative counts,
+consistent RT-based row totals, finite percentages and report populations.
+Stored percentages are used unchanged, without another join, count query or
+renormalization. Empty rows remain zero rows. Exact zeros display `-`; positive
+values retain the original one-decimal formatting, including small positive
+shares displayed as `0.0`. Missing/invalid aggregates fail without a PDF or
+per-IP-data fallback. Its receipt tracks the original JSON and compact table;
+the input is bounded to 49 rows and 1 MiB. This variant needs no preparation flag.
 
 The probing-interval violin uses the approved **p99.9 upper limit and 256 quantile
 points**. The old p99.5 aggregate cannot recover that tail. An explicit one-off
@@ -129,9 +141,9 @@ python -B -m ipid_analysis.paper_ready --workers 2 \
   /path/to/n-rt-b_fi-m_measurement-type-by-strategy.pdf
 ```
 
-Only the seven exact report names above are supported.
+Only the eight exact report names above are supported.
 The bar plots are discovered under `no-connection/merged/rt-based-base_fixed-interval-mass`;
-the increment and continent violin plots under `no-connection/comparison/rt-based-base_fixed-interval-base`.
+the increment, intersection and continent violin plots under `no-connection/comparison/rt-based-base_fixed-interval-base`.
 The three-bar refinement and TCP-flags variants are selected only for TCP runs,
 not under a `connection/` directory or for ICMP/UDP. Individual-measurement variants and all
 other plots retain their existing behavior. New plot types can be registered
@@ -171,6 +183,22 @@ positions plus fine horizontal positions along the upper edge against actual
 violin contours with a small clearance. A nonintersecting position is preferred;
 when none fits, sampled covered area is minimized. Thus its location can differ
 across VPs and protocols. Font size, width and frame height remain fixed.
+
+The approved intersection heatmap reuses the original strategy order,
+`PERCENTAGE_CMAP`, percentage-colorbar helper and shared cached 7 pt font. The
+0.05-inch-wide colorbar retains `Percentage [%]` and its 0-100 scale. Tick labels
+are rotated 30 degrees. Axis titles use the full original wording: one-line
+`Detected IP-ID Selection Strategy using Fixed-Interval probing` and three-line
+`Detected IP-ID Selection` / `Strategy using RT-based` / `probing`.
+
+All heatmap cells are measured around the rendered `100.0` text box with 5 px
+padding on each side at 300 dpi (1.2 pt per side). A temporary text measurement
+keeps that geometry even if the actual matrix has no `100.0` annotation. This
+preserves 7 pt text without spreading cells over the entire page. The resulting
+compact content is centered on the 3.33-inch canvas, with the long x-title kept
+inside its bounds. The y-title moves up to 4 pt farther left into available
+margin, while retaining a small clearance from the page edge. Only the design
+is changed; source percentages and populations remain unchanged.
 
 The approved TCP three-bar design reuses the same renderer, palette, text size,
 4-point legend squares, 8.316-point bar thickness and free inter-bar gaps.
@@ -292,6 +320,12 @@ violin reports in 5.4 seconds with four workers; its completed repeat took
 All six previous paper types rendered pixel-identically to their baseline
 previews. The tiny synthetic interval tables were prepared separately; these
 figures do not estimate full-campaign aggregation or live-S3 performance.
+
+An intersection smoke run rendered eighteen synthetic 49-cell aggregates in
+3.9 seconds with four workers; the repeat took 0.11 seconds. Existing input and
+output bytes/timestamps were preserved. Fresh renders of all seven prior paper
+types were pixel-identical to their 300-dpi baselines. These are local fixture
+timings, not live-S3 performance or scientific results for eighteen VP/protocols.
 
 `make paper-values` prefers an available sibling `__paper.pdf` for each selected
 figure and falls back to its original PDF otherwise. The existing `fig.*` keys

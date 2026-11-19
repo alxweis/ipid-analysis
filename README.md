@@ -5,7 +5,8 @@ Create additional single-column IMC figures from existing small reports/aggregat
 The command supports stateless RT-base/FI-mass measurement-type, ITDK-role-by-strategy
 and ITDK-role-by-OS plots with the approved shared OS pastel palette,
 the three-bar TCP refinement with a connection-oriented RT-based bar, TCP flags
-by strategy, RT-base/FI-base increment ECDFs and continent probing-interval violins,
+by strategy, RT-base/FI-base increment ECDFs, strategy-intersection heatmaps
+and continent probing-interval violins,
 writing sibling `__paper.pdf` variants. The violins require a separate p99.9/256
 aggregate, prepared once with `ARGS="--prepare-probing-intervals --workers 4"`.
 Original artifacts and existing paper variants are never overwritten.
