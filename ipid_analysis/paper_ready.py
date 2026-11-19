@@ -16,13 +16,16 @@ import sys
 import tempfile
 from time import perf_counter
 
-from paper_values.inputs import PROTOCOLS, SITES, Inputs
+from paper_values.inputs import PROTOCOLS, SITES, Inputs, protocol_from_run
 
 KINDS = ("itdk-role-by-strategy", "measurement-type-by-strategy")
 REPORTS = {f"n-rt-b_fi-m_{kind}.json": kind for kind in KINDS}
+CONNECTION_KIND = "measurement-type-by-strategy-with-connection"
+REPORTS[f"n-rt-b_fi-m_{CONNECTION_KIND}.json"] = CONNECTION_KIND
 REPORTS["n-rt-b_fi-b_increment-distributions.json"] = "increment-distributions"
 PHASES = {
     **{kind: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass") for kind in KINDS},
+    CONNECTION_KIND: ("rt-fi-merged", "merged", "rt-based-base_fixed-interval-mass"),
     "increment-distributions": (
         "rt-base-vs-fi-base",
         "comparison",
@@ -74,6 +77,7 @@ def discover(
         (protocol, "no-connection", phase[0], kind)
         for protocol in protocols
         for kind, phase in PHASES.items()
+        if kind != CONNECTION_KIND or protocol == "tcp"
     ]
     inventory = Inputs([root], contexts=contexts, workers=min(8, len(sites)), sites=sites)
     try:
@@ -85,6 +89,10 @@ def discover(
             relative = path.relative_to(root)
             if relative.parts[0] not in sites or path.name not in REPORTS:
                 continue
+            if REPORTS[path.name] == CONNECTION_KIND:
+                run_index = 2 if relative.parts[1] == "figures" else 1
+                if protocol_from_run(relative.parts[run_index]) != "tcp":
+                    continue
             # Only the canonical stateless phase for each registered plot.
             phase = PHASES[REPORTS[path.name]]
             if relative.parts[-4:-1] != (
@@ -119,11 +127,16 @@ def _shares(values, *, zero_allowed=False):
 
 def plot_data(kind, report):
     """Read the actual analysis report schema; do not reconstruct values from PDFs."""
-    if kind == "measurement-type-by-strategy":
+    if kind in ("measurement-type-by-strategy", CONNECTION_KIND):
+        modes = ("RT-based", "Fixed-Interval")
+        if kind == CONNECTION_KIND:
+            from ipid_analysis.plot_strategy_refinement import MODES_WITH_CONNECTION
+
+            if report.get("protocol", "tcp") != "tcp":
+                raise ValueError("connection-oriented refinement is only supported for TCP")
+            modes = MODES_WITH_CONNECTION
         bars = report["bars"]
-        return {
-            mode: _shares(bars[mode]["percentages"]) for mode in ("RT-based", "Fixed-Interval")
-        }
+        return {mode: _shares(bars[mode]["percentages"]) for mode in modes}
     totals = report["plot_role_totals"]
     result = {}
     for role in ("Transit-Observed", "No Transit Evidence"):

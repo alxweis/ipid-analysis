@@ -76,6 +76,7 @@ def _legend(fig, font, *, itdk):
     # is absent because the ITDK report combines insufficient samples with Unclassified.
     widths = [TextPath((0, 0), STRATEGY_PRETTY[key], prop=font).get_extents().x1 for key in ORDER]
     handle, gap = 4.0, 1.2
+    height = fig.get_size_inches()[1]
     columns = [handle + gap + max(widths[i : i + 2]) for i in range(0, 10, 2)]
     x = 72 / 300
     between = (WIDTH * 72 - 2 * x - sum(columns)) / 4
@@ -87,12 +88,12 @@ def _legend(fig, font, *, itdk):
             key = ORDER[column * 2 + row]
             if itdk and key == "NOT_ENOUGH_SAMPLES":
                 continue
-            y = HEIGHT * 72 - 5.5 - row * 9
+            y = height * 72 - 5.5 - row * 9
             fig.add_artist(
                 Rectangle(
-                    (x / (WIDTH * 72), (y - 2) / (HEIGHT * 72)),
+                    (x / (WIDTH * 72), (y - 2) / (height * 72)),
                     4 / (WIDTH * 72),
-                    4 / (HEIGHT * 72),
+                    4 / (height * 72),
                     transform=fig.transFigure,
                     facecolor=COLORS[key],
                     edgecolor="none",
@@ -101,7 +102,7 @@ def _legend(fig, font, *, itdk):
             texts.append(
                 fig.text(
                     (x + handle + gap) / (WIDTH * 72),
-                    y / (HEIGHT * 72),
+                    y / (height * 72),
                     STRATEGY_PRETTY[key],
                     ha="left",
                     va="center",
@@ -113,11 +114,19 @@ def _legend(fig, font, *, itdk):
 
 
 def draw(kind: str, percentages: dict, output: Path) -> None:
-    """Render two small normalized rows; no analysis, joins, or source-file writes."""
+    """Render normalized rows; no analysis, joins, or source-file writes."""
     font, _ = _font()
     itdk = kind == "itdk-role-by-strategy"
+    connection = kind == "measurement-type-by-strategy-with-connection"
     rows = ROLES if itdk else MODES
     labels = ("Router", "All Other") if itdk else MODES
+    height = HEIGHT
+    if connection:
+        from ipid_analysis.plot_strategy_refinement import MODE_LABELS, MODES_WITH_CONNECTION
+
+        rows = MODES_WITH_CONNECTION
+        labels = tuple(MODE_LABELS.get(row, row) for row in rows)
+        height = 1.4025
     with plt.rc_context(
         {
             "font.family": font.get_name(),
@@ -130,18 +139,23 @@ def draw(kind: str, percentages: dict, output: Path) -> None:
             "ps.fonttype": 42,
         }
     ):
-        fig = plt.figure(figsize=(WIDTH, HEIGHT), dpi=240)
+        fig = plt.figure(figsize=(WIDTH, height), dpi=300 if connection else 240)
         try:
-            _draw(fig, font, itdk, rows, labels, percentages, output)
+            _draw(fig, font, itdk, rows, labels, percentages, output, connection=connection)
         finally:
             plt.close(fig)
 
 
-def _draw(fig, font, itdk, rows, labels, percentages, output):
-    left = 0.59 if itdk else 0.77
-    ax = fig.add_axes([left / WIDTH, 0.43 / HEIGHT, (WIDTH - left - 0.1) / WIDTH, 0.4015 / HEIGHT])
-    ax.set(xlim=(0, 100), ylim=(-0.31, 1.15))
-    ax.set_yticks([0.84, 0], labels)
+def _draw(fig, font, itdk, rows, labels, percentages, output, *, connection=False):
+    height = fig.get_size_inches()[1]
+    left = 1.01 if connection else 0.59 if itdk else 0.77
+    axes_height = 0.6325 if connection else 0.4015
+    centers = (1.68, 0.84, 0) if connection else (0.84, 0)
+    ax = fig.add_axes(
+        [left / WIDTH, 0.43 / height, (WIDTH - left - 0.1) / WIDTH, axes_height / height]
+    )
+    ax.set(xlim=(0, 100), ylim=(-0.31, 1.99 if connection else 1.15))
+    ax.set_yticks(centers, labels)
     ax.set_xticks(range(0, 101, 20))
     ax.set_xticks([n for n in range(5, 100, 5) if n % 20], minor=True)
     ax.set_xlabel("IP-ID Selection Strategy [%]", labelpad=1)
@@ -161,13 +175,14 @@ def _draw(fig, font, itdk, rows, labels, percentages, output):
         fontproperties=font,
     )
     if not itdk:
+        upper, lower = (1.47, 1.05) if connection else (0.63, 0.21)
         rt = percentages[MODES[0]]
         begin = sum(rt.get(key, 0) for key in ORDER[: ORDER.index("UNCLASSIFIED")])
         end = begin + rt.get("UNCLASSIFIED", 0)
         if end > begin:
             ax.add_patch(
                 Polygon(
-                    [(begin, 0.63), (end, 0.63), (100, 0.21), (0, 0.21)],
+                    [(begin, upper), (end, upper), (100, lower), (0, lower)],
                     closed=True,
                     facecolor="#BDBDBD",
                     edgecolor="none",
@@ -178,14 +193,14 @@ def _draw(fig, font, itdk, rows, labels, percentages, output):
             for x1, x2 in [(begin, 0), (end, 100)]:
                 ax.plot(
                     [x1, x2],
-                    [0.63, 0.21],
+                    [upper, lower],
                     color="#A6A6A6",
                     linestyle="--",
                     linewidth=0.55,
                     zorder=1,
                 )
     segments = []
-    for y, row in zip((0.84, 0), rows):
+    for y, row in zip(centers, rows):
         x = 0.0
         for key in ORDER:
             value = percentages[row].get(key, 0)
@@ -216,8 +231,14 @@ def _draw(fig, font, itdk, rows, labels, percentages, output):
     )
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
-    bottom = ax.bbox.y0 if itdk else min(ax.bbox.y0, ax.xaxis.label.get_window_extent(renderer).y0)
+    bottom = (
+        ax.bbox.y0
+        if itdk or connection
+        else min(ax.bbox.y0, ax.xaxis.label.get_window_extent(renderer).y0)
+    )
     title.set_y((bottom + ax.bbox.y1) / (2 * fig.bbox.height))
+    if connection:
+        title.set_y(title.get_position()[1] - 2 / (72 * height))
     for x, y, value in segments:
         if value < 1:
             continue
@@ -255,7 +276,7 @@ def _draw(fig, font, itdk, rows, labels, percentages, output):
     ink_rows = np.flatnonzero(np.any(rgb < 250, axis=(1, 2)))
     correction = 0 if itdk else 3 / 300
     bottom = max(0, (rgb.shape[0] - ink_rows[-1] - 1) / fig.dpi - 1 / 300 + correction)
-    top = min(HEIGHT, (rgb.shape[0] - ink_rows[0]) / fig.dpi + 2 / 300)
+    top = min(height, (rgb.shape[0] - ink_rows[0]) / fig.dpi + 2 / 300)
     fig.savefig(
         output,
         format="pdf",
