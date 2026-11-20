@@ -163,7 +163,8 @@ class ConnectionOSGroupTest(unittest.TestCase):
                 [bar.bbox.width, bar.bbox.height],
                 np.asarray((3.6, 63.8925)) * fig.dpi / 72,
             )
-            self.assertAlmostEqual((bar.bbox.x0 - network.bbox.x1) / fig.dpi * 72, 5.04)
+            self.assertAlmostEqual((bar.bbox.x0 - network.bbox.x1) / fig.dpi * 72, 4)
+            self.assertEqual(bar.yaxis.labelpad, 0)
             self.assertAlmostEqual(
                 (bar.bbox.y0 + bar.bbox.y1) / 2, (general.bbox.y1 + network.bbox.y0) / 2
             )
@@ -172,7 +173,7 @@ class ConnectionOSGroupTest(unittest.TestCase):
             self.assertIn(
                 "Microsoft Windows (162k)", [t.get_text() for t in general.get_yticklabels()]
             )
-            self.assertIn("RHEL (100.0k)", [t.get_text() for t in general.get_yticklabels()])
+            self.assertIn("RHEL (100k)", [t.get_text() for t in general.get_yticklabels()])
             return savefig(fig, *args, **kwargs)
 
         with (

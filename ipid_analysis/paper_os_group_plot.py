@@ -141,8 +141,13 @@ def _draw(data, output, *, wrap_width=None):
     from matplotlib.transforms import Bbox
 
     from ipid_analysis.paper_figures import PERCENTAGE_CMAP, draw_percentage_colorbar_axis
+    from ipid_analysis.paper_heatmap_style import (
+        COLORBAR_LABEL_PAD_POINTS,
+        colorbar_gap_points,
+        format_percentage,
+        format_population,
+    )
     from ipid_analysis.paper_plot_style import FONT_SIZE, WIDTH, _font, measure_heatmap_cell
-    from ipid_analysis.plot_os_group_strategy import _format_ip_count
     from ipid_analysis.strategies import STRATEGY_PRETTY
 
     DPI, HEIGHT = 300, 4.6
@@ -152,19 +157,6 @@ def _draw(data, output, *, wrap_width=None):
     column_count = len(strategies)
     LABELS = [STRATEGY_PRETTY[key] for key in strategies]
 
-    def population(total):
-        if connection_base and total > 100_000:
-            return f"{total / 1000:.0f}k"
-        return _format_ip_count(total)
-
-    def annotation(count, share):
-        if count == 0:
-            return "-"
-        text = f"{share:.1f}"
-        # The exact endpoint fits a fixed 7-pt cell as 100, with no information
-        # lost relative to its 100.0 annotation. Other cells keep one decimal.
-        return "100" if connection_base and text == "100.0" else text
-
     cmap = PERCENTAGE_CMAP
     selected = [
         (
@@ -173,7 +165,7 @@ def _draw(data, output, *, wrap_width=None):
                 (
                     GROUP_INFO[key],
                     shares,
-                    [annotation(count, share) for count, share in zip(counts, shares)],
+                    [format_percentage(share, count) for count, share in zip(counts, shares)],
                 )
                 for key, counts, shares in zip(
                     section["groups"], section["counts"], section["percentages"]
@@ -210,7 +202,7 @@ def _draw(data, output, *, wrap_width=None):
                 cell_width_px, cell_height_px = np.asarray(BASE_CELL_POINTS) * DPI / 72
             labels_by_section = [
                 [
-                    f"{GROUP_INFO[key][1]} ({population(total)})"
+                    f"{GROUP_INFO[key][1]} ({format_population(total)})"
                     for key, total in zip(section["groups"], section["totals"])
                 ]
                 for section in data["sections"]
@@ -239,10 +231,10 @@ def _draw(data, output, *, wrap_width=None):
             probe.remove()
             _, reference_cell_height = measure_heatmap_cell(fig, font)
             colorbar_width, colorbar_height = 0.05, 7 * reference_cell_height / DPI
-            colorbar_gap = 0.02
+            colorbar_gap = colorbar_gap_points(0.02 * 72) / 72
             if connection_base:
                 colorbar_width, colorbar_height = np.asarray(BASE_COLORBAR_POINTS) / 72
-                colorbar_gap = BASE_COLORBAR_GAP_POINTS / 72
+                colorbar_gap = colorbar_gap_points(BASE_COLORBAR_GAP_POINTS) / 72
             matrix_width = column_count * cell_width_px / DPI
             row_height = cell_height_px / DPI
             left, bottom, section_gap = 1.04, 0.9, 0.20
@@ -297,7 +289,7 @@ def _draw(data, output, *, wrap_width=None):
             draw_percentage_colorbar_axis(
                 cax, label="Percentage [%]", stroke_width=0.45, tick_length=2.5, tick_pad=1.5
             )
-            cax.yaxis.labelpad = 2
+            cax.yaxis.labelpad = COLORBAR_LABEL_PAD_POINTS
             ylabel = fig.text(
                 0.07 / WIDTH,
                 (bottom + total_height / 2) / HEIGHT,
