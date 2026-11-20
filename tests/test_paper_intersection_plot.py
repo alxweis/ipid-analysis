@@ -145,7 +145,9 @@ class PaperIntersectionTest(unittest.TestCase):
             for gap in (box.x0 - left, right - box.x1):
                 self.assertGreaterEqual(gap, 5)
             for gap in (box.y0 - bottom, top - box.y1):
-                self.assertAlmostEqual(gap, 5)
+                self.assertGreater(gap, 0)
+            self.assertAlmostEqual((top - bottom) * 72 / fig.dpi, 10)
+            self.assertAlmostEqual(cax.bbox.height * 72 / fig.dpi, 70)
             self.assertEqual(cax.yaxis.labelpad, 0)
             self.assertAlmostEqual((cax.bbox.x0 - ax.bbox.x1) * 72 / fig.dpi, 4)
             self.assertGreater(ax.yaxis.labelpad, 2)

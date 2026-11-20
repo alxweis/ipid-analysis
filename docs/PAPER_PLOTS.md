@@ -43,6 +43,13 @@ gaps are reduced to 4 pt. These rules apply to both connection modes and are
 included in the paper-output style fingerprint. Existing paper PDFs still skip
 rendering and are never silently replaced.
 
+Every cell in both paper heatmap families and connection modes has a fixed
+10-pt physical height, independent of font metrics, data or label wrapping.
+The seven-row intersection frame is therefore 70 pt high; the shared percentage
+bar is also 70 pt high in every variant. Cell widths retain their existing
+layout rules. Labels that cannot fit at 7 pt fail clearly instead of enlarging
+all rows or overlapping neighboring labels.
+
 The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
 recomputed or renormalized. Unsupported schemas and invalid percentages fail
@@ -143,8 +150,8 @@ frames and has exactly the same height as the seven-row intersection bar,
 using shared font measurement rather than platform-specific hardcoded pixels.
 The palette, canonical labels, population formatting, colorbar helper and cached
 font are reused. Columns are fitted to the available width without reducing text
-size. Longer populations can require OS labels to wrap and taller rows;
-no labels or cells are silently dropped or clipped. Publication and repeats
+size. Rows remain fixed at 10 pt; labels that cannot fit fail clearly.
+No labels or cells are silently dropped or clipped. Publication and repeats
 use the existing create-only, bounded multiprocessing path.
 
 The connection-oriented TCP OS-group variant reuses this adapter and renderer
@@ -158,8 +165,8 @@ not selected for display. Otherwise rendering fails without hiding observations.
 The retained percentages are not renormalized, and an absent selected OS remains
 a `(0)` row of dashes.
 
-This variant uses the approved fixed physical cell size of 11.9145 by 9.1275 pt,
-the 3.6-by-63.8925-pt percentage bar and a capped 4-pt horizontal bar gap. The heatmap
+This variant uses a fixed physical cell size of 11.9145 by 10 pt,
+the 3.6-by-70-pt percentage bar and a capped 4-pt horizontal bar gap. The heatmap
 gap remains 0.20 inches; the y-title/OS-label layout gap remains 2 pt. No reference
 PDF or existing paper output is read to determine geometry. Names and populations
 remain on one line, with counts from 100,000 to below one million rounded to
@@ -311,10 +318,11 @@ are rotated 30 degrees. Axis titles use the full original wording: one-line
 `Detected IP-ID Selection Strategy using Fixed-Interval probing` and three-line
 `Detected IP-ID Selection` / `Strategy using RT-based` / `probing`.
 
-All heatmap cells are measured around the rendered `100.0` text box with 5 px
-padding on each side at 300 dpi (1.2 pt per side). A temporary text measurement
-keeps that geometry even if the actual matrix has no `100.0` annotation. This
-preserves 7 pt text without spreading cells over the entire page. The resulting
+Intersection cell widths are measured around the rendered `100.0` text box with
+5 px horizontal padding on each side at 300 dpi (1.2 pt per side). Heights are
+fixed at 10 pt, rather than derived from that font's text box. A temporary width
+measurement keeps the same geometry even if the actual matrix has no `100.0`
+annotation. This preserves 7 pt text without spreading cells over the entire page. The resulting
 compact content is centered on the 3.33-inch canvas, with the long x-title kept
 inside its bounds. The y-title moves up to 4 pt farther left into available
 margin, while retaining a small clearance from the page edge. Only the design

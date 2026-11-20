@@ -5,6 +5,7 @@ import math
 import numpy as np
 import pyarrow.parquet as pq
 
+from ipid_analysis.paper_heatmap_style import CELL_HEIGHT_POINTS
 from ipid_analysis.plot_os_group_strategy import AGGREGATE_SCHEMA, GROUP_INFO, HEATMAP_STRATEGIES
 
 MAX_AGGREGATE_BYTES = 4 << 20
@@ -35,8 +36,8 @@ Y_LABEL = "Operating-System Group (#IP Addr.)"
 BASE_OMITTED = ("MULTI", "RANDOM", "NOT_ENOUGH_SAMPLES")
 BASE_STRATEGIES = tuple(key for key in HEATMAP_STRATEGIES if key not in BASE_OMITTED)
 # Physical measurements from the approved drafts; no PDF is read at runtime.
-BASE_CELL_POINTS = (11.9145, 9.1275)
-BASE_COLORBAR_POINTS = (3.6, 63.8925)
+BASE_CELL_POINTS = (11.9145, CELL_HEIGHT_POINTS)
+BASE_COLORBAR_POINTS = (3.6, 7 * CELL_HEIGHT_POINTS)
 BASE_COLORBAR_GAP_POINTS = 5.04
 
 
@@ -197,7 +198,8 @@ def _draw(data, output, *, wrap_width=None):
             }:
                 probe.set_text(label)
                 annotation_sizes.append(probe.get_window_extent(renderer).size)
-            cell_width_px, cell_height_px = np.max(annotation_sizes, axis=0) + 10
+            cell_width_px = np.max(annotation_sizes, axis=0)[0] + 10
+            cell_height_px = CELL_HEIGHT_POINTS * DPI / 72
             if connection_base:
                 cell_width_px, cell_height_px = np.asarray(BASE_CELL_POINTS) * DPI / 72
             labels_by_section = [
@@ -224,9 +226,8 @@ def _draw(data, output, *, wrap_width=None):
                                 lines[-1] = candidate
                         labels[i] = "\n".join(lines)
                         probe.set_text(labels[i])
-                        cell_height_px = max(
-                            cell_height_px, probe.get_window_extent(renderer).height + 10
-                        )
+                        if probe.get_window_extent(renderer).height >= cell_height_px:
+                            raise ValueError("OS labels cannot fit fixed 10-pt rows at 7 pt")
             max_label_width = max(width(label) for labels in labels_by_section for label in labels)
             probe.remove()
             _, reference_cell_height = measure_heatmap_cell(fig, font)

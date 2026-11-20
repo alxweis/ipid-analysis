@@ -5,6 +5,7 @@ from numbers import Integral
 
 COLORBAR_LABEL_PAD_POINTS = 0
 MAX_COLORBAR_GAP_POINTS = 4
+CELL_HEIGHT_POINTS = 10
 
 
 def round_half_away(value, places=0):

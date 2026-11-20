@@ -39,12 +39,14 @@ ROLES = ("Transit-Observed", "No Transit Evidence")
 
 
 def measure_heatmap_cell(fig, font, text="100.0"):
-    """Measure 7-pt annotations with the approved 5 px padding at 300 dpi."""
+    """Measure annotation width with 5px side padding; row height is always 10pt."""
+    from ipid_analysis.paper_heatmap_style import CELL_HEIGHT_POINTS
+
     probe = fig.text(0.5, 0.5, text, ha="center", va="center", fontproperties=font)
     try:
         fig.canvas.draw()
         box = probe.get_window_extent(fig.canvas.get_renderer())
-        return box.width + 10, box.height + 10
+        return box.width + 10, CELL_HEIGHT_POINTS * fig.dpi / 72
     finally:
         probe.remove()
 

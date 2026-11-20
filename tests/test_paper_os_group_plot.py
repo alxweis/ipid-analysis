@@ -130,6 +130,7 @@ class PaperOSGroupTest(unittest.TestCase):
             self.assertTrue(all(t.tick1line.get_visible() for t in ticks))
             self.assertFalse(any(t.label1.get_visible() for t in ticks))
             for ax, (_, keys) in zip((general, network), plot.SELECTION):
+                self.assertAlmostEqual(ax.bbox.height / len(keys) * 72 / fig.dpi, 10)
                 self.assertEqual(len(ax.texts), 10 * len(keys))
                 self.assertTrue(all("\n" not in t.get_text() for t in ax.get_yticklabels()))
                 self.assertEqual(
@@ -192,7 +193,7 @@ class PaperOSGroupTest(unittest.TestCase):
                         all("\n" not in t.get_text() for t in general.get_yticklabels())
                     )
                     for ax, rows in ((general, 8), (network, 12)):
-                        self.assertLess(ax.bbox.height / rows * 72 / fig.dpi, 12)
+                        self.assertAlmostEqual(ax.bbox.height / rows * 72 / fig.dpi, 10)
                     return actual_save(fig, *args, **kwargs)
 
                 with patch.object(Figure, "savefig", new=inspect):
