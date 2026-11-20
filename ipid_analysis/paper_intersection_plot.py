@@ -81,6 +81,11 @@ def draw(kind, data, output):
         PERCENTAGE_CMAP,
         draw_percentage_colorbar_axis,
     )
+    from ipid_analysis.paper_heatmap_style import (
+        COLORBAR_LABEL_PAD_POINTS,
+        colorbar_gap_points,
+        format_percentage,
+    )
     from ipid_analysis.paper_plot_style import FONT_SIZE, WIDTH, _font, measure_heatmap_cell
     from ipid_analysis.strategies import STRATEGY_PRETTY
 
@@ -112,7 +117,7 @@ def draw(kind, data, output):
             ax.tick_params(axis="both", which="major", length=2.5, width=0.45, pad=1.5)
             for i in range(7):
                 for j in range(7):
-                    text = "-" if counts[i, j] == 0 else f"{values[i, j]:.1f}"
+                    text = format_percentage(values[i, j], counts[i, j])
                     ax.text(
                         j,
                         i,
@@ -126,7 +131,7 @@ def draw(kind, data, output):
             draw_percentage_colorbar_axis(
                 cax, label="Percentage [%]", stroke_width=0.45, tick_length=2.5, tick_pad=1.5
             )
-            cax.yaxis.labelpad = 2
+            cax.yaxis.labelpad = COLORBAR_LABEL_PAD_POINTS
             for text in fig.findobj(match=Text):
                 text.set_fontproperties(font)
             fig.canvas.draw()
@@ -148,7 +153,7 @@ def draw(kind, data, output):
             box = cax.get_position()
             cax.set_position(
                 [
-                    ax.get_position().x1 + 0.10 / WIDTH,
+                    ax.get_position().x1 + colorbar_gap_points(0.10 * 72) / 72 / WIDTH,
                     box.y0,
                     box.width,
                     7 * cell_height / fig.bbox.height,

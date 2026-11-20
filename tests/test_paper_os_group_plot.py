@@ -130,6 +130,7 @@ class PaperOSGroupTest(unittest.TestCase):
             self.assertTrue(all(t.tick1line.get_visible() for t in ticks))
             self.assertFalse(any(t.label1.get_visible() for t in ticks))
             for ax, (_, keys) in zip((general, network), plot.SELECTION):
+                self.assertAlmostEqual(ax.bbox.height / len(keys) * 72 / fig.dpi, 10)
                 self.assertEqual(len(ax.texts), 10 * len(keys))
                 self.assertTrue(all("\n" not in t.get_text() for t in ax.get_yticklabels()))
                 self.assertEqual(
@@ -144,6 +145,8 @@ class PaperOSGroupTest(unittest.TestCase):
             self.assertEqual(network.get_xlabel(), "IP-ID Selection Strategy")
             self.assertTrue(all(t.get_rotation() == 30 for t in network.get_xticklabels()))
             self.assertAlmostEqual(bar.bbox.width / fig.dpi, 0.05)
+            self.assertAlmostEqual((bar.bbox.x0 - network.bbox.x1) * 72 / fig.dpi, 1.44)
+            self.assertEqual(bar.yaxis.labelpad, 0)
             self.assertAlmostEqual(bar.bbox.height, 7 * measure_heatmap_cell(fig, _font()[0])[1])
             self.assertAlmostEqual(
                 (bar.bbox.y0 + bar.bbox.y1) / 2, (network.bbox.y0 + general.bbox.y1) / 2
@@ -174,6 +177,27 @@ class PaperOSGroupTest(unittest.TestCase):
         job, _ = fixture(self.root / "all-empty", missing=missing)
         result = paper_ready.run([job], workers=1)[0]
         self.assertEqual(result.status, "created", result.error)
+
+    def test_udp_sized_populations_do_not_stretch_every_heatmap_row(self):
+        from matplotlib.figure import Figure
+
+        data = plot.load_data(self.aggregate, self.report)
+        actual_save = Figure.savefig
+        for total in (57000, 64700, 64800):
+            with self.subTest(windows_count=total):
+                data["sections"][0]["totals"][-1] = total
+
+                def inspect(fig, *args, **kwargs):
+                    general, network, _ = fig.axes
+                    self.assertTrue(
+                        all("\n" not in t.get_text() for t in general.get_yticklabels())
+                    )
+                    for ax, rows in ((general, 8), (network, 12)):
+                        self.assertAlmostEqual(ax.bbox.height / rows * 72 / fig.dpi, 10)
+                    return actual_save(fig, *args, **kwargs)
+
+                with patch.object(Figure, "savefig", new=inspect):
+                    plot.draw(paper_ready.OS_GROUP_KIND, data, self.root / f"udp-{total}.pdf")
 
     def test_invalid_input_fails_without_publication(self):
         original = pq.read_table(self.aggregate).to_pylist()

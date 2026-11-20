@@ -5,6 +5,7 @@ import math
 import numpy as np
 import pyarrow.parquet as pq
 
+from ipid_analysis.paper_heatmap_style import CELL_HEIGHT_POINTS
 from ipid_analysis.plot_os_group_strategy import AGGREGATE_SCHEMA, GROUP_INFO, HEATMAP_STRATEGIES
 
 MAX_AGGREGATE_BYTES = 4 << 20
@@ -35,8 +36,8 @@ Y_LABEL = "Operating-System Group (#IP Addr.)"
 BASE_OMITTED = ("MULTI", "RANDOM", "NOT_ENOUGH_SAMPLES")
 BASE_STRATEGIES = tuple(key for key in HEATMAP_STRATEGIES if key not in BASE_OMITTED)
 # Physical measurements from the approved drafts; no PDF is read at runtime.
-BASE_CELL_POINTS = (11.9145, 9.1275)
-BASE_COLORBAR_POINTS = (3.6, 63.8925)
+BASE_CELL_POINTS = (11.9145, CELL_HEIGHT_POINTS)
+BASE_COLORBAR_POINTS = (3.6, 7 * CELL_HEIGHT_POINTS)
 BASE_COLORBAR_GAP_POINTS = 5.04
 
 
@@ -141,8 +142,13 @@ def _draw(data, output, *, wrap_width=None):
     from matplotlib.transforms import Bbox
 
     from ipid_analysis.paper_figures import PERCENTAGE_CMAP, draw_percentage_colorbar_axis
+    from ipid_analysis.paper_heatmap_style import (
+        COLORBAR_LABEL_PAD_POINTS,
+        colorbar_gap_points,
+        format_percentage,
+        format_population,
+    )
     from ipid_analysis.paper_plot_style import FONT_SIZE, WIDTH, _font, measure_heatmap_cell
-    from ipid_analysis.plot_os_group_strategy import _format_ip_count
     from ipid_analysis.strategies import STRATEGY_PRETTY
 
     DPI, HEIGHT = 300, 4.6
@@ -152,19 +158,6 @@ def _draw(data, output, *, wrap_width=None):
     column_count = len(strategies)
     LABELS = [STRATEGY_PRETTY[key] for key in strategies]
 
-    def population(total):
-        if connection_base and total > 100_000:
-            return f"{total / 1000:.0f}k"
-        return _format_ip_count(total)
-
-    def annotation(count, share):
-        if count == 0:
-            return "-"
-        text = f"{share:.1f}"
-        # The exact endpoint fits a fixed 7-pt cell as 100, with no information
-        # lost relative to its 100.0 annotation. Other cells keep one decimal.
-        return "100" if connection_base and text == "100.0" else text
-
     cmap = PERCENTAGE_CMAP
     selected = [
         (
@@ -173,7 +166,7 @@ def _draw(data, output, *, wrap_width=None):
                 (
                     GROUP_INFO[key],
                     shares,
-                    [annotation(count, share) for count, share in zip(counts, shares)],
+                    [format_percentage(share, count) for count, share in zip(counts, shares)],
                 )
                 for key, counts, shares in zip(
                     section["groups"], section["counts"], section["percentages"]
@@ -205,12 +198,13 @@ def _draw(data, output, *, wrap_width=None):
             }:
                 probe.set_text(label)
                 annotation_sizes.append(probe.get_window_extent(renderer).size)
-            cell_width_px, cell_height_px = np.max(annotation_sizes, axis=0) + 10
+            cell_width_px = np.max(annotation_sizes, axis=0)[0] + 10
+            cell_height_px = CELL_HEIGHT_POINTS * DPI / 72
             if connection_base:
                 cell_width_px, cell_height_px = np.asarray(BASE_CELL_POINTS) * DPI / 72
             labels_by_section = [
                 [
-                    f"{GROUP_INFO[key][1]} ({population(total)})"
+                    f"{GROUP_INFO[key][1]} ({format_population(total)})"
                     for key, total in zip(section["groups"], section["totals"])
                 ]
                 for section in data["sections"]
@@ -232,17 +226,16 @@ def _draw(data, output, *, wrap_width=None):
                                 lines[-1] = candidate
                         labels[i] = "\n".join(lines)
                         probe.set_text(labels[i])
-                        cell_height_px = max(
-                            cell_height_px, probe.get_window_extent(renderer).height + 10
-                        )
+                        if probe.get_window_extent(renderer).height >= cell_height_px:
+                            raise ValueError("OS labels cannot fit fixed 10-pt rows at 7 pt")
             max_label_width = max(width(label) for labels in labels_by_section for label in labels)
             probe.remove()
             _, reference_cell_height = measure_heatmap_cell(fig, font)
             colorbar_width, colorbar_height = 0.05, 7 * reference_cell_height / DPI
-            colorbar_gap = 0.02
+            colorbar_gap = colorbar_gap_points(0.02 * 72) / 72
             if connection_base:
                 colorbar_width, colorbar_height = np.asarray(BASE_COLORBAR_POINTS) / 72
-                colorbar_gap = BASE_COLORBAR_GAP_POINTS / 72
+                colorbar_gap = colorbar_gap_points(BASE_COLORBAR_GAP_POINTS) / 72
             matrix_width = column_count * cell_width_px / DPI
             row_height = cell_height_px / DPI
             left, bottom, section_gap = 1.04, 0.9, 0.20
@@ -297,7 +290,7 @@ def _draw(data, output, *, wrap_width=None):
             draw_percentage_colorbar_axis(
                 cax, label="Percentage [%]", stroke_width=0.45, tick_length=2.5, tick_pad=1.5
             )
-            cax.yaxis.labelpad = 2
+            cax.yaxis.labelpad = COLORBAR_LABEL_PAD_POINTS
             ylabel = fig.text(
                 0.07 / WIDTH,
                 (bottom + total_height / 2) / HEIGHT,

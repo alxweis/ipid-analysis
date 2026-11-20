@@ -135,7 +135,7 @@ class ConnectionOSGroupTest(unittest.TestCase):
             self.assertEqual({t.get_fontsize() for t in fig.findobj(Text)}, {7.0})
             for ax, row_count in zip((general, network), (8, 12)):
                 self.assertAlmostEqual(ax.bbox.width / 7 / fig.dpi * 72, 11.9145)
-                self.assertAlmostEqual(ax.bbox.height / row_count / fig.dpi * 72, 9.1275)
+                self.assertAlmostEqual(ax.bbox.height / row_count / fig.dpi * 72, 10)
                 self.assertEqual(len(ax.texts), 7 * row_count)
                 title = ax.title.get_window_extent(fig.canvas.get_renderer())
                 self.assertAlmostEqual((title.x0 + title.x1) / 2, (ax.bbox.x0 + ax.bbox.x1) / 2)
@@ -161,9 +161,10 @@ class ConnectionOSGroupTest(unittest.TestCase):
             self.assertAlmostEqual((general.bbox.y0 - network.bbox.y1) / fig.dpi * 72, 14.4)
             np.testing.assert_allclose(
                 [bar.bbox.width, bar.bbox.height],
-                np.asarray((3.6, 63.8925)) * fig.dpi / 72,
+                np.asarray((3.6, 70)) * fig.dpi / 72,
             )
-            self.assertAlmostEqual((bar.bbox.x0 - network.bbox.x1) / fig.dpi * 72, 5.04)
+            self.assertAlmostEqual((bar.bbox.x0 - network.bbox.x1) / fig.dpi * 72, 4)
+            self.assertEqual(bar.yaxis.labelpad, 0)
             self.assertAlmostEqual(
                 (bar.bbox.y0 + bar.bbox.y1) / 2, (general.bbox.y1 + network.bbox.y0) / 2
             )
@@ -172,7 +173,7 @@ class ConnectionOSGroupTest(unittest.TestCase):
             self.assertIn(
                 "Microsoft Windows (162k)", [t.get_text() for t in general.get_yticklabels()]
             )
-            self.assertIn("RHEL (100.0k)", [t.get_text() for t in general.get_yticklabels()])
+            self.assertIn("RHEL (100k)", [t.get_text() for t in general.get_yticklabels()])
             return savefig(fig, *args, **kwargs)
 
         with (

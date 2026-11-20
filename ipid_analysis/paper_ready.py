@@ -319,6 +319,7 @@ def worker(job: Job) -> Result:
             )
             for name in (
                 "paper_os_group_plot.py",
+                "paper_heatmap_style.py",
                 "paper_figures.py",
                 "plot_os_group_strategy.py",
             ):
@@ -330,7 +331,11 @@ def worker(job: Job) -> Result:
             inputs.append(aggregate)
             before.append(fingerprint(aggregate))
             data = load_matrix(aggregate, report)
-            for name in ("paper_intersection_plot.py", "paper_figures.py"):
+            for name in (
+                "paper_intersection_plot.py",
+                "paper_heatmap_style.py",
+                "paper_figures.py",
+            ):
                 profile_bytes += Path(__file__).with_name(name).read_bytes()
         elif job.kind in ("increment-distributions", CONNECTION_INCREMENT_KIND):
             from ipid_analysis.paper_increment_plot import draw, load_histogram

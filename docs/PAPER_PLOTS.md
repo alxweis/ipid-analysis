@@ -24,6 +24,32 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-m_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `n-rt-b_fi-m_operating-system-group-by-strategy__paper.pdf` |
 | `c-rt-b_operating-system-group-by-strategy.json` plus its existing OS/strategy aggregate | `c-rt-b_operating-system-group-by-strategy__paper.pdf` |
 
+The OS-group and strategy-intersection paper heatmaps share display-only decimal
+rounding: ties round away from zero, rather than Python's ties-to-even rule.
+Rounding starts from each stored numeric value or exact integer IP population,
+never from an already abbreviated label. Percentages retain one decimal, except
+the rounded 100% endpoint is shown as `100`. Exact-zero cells remain dashes;
+small positive cells may still display `0.0`. Heatmap colors and input values are
+unchanged.
+
+IP labels below 100k keep tenths of a thousand, from 100k to below one million
+they use whole thousands, and millions retain one decimal. Decimal trailing zeros
+are removed (`57k`, `35k`, `2M`); a rounded `1000k` is promoted to `1M`.
+For example, 156470 displays as `156k`, while an exact 156500 displays as `157k`.
+The percentage-axis label pad is 0 pt. The heatmap/colorbar gap is capped at
+4 pt, without expanding existing smaller preferences: stateless OS heatmaps
+retain 1.44 pt, while the previous 5.04-pt connection OS and 7.2-pt intersection
+gaps are reduced to 4 pt. These rules apply to both connection modes and are
+included in the paper-output style fingerprint. Existing paper PDFs still skip
+rendering and are never silently replaced.
+
+Every cell in both paper heatmap families and connection modes has a fixed
+10-pt physical height, independent of font metrics, data or label wrapping.
+The seven-row intersection frame is therefore 70 pt high; the shared percentage
+bar is also 70 pt high in every variant. Cell widths retain their existing
+layout rules. Labels that cannot fit at 7 pt fail clearly instead of enlarging
+all rows or overlapping neighboring labels.
+
 The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
 recomputed or renormalized. Unsupported schemas and invalid percentages fail
@@ -77,8 +103,8 @@ original schema, all seven-by-seven strategy pairs, nonnegative counts,
 consistent RT-based row totals, finite percentages and report populations.
 Stored percentages are used unchanged, without another join, count query or
 renormalization. Empty rows remain zero rows. Exact zeros display `-`; positive
-values retain the original one-decimal formatting, including small positive
-shares displayed as `0.0`. Missing/invalid aggregates fail without a PDF or
+values use the shared decimal rounding, including small positive shares
+displayed as `0.0` and the endpoint displayed as `100`. Missing/invalid aggregates fail without a PDF or
 per-IP-data fallback. Its receipt tracks the original JSON and compact table;
 the input is bounded to 49 rows and 1 MiB. This variant needs no preparation flag.
 
@@ -112,11 +138,11 @@ There is no ranking, reclassification, per-IP join, PDF extraction or preparatio
 step. A selected OS absent from the validated complete aggregate remains a
 zero-population `(0)` row with dashes; other OS groups are not displayed. Stored
 percentages are used unchanged. Exact-zero cells show `-`; positive shares use
-one decimal, including small positive values displayed as `0.0`.
+the common decimal formatting described above.
 
 The approved 3.33-inch, Linux Libertine 7-pt design has two stacked heatmaps with
 headings centered over their own frames, inline parenthesized IP counts using
-the original k/M formatting, and `Operating-System Group (#IP Addr.)` as y title.
+the common compact k/M formatting, and `Operating-System Group (#IP Addr.)` as y title.
 The upper heatmap has ten bottom x ticks without labels. Its frame is separated
 from the lower frame by 0.20 inches, with room for the lower section heading.
 The 0.05-inch percentage bar is centered vertically on the combined heatmap
@@ -124,8 +150,8 @@ frames and has exactly the same height as the seven-row intersection bar,
 using shared font measurement rather than platform-specific hardcoded pixels.
 The palette, canonical labels, population formatting, colorbar helper and cached
 font are reused. Columns are fitted to the available width without reducing text
-size. Longer populations or `100.0` cells can require OS labels to wrap and taller
-rows; no labels or cells are silently dropped or clipped. Publication and repeats
+size. Rows remain fixed at 10 pt; labels that cannot fit fail clearly.
+No labels or cells are silently dropped or clipped. Publication and repeats
 use the existing create-only, bounded multiprocessing path.
 
 The connection-oriented TCP OS-group variant reuses this adapter and renderer
@@ -139,17 +165,18 @@ not selected for display. Otherwise rendering fails without hiding observations.
 The retained percentages are not renormalized, and an absent selected OS remains
 a `(0)` row of dashes.
 
-This variant uses the approved fixed physical cell size of 11.9145 by 9.1275 pt,
-the 3.6-by-63.8925-pt percentage bar and a 5.04-pt horizontal bar gap. The heatmap
+This variant uses a fixed physical cell size of 11.9145 by 10 pt,
+the 3.6-by-70-pt percentage bar and a capped 4-pt horizontal bar gap. The heatmap
 gap remains 0.20 inches; the y-title/OS-label layout gap remains 2 pt. No reference
 PDF or existing paper output is read to determine geometry. Names and populations
-remain on one line, with counts above 100,000 rounded to whole thousands (for
-example 162197 -> `162k`). Other population labels keep the original format.
+remain on one line, with counts from 100,000 to below one million rounded to
+whole thousands (for example 162197 -> `162k`). Both modes share the same
+population formatter and omit decimal trailing zeros.
 The 3.33-inch canvas, Linux Libertine 7 pt, palette, zero dashes, centered headings,
 30-degree strategy labels and upper unlabeled ticks are shared. Ordinary numeric
-annotations retain one decimal; the rounded `100.0` endpoint is shown as `100`
+annotations use decimal ties away from zero; the rounded `100.0` endpoint is shown as `100`
 so its text fits the approved fixed-width cells. Source values remain exact.
-The stateless OS renderer retains its existing sizing and population formatting.
+The stateless OS renderer retains its existing sizing algorithm.
 
 The probing-interval violin uses the approved **p99.9 upper limit and 256 quantile
 points**. The old p99.5 aggregate cannot recover that tail. An explicit one-off
@@ -291,10 +318,11 @@ are rotated 30 degrees. Axis titles use the full original wording: one-line
 `Detected IP-ID Selection Strategy using Fixed-Interval probing` and three-line
 `Detected IP-ID Selection` / `Strategy using RT-based` / `probing`.
 
-All heatmap cells are measured around the rendered `100.0` text box with 5 px
-padding on each side at 300 dpi (1.2 pt per side). A temporary text measurement
-keeps that geometry even if the actual matrix has no `100.0` annotation. This
-preserves 7 pt text without spreading cells over the entire page. The resulting
+Intersection cell widths are measured around the rendered `100.0` text box with
+5 px horizontal padding on each side at 300 dpi (1.2 pt per side). Heights are
+fixed at 10 pt, rather than derived from that font's text box. A temporary width
+measurement keeps the same geometry even if the actual matrix has no `100.0`
+annotation. This preserves 7 pt text without spreading cells over the entire page. The resulting
 compact content is centered on the 3.33-inch canvas, with the long x-title kept
 inside its bounds. The y-title moves up to 4 pt farther left into available
 margin, while retaining a small clearance from the page edge. Only the design
