@@ -23,6 +23,21 @@ def key_order(key):
     return THEMES.index(parts[0]) if parts[0] in THEMES else len(THEMES), metric, site
 
 
+def blank_line_group(key):
+    parts = key.split(".")
+    if key.startswith("validation."):
+        family = parts[1]
+        if family == "e2e":
+            return tuple(parts[:3])  # one condition or the shared routing block
+        if family.startswith("fi-") or family == "lossy-reordered":
+            return ("validation", "fi")
+        return ("validation", family.removesuffix("-score"))
+    if key.startswith("fig.validation."):
+        family = "fi" if parts[2].startswith("fi-") else parts[2]
+        return ("fig", "validation", family)
+    return key_order(key)[1]
+
+
 def formatted(raw, unit):
     if raw is None:
         return ""
@@ -79,7 +94,7 @@ def render(values, campaign):
                     r"\1~\2",
                     text,
                 )
-        metric = key_order(key)[1]
+        metric = blank_line_group(key)
         if previous is not None and metric != previous:
             lines.append("")
         lines.append(f"\\setval{{{key}}}{{{text}}}")
