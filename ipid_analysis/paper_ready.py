@@ -260,6 +260,10 @@ def _initialize_worker(directory):
 
 
 def worker(job: Job) -> Result:
+    if job.kind == "classifier-validation":
+        from ipid_analysis.paper_validation import worker as validation_worker
+
+        return validation_worker(job)
     from ipid_analysis.artifacts import (
         assert_complete,
         cache_current,
@@ -392,6 +396,13 @@ def run(jobs, *, workers=4, dry_run=False):
     jobs = sorted(set(jobs), key=lambda job: str(job.source))
     results, pending = [], []
     for job in jobs:
+        if job.kind == "classifier-validation":
+            from ipid_analysis.paper_validation import existing_result
+
+            previous = existing_result(job)
+            if previous:
+                results.append(previous)
+                continue
         if os.path.lexists(job.destination):
             results.append(Result(str(job.destination), "skipped-existing"))
         elif dry_run:
@@ -439,11 +450,16 @@ def main(argv=None):
     parser.add_argument(
         "--processed-root",
         type=Path,
-        help="remap a campaign histogram's recorded continental/ path to this processed root",
+        help="processed root for campaign aggregates and global validation inputs/cache",
     )
     parser.add_argument("--sites", nargs="+", choices=SITES, default=list(SITES))
     parser.add_argument("--protocols", nargs="+", choices=PROTOCOLS, default=list(PROTOCOLS))
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--validation",
+        action="store_true",
+        help="include the 12 global classifier-validation paper figures and their JSON metadata",
+    )
     parser.add_argument(
         "--prepare-probing-intervals",
         action="store_true",
@@ -453,12 +469,21 @@ def main(argv=None):
         "--dry-run", action="store_true", help="list destinations without writing anything"
     )
     args = parser.parse_args(argv)
-    if not args.paths and not args.campaign:
-        parser.error("supply --campaign or explicit report paths")
+    if not args.paths and not args.campaign and not args.validation:
+        parser.error("supply --campaign, --validation or explicit report paths")
     if args.workers < 1:
         parser.error("--workers must be positive")
     try:
+        if args.validation:
+            from ipid_analysis.paper_validation import discover as discover_validation
+
+            processed = (
+                args.processed_root or Path(__file__).resolve().parents[1] / "data/processed"
+            )
+            validation_jobs = discover_validation(args.reports_root, processed)
         jobs = [job_for(path, processed_root=args.processed_root) for path in args.paths]
+        if args.validation:
+            jobs.extend(validation_jobs)
         if args.campaign:
             jobs.extend(
                 discover(

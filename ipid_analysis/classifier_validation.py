@@ -1793,6 +1793,7 @@ def validate_classifier(
 
 @app.command()
 def main(
+    ctx: typer.Context,
     samples_per_strategy: int = typer.Option(
         DEFAULT_SAMPLES_PER_STRATEGY,
         min=1,
@@ -1825,7 +1826,69 @@ def main(
         max=1.0,
         help="selected candidate minimum-score threshold",
     ),
+    prepare_paper: bool = typer.Option(
+        False,
+        "--prepare-paper",
+        help="prepare/reuse additional immutable paper-validation aggregates; leave original validation outputs untouched",
+    ),
+    workers: int = typer.Option(8, min=1, max=32, help="bounded compute workers for --prepare-paper"),
+    reports_root: Path | None = typer.Option(
+        None, help="global reports root for --prepare-paper only"
+    ),
+    processed_root: Path | None = typer.Option(
+        None, help="global processed root for --prepare-paper only"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="inspect --prepare-paper inputs/destination without writing or computing",
+    ),
 ) -> None:
+    if prepare_paper:
+        numerical_options = (
+            "samples_per_strategy",
+            "seed",
+            "candidate_random_score",
+            "candidate_null_table_samples",
+            "candidate_null_table_seed",
+            "candidate_threshold",
+        )
+        supplied = [
+            name
+            for name in numerical_options
+            if getattr(ctx.get_parameter_source(name), "name", None) == "COMMANDLINE"
+        ]
+        if supplied:
+            raise typer.BadParameter(
+                "--prepare-paper reads populations, seed and calibration from retained metadata; "
+                "do not combine it with numerical generation options: " + ", ".join(supplied)
+            )
+        from ipid_analysis.classifier_validation_preparation import cache_manifest, prepare
+
+        repository = Path(__file__).resolve().parents[1]
+        reports = reports_root or repository / "reports"
+        processed = processed_root or repository / "data/processed"
+        try:
+            if dry_run:
+                typer.echo(
+                    f"validation manifest (prepare/reuse): {cache_manifest(reports, processed)}"
+                )
+                return
+            from ipid_analysis.runtime import validate_storage
+
+            # This additive namespace has its own preparation lock and immutable
+            # publication. Do not take the legacy exporter's analysis-writer lease.
+            validate_storage()
+            typer.echo(f"validation manifest: {prepare(reports, processed, workers=workers)}")
+        except (OSError, ValueError) as exc:
+            typer.echo(f"validation preparation: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        return
+    if (dry_run or reports_root is not None or processed_root is not None
+            or getattr(ctx.get_parameter_source("workers"), "name", None) == "COMMANDLINE"):
+        raise typer.BadParameter(
+            "--workers, --dry-run, --reports-root and --processed-root require --prepare-paper"
+        )
     start_run()
     outputs = validate_classifier(
         samples_per_strategy=samples_per_strategy,

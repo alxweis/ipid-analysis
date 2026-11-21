@@ -7,12 +7,14 @@ import math
 from pathlib import Path
 
 from paper_values.cache import verify_file
+from paper_values.validation_paper import PaperValidation
 
 
 class Validation:
     def __init__(self, root):
         self.root = Path(root) if root is not None else None
         self.load = lru_cache(maxsize=1)(self.load)
+        self.paper = PaperValidation(self.root)
 
     def load(self):
         if self.root is None:
@@ -44,6 +46,11 @@ class Validation:
         return data
 
     def read(self, spec):
+        if spec.get("stat", "").startswith("paper-"):
+            return self.paper.read(spec)
+        prepared = self.paper.legacy(spec)
+        if prepared is not None:
+            return prepared
         data = self.load()
         if data is None:
             return None, ()

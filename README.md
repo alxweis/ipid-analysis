@@ -15,6 +15,15 @@ aggregate, prepared once with `ARGS="--prepare-probing-intervals --workers 4"`.
 Original artifacts and existing paper variants are never overwritten.
 See [Paper-ready plots](docs/PAPER_PLOTS.md)
 for selection, RAM/S3 publication, the design profile and read-only repeat runs.
+Global classifier-validation figures are available with
+`make validate-classifier ARGS="--prepare-paper --workers 8"`, followed by
+`make paper-plots ARGS="--validation --workers 4"`.
+The explicit validation mode prepares missing numerical aggregates once. The
+render-only paper command then creates 12
+additional `__paper.pdf` files with matching JSON metadata. Subsequent rendering
+uses `ARGS="--validation --workers 4"`; original validation results stay untouched.
+`make paper-values` also exports the new E2E metrics and all twelve validation
+figure paths; `make paper-figures-zip` includes them automatically.
 `make paper-values` automatically prefers available sibling `__paper.pdf` paths
 for its existing `fig.*` keys, falling back to the original PDF otherwise.
 After exporting values, run `make paper-figures-zip` to bundle exactly their
