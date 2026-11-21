@@ -84,6 +84,7 @@ FIXED_CONFIG = MeasurementConfig(
     requests_per_connection=FIXED_REQUESTS_PER_CONNECTION,
     request_ip_ids=REQUEST_IP_IDS,
 )
+test_multi_max_inc = 600
 
 RT_DATASET = "base-4x4-ideal"
 BASE_REORDERED_3_DATASET = "base-4x4-reordered-3"
@@ -247,11 +248,11 @@ def _generate_multi_sequences(
         )
         mean_increments = rng.integers(
             1,
-            MULTI_MAX_INC + 1,
+            test_multi_max_inc + 1,
             size=(row_count, counter_count),
             dtype=np.int64,
         )
-        deviation_limits = np.maximum(1, MULTI_MAX_INC - mean_increments)
+        deviation_limits = np.maximum(1, test_multi_max_inc - mean_increments)
         maximum_observations = (sequence_length + counter_count - 1) // counter_count
         noise = (
             np.floor(
@@ -263,7 +264,7 @@ def _generate_multi_sequences(
         increments = np.clip(
             mean_increments[:, :, None] + noise,
             1,
-            MULTI_MAX_INC,
+            test_multi_max_inc,
         )
         counter_values = (
             starts[:, :, None] + np.cumsum(increments, axis=2, dtype=np.int64)
