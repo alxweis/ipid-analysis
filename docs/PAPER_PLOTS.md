@@ -557,8 +557,10 @@ Preparation uses a bounded NumPy thread pool (`--workers`, default 8, maximum
 32), capped by the CPU budget and a conservative available-memory estimate.
 The four shared null references (80/100 IPIDs and 1280/1600 bits) are built in
 bounded blocks and persisted once. Their arrays are read-only and shared by
-all numerical jobs. E2E classes and paired CDF conditions are evaluated in
-parallel. Parent-owned random streams and stable result ordering preserve the
+all numerical jobs. Paired CDF scores and null-table blocks are evaluated in
+parallel. E2E runs serially because its row-wise impairment loops are GIL-bound;
+classes with no actual RT-Unclassified targets skip FI impairments entirely.
+Parent-owned random streams and stable result ordering preserve the
 serial observations, null distributions and decisions exactly; worker count
 is not part of the numerical cache identity. Cached reruns do not rebuild them.
 
