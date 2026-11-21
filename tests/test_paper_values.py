@@ -843,6 +843,42 @@ class PaperValuesTest(unittest.TestCase):
         self.assertIn(r"\setval{literal}{a\textasciitilde{}b\_20ms}", text)
         self.assertNotIn("texmeta@", text)
 
+    def test_validation_tex_uses_semantic_blocks_and_preserves_values(self):
+        groups = [
+            ["validation.data.fi.sequence-length", "validation.data.seed"],
+            ["validation.e2e.ideal.accuracy-pct", "validation.e2e.ideal.class.multi.precision-pct",
+             "validation.e2e.ideal.class.multi.recall-pct", "validation.e2e.ideal.total.count"],
+            ["validation.e2e.lossy.accuracy-pct", "validation.e2e.lossy.total.count"],
+            ["validation.e2e.routing.multi.forwarded.count", "validation.e2e.routing.multi.support.count",
+             "validation.e2e.routing.random.forwarded.count"],
+            ["validation.fi-ideal.accuracy-pct", "validation.fi-lossy.accuracy-pct",
+             "validation.fi-reordered.accuracy-pct", "validation.lossy-reordered.multi-random.minimum-recall.pct"],
+            ["validation.nist.threshold", "validation.nist-score.ideal.random.rejection-pct",
+             "validation.nist-score.lossy.random.rejection-pct"],
+            ["validation.random.threshold", "validation.random-score.ideal.random.rejection-pct"],
+            ["validation.rt-ideal.accuracy-pct"],
+            ["results.af.icmp.rt-base.coverage", "results.eu.icmp.rt-base.coverage"],
+            ["results.eu.icmp.rt-base.other"],
+            ["fig.validation.e2e-ideal.confusion-matrix"],
+            ["fig.validation.fi-ideal.confusion-matrix", "fig.validation.fi-lossy-reordered.confusion-matrix",
+             "fig.validation.fi-lossy-vs-lossy-reordered.confusion-matrix"],
+            ["fig.validation.nist-score-cdf.ideal", "fig.validation.nist-score-cdf.lossy"],
+            ["fig.validation.random-score-cdf.ideal", "fig.validation.random-score-cdf.lossy"],
+        ]
+        values = {key: dict(raw=i, unit="count") for i, key in enumerate(k for g in groups for k in g)}
+        values["validation.random.threshold"] = dict(raw=4.0383019016847365e-5, unit="number")
+        values["validation.rt-ideal.accuracy-pct"] = dict(raw=None, unit="percent")
+        text = render(dict(reversed(list(values.items()))), CAMPAIGN)
+        assignments = text[text.index(r"\setval{"):].rstrip()
+        expected = [
+            "\n".join(
+                r"\setval{" + key + "}{" + ("" if values[key]["raw"] is None else str(values[key]["raw"])) + "}"
+                for key in group
+            )
+            for group in groups
+        ]
+        self.assertEqual(assignments, "\n\n".join(expected))
+
     def test_target_continent_is_not_mistaken_for_vp_scope(self):
         self.assertEqual(
             key_order("results.eu.tcp.geo.as.count")[1],

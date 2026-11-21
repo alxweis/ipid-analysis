@@ -483,8 +483,15 @@ returns stored values unchanged. Its generated fallback uses the existing
 `\todo[inline]{...}` for both an undefined key and a defined empty value. Existing
 consumer macros can override the provided fallback.
 
-Percentages retain the existing two-decimal display and escaped percent sign;
-time strings retain their recorded unit, with a nonbreaking TeX space between
+Percentages retain the existing two-decimal display and escaped percent sign.
+Validation assignments are grouped with blank lines only between related blocks:
+dataset settings, each E2E condition, routing, standalone FI results, NIST,
+RANDOM, and standalone RT. Validation figure paths are grouped as E2E, FI,
+NIST CDFs, and RANDOM CDFs. Key ordering and non-validation grouping are unchanged.
+This affects only `values.tex` whitespace; numerical values and cache identities
+are preserved.
+
+Time strings retain their recorded unit, with a nonbreaking TeX space between
 number and unit (`20ms` becomes `20~ms`, `2s` becomes `2~s`). This happens only
 when rendering `values.tex`: raw values, calculations and the derived-cache
 identity are unchanged. An existing valid `values.json` is reused without
