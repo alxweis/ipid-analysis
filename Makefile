@@ -89,6 +89,7 @@ paper-figures-zip:
 
 ## Render additional paper PDFs from existing reports/compact aggregates (never overwrite)
 ##   usage: make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"
+##   validation: make paper-plots ARGS="--validation --workers 4"
 .PHONY: paper-plots
 paper-plots:
 	$(PYTHON_INTERPRETER) -B -m ipid_analysis.paper_ready $(if $(CAMPAIGN_ID),--campaign "$(CAMPAIGN_ID)",) $(ARGS)
@@ -157,10 +158,13 @@ test:
 	$(PYTHON_INTERPRETER) -m unittest discover -s tests -v
 
 ## Validate the classifier and plot synthetic strategy diagnostics
+##   additional immutable paper inputs: make validate-classifier ARGS="--prepare-paper"
 .PHONY: validate-classifier
 validate-classifier:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.classifier_validation $(ARGS)
+ifeq ($(filter --prepare-paper,$(ARGS)),)
 	$(PYTHON_INTERPRETER) -m ipid_analysis.plot_random_structure_score_cdf $(ARGS)
+endif
 
 ## Build same-strategy ICMP/TCP/UDP target intersections
 .PHONY: build-interprotocol-targets

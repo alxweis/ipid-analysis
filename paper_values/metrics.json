@@ -437,7 +437,7 @@
       ],
       "values": {
         "flags.constant.syn-ack-relative-to-rst.gain-pct": {
-          "definition": "Relative CONSTANT-share increase: (SYN-ACK − RST) / RST",
+          "definition": "Relative CONSTANT-share increase: (SYN-ACK \u2212 RST) / RST",
           "read": {
             "stat": "flags.constant.syn-ack-relative-to-rst.gain-pct"
           }
@@ -1124,7 +1124,7 @@
       ],
       "values": {
         "sequence-length.count": {
-          "definition": "Configured requests per IP: connections × requests per connection",
+          "definition": "Configured requests per IP: connections \u00d7 requests per connection",
           "read": {
             "field": "configured-sequence-length.count"
           }
@@ -1159,7 +1159,7 @@
       ],
       "values": {
         "sequence-length.count": {
-          "definition": "Configured requests per IP: connections × requests per connection",
+          "definition": "Configured requests per IP: connections \u00d7 requests per connection",
           "read": {
             "field": "configured-sequence-length.count"
           }
@@ -3436,6 +3436,2099 @@
               "single"
             ]
           }
+        }
+      }
+    },
+    {
+      "prefix": "fig.validation",
+      "unit": "pdf-path",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "fi-lossy-vs-lossy-reordered.confusion-matrix": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-classifier-confusion-lossy-vs-lossy-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "e2e-ideal.confusion-matrix": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "e2e-classifier-confusion-ideal"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random-score-cdf.ideal": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-random-score-cdf-ideal"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random-score-cdf.lossy": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-random-score-cdf-lossy"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random-score-cdf.reordered": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-random-score-cdf-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random-score-cdf.lossy-reordered": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-random-score-cdf-lossy-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "nist-score-cdf.ideal": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-nist-score-cdf-ideal"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "nist-score-cdf.lossy": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-nist-score-cdf-lossy"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "nist-score-cdf.reordered": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-nist-score-cdf-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "nist-score-cdf.lossy-reordered": {
+          "definition": "Validated paper-ready global validation PDF, relative to the manuscript root",
+          "read": {
+            "stat": "paper-figure",
+            "figure": "mass-4x25-nist-score-cdf-lossy-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.ideal",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "accuracy-pct": {
+          "definition": "Correct final labels / all original synthetic targets, including early RT errors",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "ideal",
+            "measure": "accuracy",
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "balanced-accuracy-pct": {
+          "definition": "Mean final recall across all eight generating classes",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "ideal",
+            "measure": "balanced_accuracy",
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "unclassified.pct": {
+          "definition": "Final Unclassified targets / all original synthetic targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "ideal",
+            "measure": "unclassified-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.ideal",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "total.count": {
+          "definition": "All original synthetic targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "ideal",
+            "measure": "total"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "correct.count": {
+          "definition": "Correct final labels",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "ideal",
+            "measure": "correct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "unclassified.count": {
+          "definition": "Final Unclassified targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "ideal",
+            "measure": "unclassified_count"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.ideal.class",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "reflection.recall-pct": {
+          "definition": "Final E2E recall for generating class REFLECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "recall_by_class",
+              "REFLECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "reflection.precision-pct": {
+          "definition": "Final E2E precision for generating class REFLECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "precision_by_class",
+              "REFLECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "constant.recall-pct": {
+          "definition": "Final E2E recall for generating class CONSTANT",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "recall_by_class",
+              "CONSTANT"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "constant.precision-pct": {
+          "definition": "Final E2E precision for generating class CONSTANT",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "precision_by_class",
+              "CONSTANT"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "single.recall-pct": {
+          "definition": "Final E2E recall for generating class SINGLE",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "recall_by_class",
+              "SINGLE"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "single.precision-pct": {
+          "definition": "Final E2E precision for generating class SINGLE",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "precision_by_class",
+              "SINGLE"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-connection.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_CONNECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "recall_by_class",
+              "PER_CONNECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-connection.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_CONNECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "precision_by_class",
+              "PER_CONNECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-destination.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_DESTINATION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "recall_by_class",
+              "PER_DESTINATION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-destination.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_DESTINATION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "precision_by_class",
+              "PER_DESTINATION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-bucket.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_BUCKET",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "recall_by_class",
+              "PER_BUCKET"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-bucket.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_BUCKET",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "precision_by_class",
+              "PER_BUCKET"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "multi.recall-pct": {
+          "definition": "Final E2E recall for generating class MULTI",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "recall_by_class",
+              "MULTI"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "multi.precision-pct": {
+          "definition": "Final E2E precision for generating class MULTI",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "precision_by_class",
+              "MULTI"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random.recall-pct": {
+          "definition": "Final E2E recall for generating class RANDOM",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "recall_by_class",
+              "RANDOM"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random.precision-pct": {
+          "definition": "Final E2E precision for generating class RANDOM",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "ideal",
+              "precision_by_class",
+              "RANDOM"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.random-score.ideal",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.rejection-pct": {
+          "definition": "True synthetic RANDOM sequences rejected by the isolated compatibility score, before classifier priority rules",
+          "read": {
+            "stat": "paper-rejection",
+            "figure": "mass-4x25-random-score-cdf-ideal"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.nist-score.ideal",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.rejection-pct": {
+          "definition": "True synthetic RANDOM sequences rejected by the isolated compatibility score, before classifier priority rules",
+          "read": {
+            "stat": "paper-rejection",
+            "figure": "mass-4x25-nist-score-cdf-ideal"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.lossy",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "accuracy-pct": {
+          "definition": "Correct final labels / all original synthetic targets, including early RT errors",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy",
+            "measure": "accuracy",
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "balanced-accuracy-pct": {
+          "definition": "Mean final recall across all eight generating classes",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy",
+            "measure": "balanced_accuracy",
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "unclassified.pct": {
+          "definition": "Final Unclassified targets / all original synthetic targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy",
+            "measure": "unclassified-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.lossy",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "total.count": {
+          "definition": "All original synthetic targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy",
+            "measure": "total"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "correct.count": {
+          "definition": "Correct final labels",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy",
+            "measure": "correct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "unclassified.count": {
+          "definition": "Final Unclassified targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy",
+            "measure": "unclassified_count"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.lossy.class",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "reflection.recall-pct": {
+          "definition": "Final E2E recall for generating class REFLECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "recall_by_class",
+              "REFLECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "reflection.precision-pct": {
+          "definition": "Final E2E precision for generating class REFLECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "precision_by_class",
+              "REFLECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "constant.recall-pct": {
+          "definition": "Final E2E recall for generating class CONSTANT",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "recall_by_class",
+              "CONSTANT"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "constant.precision-pct": {
+          "definition": "Final E2E precision for generating class CONSTANT",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "precision_by_class",
+              "CONSTANT"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "single.recall-pct": {
+          "definition": "Final E2E recall for generating class SINGLE",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "recall_by_class",
+              "SINGLE"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "single.precision-pct": {
+          "definition": "Final E2E precision for generating class SINGLE",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "precision_by_class",
+              "SINGLE"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-connection.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_CONNECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "recall_by_class",
+              "PER_CONNECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-connection.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_CONNECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "precision_by_class",
+              "PER_CONNECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-destination.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_DESTINATION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "recall_by_class",
+              "PER_DESTINATION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-destination.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_DESTINATION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "precision_by_class",
+              "PER_DESTINATION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-bucket.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_BUCKET",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "recall_by_class",
+              "PER_BUCKET"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-bucket.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_BUCKET",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "precision_by_class",
+              "PER_BUCKET"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "multi.recall-pct": {
+          "definition": "Final E2E recall for generating class MULTI",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "recall_by_class",
+              "MULTI"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "multi.precision-pct": {
+          "definition": "Final E2E precision for generating class MULTI",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "precision_by_class",
+              "MULTI"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random.recall-pct": {
+          "definition": "Final E2E recall for generating class RANDOM",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "recall_by_class",
+              "RANDOM"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random.precision-pct": {
+          "definition": "Final E2E precision for generating class RANDOM",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy",
+              "precision_by_class",
+              "RANDOM"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.random-score.lossy",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.rejection-pct": {
+          "definition": "True synthetic RANDOM sequences rejected by the isolated compatibility score, before classifier priority rules",
+          "read": {
+            "stat": "paper-rejection",
+            "figure": "mass-4x25-random-score-cdf-lossy"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.nist-score.lossy",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.rejection-pct": {
+          "definition": "True synthetic RANDOM sequences rejected by the isolated compatibility score, before classifier priority rules",
+          "read": {
+            "stat": "paper-rejection",
+            "figure": "mass-4x25-nist-score-cdf-lossy"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.reordered",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "accuracy-pct": {
+          "definition": "Correct final labels / all original synthetic targets, including early RT errors",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "reordered",
+            "measure": "accuracy",
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "balanced-accuracy-pct": {
+          "definition": "Mean final recall across all eight generating classes",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "reordered",
+            "measure": "balanced_accuracy",
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "unclassified.pct": {
+          "definition": "Final Unclassified targets / all original synthetic targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "reordered",
+            "measure": "unclassified-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.reordered",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "total.count": {
+          "definition": "All original synthetic targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "reordered",
+            "measure": "total"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "correct.count": {
+          "definition": "Correct final labels",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "reordered",
+            "measure": "correct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "unclassified.count": {
+          "definition": "Final Unclassified targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "reordered",
+            "measure": "unclassified_count"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.reordered.class",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "reflection.recall-pct": {
+          "definition": "Final E2E recall for generating class REFLECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "recall_by_class",
+              "REFLECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "reflection.precision-pct": {
+          "definition": "Final E2E precision for generating class REFLECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "precision_by_class",
+              "REFLECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "constant.recall-pct": {
+          "definition": "Final E2E recall for generating class CONSTANT",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "recall_by_class",
+              "CONSTANT"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "constant.precision-pct": {
+          "definition": "Final E2E precision for generating class CONSTANT",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "precision_by_class",
+              "CONSTANT"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "single.recall-pct": {
+          "definition": "Final E2E recall for generating class SINGLE",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "recall_by_class",
+              "SINGLE"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "single.precision-pct": {
+          "definition": "Final E2E precision for generating class SINGLE",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "precision_by_class",
+              "SINGLE"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-connection.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_CONNECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "recall_by_class",
+              "PER_CONNECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-connection.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_CONNECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "precision_by_class",
+              "PER_CONNECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-destination.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_DESTINATION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "recall_by_class",
+              "PER_DESTINATION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-destination.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_DESTINATION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "precision_by_class",
+              "PER_DESTINATION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-bucket.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_BUCKET",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "recall_by_class",
+              "PER_BUCKET"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-bucket.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_BUCKET",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "precision_by_class",
+              "PER_BUCKET"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "multi.recall-pct": {
+          "definition": "Final E2E recall for generating class MULTI",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "recall_by_class",
+              "MULTI"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "multi.precision-pct": {
+          "definition": "Final E2E precision for generating class MULTI",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "precision_by_class",
+              "MULTI"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random.recall-pct": {
+          "definition": "Final E2E recall for generating class RANDOM",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "recall_by_class",
+              "RANDOM"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random.precision-pct": {
+          "definition": "Final E2E precision for generating class RANDOM",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "reordered",
+              "precision_by_class",
+              "RANDOM"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.random-score.reordered",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.rejection-pct": {
+          "definition": "True synthetic RANDOM sequences rejected by the isolated compatibility score, before classifier priority rules",
+          "read": {
+            "stat": "paper-rejection",
+            "figure": "mass-4x25-random-score-cdf-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.nist-score.reordered",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.rejection-pct": {
+          "definition": "True synthetic RANDOM sequences rejected by the isolated compatibility score, before classifier priority rules",
+          "read": {
+            "stat": "paper-rejection",
+            "figure": "mass-4x25-nist-score-cdf-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.lossy-reordered",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "accuracy-pct": {
+          "definition": "Correct final labels / all original synthetic targets, including early RT errors",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy-reordered",
+            "measure": "accuracy",
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "balanced-accuracy-pct": {
+          "definition": "Mean final recall across all eight generating classes",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy-reordered",
+            "measure": "balanced_accuracy",
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "unclassified.pct": {
+          "definition": "Final Unclassified targets / all original synthetic targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy-reordered",
+            "measure": "unclassified-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.lossy-reordered",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "total.count": {
+          "definition": "All original synthetic targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy-reordered",
+            "measure": "total"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "correct.count": {
+          "definition": "Correct final labels",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy-reordered",
+            "measure": "correct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "unclassified.count": {
+          "definition": "Final Unclassified targets",
+          "read": {
+            "stat": "paper-e2e",
+            "figure": "e2e-classifier-confusion-ideal",
+            "condition": "lossy-reordered",
+            "measure": "unclassified_count"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.lossy-reordered.class",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "reflection.recall-pct": {
+          "definition": "Final E2E recall for generating class REFLECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "recall_by_class",
+              "REFLECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "reflection.precision-pct": {
+          "definition": "Final E2E precision for generating class REFLECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "precision_by_class",
+              "REFLECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "constant.recall-pct": {
+          "definition": "Final E2E recall for generating class CONSTANT",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "recall_by_class",
+              "CONSTANT"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "constant.precision-pct": {
+          "definition": "Final E2E precision for generating class CONSTANT",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "precision_by_class",
+              "CONSTANT"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "single.recall-pct": {
+          "definition": "Final E2E recall for generating class SINGLE",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "recall_by_class",
+              "SINGLE"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "single.precision-pct": {
+          "definition": "Final E2E precision for generating class SINGLE",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "precision_by_class",
+              "SINGLE"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-connection.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_CONNECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "recall_by_class",
+              "PER_CONNECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-connection.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_CONNECTION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "precision_by_class",
+              "PER_CONNECTION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-destination.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_DESTINATION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "recall_by_class",
+              "PER_DESTINATION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-destination.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_DESTINATION",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "precision_by_class",
+              "PER_DESTINATION"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-bucket.recall-pct": {
+          "definition": "Final E2E recall for generating class PER_BUCKET",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "recall_by_class",
+              "PER_BUCKET"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "per-bucket.precision-pct": {
+          "definition": "Final E2E precision for generating class PER_BUCKET",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "precision_by_class",
+              "PER_BUCKET"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "multi.recall-pct": {
+          "definition": "Final E2E recall for generating class MULTI",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "recall_by_class",
+              "MULTI"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "multi.precision-pct": {
+          "definition": "Final E2E precision for generating class MULTI",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "precision_by_class",
+              "MULTI"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random.recall-pct": {
+          "definition": "Final E2E recall for generating class RANDOM",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "recall_by_class",
+              "RANDOM"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "random.precision-pct": {
+          "definition": "Final E2E precision for generating class RANDOM",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "e2e",
+              "lossy-reordered",
+              "precision_by_class",
+              "RANDOM"
+            ],
+            "factor": 100
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.random-score.lossy-reordered",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.rejection-pct": {
+          "definition": "True synthetic RANDOM sequences rejected by the isolated compatibility score, before classifier priority rules",
+          "read": {
+            "stat": "paper-rejection",
+            "figure": "mass-4x25-random-score-cdf-lossy-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.nist-score.lossy-reordered",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.rejection-pct": {
+          "definition": "True synthetic RANDOM sequences rejected by the isolated compatibility score, before classifier priority rules",
+          "read": {
+            "stat": "paper-rejection",
+            "figure": "mass-4x25-nist-score-cdf-lossy-reordered"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.reflection",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "support.count": {
+          "definition": "Original targets of this generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "REFLECTION",
+            "measure": "support"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "forwarded.count": {
+          "definition": "Targets actually labelled RT Unclassified and sent to FI",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "REFLECTION",
+            "measure": "forwarded_to_fi"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.reflection",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "forwarded.pct": {
+          "definition": "Actual RT-to-FI forwarding fraction within generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "REFLECTION",
+            "measure": "forwarded-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.constant",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "support.count": {
+          "definition": "Original targets of this generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "CONSTANT",
+            "measure": "support"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "forwarded.count": {
+          "definition": "Targets actually labelled RT Unclassified and sent to FI",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "CONSTANT",
+            "measure": "forwarded_to_fi"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.constant",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "forwarded.pct": {
+          "definition": "Actual RT-to-FI forwarding fraction within generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "CONSTANT",
+            "measure": "forwarded-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.single",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "support.count": {
+          "definition": "Original targets of this generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "SINGLE",
+            "measure": "support"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "forwarded.count": {
+          "definition": "Targets actually labelled RT Unclassified and sent to FI",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "SINGLE",
+            "measure": "forwarded_to_fi"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.single",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "forwarded.pct": {
+          "definition": "Actual RT-to-FI forwarding fraction within generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "SINGLE",
+            "measure": "forwarded-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.per-connection",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "support.count": {
+          "definition": "Original targets of this generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_CONNECTION",
+            "measure": "support"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "forwarded.count": {
+          "definition": "Targets actually labelled RT Unclassified and sent to FI",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_CONNECTION",
+            "measure": "forwarded_to_fi"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.per-connection",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "forwarded.pct": {
+          "definition": "Actual RT-to-FI forwarding fraction within generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_CONNECTION",
+            "measure": "forwarded-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.per-destination",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "support.count": {
+          "definition": "Original targets of this generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_DESTINATION",
+            "measure": "support"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "forwarded.count": {
+          "definition": "Targets actually labelled RT Unclassified and sent to FI",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_DESTINATION",
+            "measure": "forwarded_to_fi"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.per-destination",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "forwarded.pct": {
+          "definition": "Actual RT-to-FI forwarding fraction within generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_DESTINATION",
+            "measure": "forwarded-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.per-bucket",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "support.count": {
+          "definition": "Original targets of this generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_BUCKET",
+            "measure": "support"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "forwarded.count": {
+          "definition": "Targets actually labelled RT Unclassified and sent to FI",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_BUCKET",
+            "measure": "forwarded_to_fi"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.per-bucket",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "forwarded.pct": {
+          "definition": "Actual RT-to-FI forwarding fraction within generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "PER_BUCKET",
+            "measure": "forwarded-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.multi",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "support.count": {
+          "definition": "Original targets of this generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "MULTI",
+            "measure": "support"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "forwarded.count": {
+          "definition": "Targets actually labelled RT Unclassified and sent to FI",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "MULTI",
+            "measure": "forwarded_to_fi"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.multi",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "forwarded.pct": {
+          "definition": "Actual RT-to-FI forwarding fraction within generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "MULTI",
+            "measure": "forwarded-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.random",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "support.count": {
+          "definition": "Original targets of this generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "RANDOM",
+            "measure": "support"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "forwarded.count": {
+          "definition": "Targets actually labelled RT Unclassified and sent to FI",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "RANDOM",
+            "measure": "forwarded_to_fi"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.e2e.routing.random",
+      "unit": "percent",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "forwarded.pct": {
+          "definition": "Actual RT-to-FI forwarding fraction within generating class",
+          "read": {
+            "stat": "paper-routing",
+            "figure": "e2e-classifier-confusion-ideal",
+            "class": "RANDOM",
+            "measure": "forwarded-pct"
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation.data",
+      "unit": "count",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "nontrivial-samples-per-class.count": {
+          "definition": "Synthetic targets per nontrivial class",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "validation",
+              "samples_per_nontrivial_class"
+            ]
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "trivial-samples-per-class.count": {
+          "definition": "Synthetic targets per Reflection/Constant class",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "validation",
+              "trivial_samples_per_class"
+            ]
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "seed": {
+          "definition": "Base synthetic data seed",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "validation",
+              "seed"
+            ]
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "null-samples.count": {
+          "definition": "Reference null simulations per sequence length",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "validation",
+              "null_samples"
+            ]
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "validation",
+      "unit": "number",
+      "sources": [
+        {
+          "reader": "validation"
+        }
+      ],
+      "values": {
+        "random.threshold": {
+          "definition": "Frozen production RANDOM compatibility cutoff",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "validation",
+              "random_threshold"
+            ]
+          },
+          "reason": "requires verified production-profile validation paper metadata"
+        },
+        "nist.threshold": {
+          "definition": "Frozen adapted-NIST combined compatibility cutoff",
+          "read": {
+            "stat": "paper-field",
+            "figure": "e2e-classifier-confusion-ideal",
+            "field": [
+              "validation",
+              "nist_threshold"
+            ]
+          },
+          "reason": "requires verified production-profile validation paper metadata"
         }
       }
     }

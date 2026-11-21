@@ -314,31 +314,64 @@ there are no `reader: "missing"` definitions in the selected catalog.
 
 ### Synthetic validation
 
-After updating the checkout, regenerate the current production-profile validation:
+Prepare the additional immutable validation inputs and render the approved
+paper figures before exporting values:
 
 ```sh
-IPID_ANALYSIS_SCOPE= make validate-classifier
+make validate-classifier ARGS="--prepare-paper --workers 8"
+make paper-plots ARGS="--validation --workers 4"
 make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
 ```
 
-The first command additionally writes
-`reports/figures/classifier-validation/classifier-validation-summary.json`.
-It includes the actual Base/Mass sequence lengths and impairment settings,
-the existing confusion metrics for all five needed scenarios, classifier/code
-identity and hashes for the two selected PDFs. It records the same metrics used
-by the figures, without rerunning classification for the exporter.
+The exporter reads only the small `__paper.json` sidecars and referenced PDFs.
+It does not import classification/rendering code, open raw Parquet, generate
+sequences or rerun statistical tests. All twelve validation figures enter the
+same paper-relative `reports/figures/classifier-validation/...` paths, including
+the NIST subdirectory. The ZIP command therefore bundles them without a second
+selection mechanism.
 
-The ten validation keys and two PDF keys read this summary automatically.
-Accuracy fractions are converted to percentages once. MULTI misclassification
-uses `(support - correct) / support`; minimum recall is the minimum MULTI/RANDOM
-class recall across the separate 20% Lossy and 20% Reordered scenarios. It does
-not silently substitute the combined loss-and-reordering scenario.
+New public key families include:
 
-Legacy/custom-null-table validation results and reports from different classifier
-or generator code are rejected. Use the normal production defaults for the paper;
-the documented small smoke run is not an exportable production-profile result.
-A missing summary stays empty until validation is run. Existing NIST diagnostics
-remain a separate command and are not substituted for older paper figures.
+| Key | Meaning |
+| --- | --- |
+| `validation.e2e.<condition>.accuracy-pct` | Correct final labels / all original targets |
+| `validation.e2e.<condition>.balanced-accuracy-pct` | Mean recall across all eight true classes |
+| `validation.e2e.<condition>.total.count`, `.correct.count`, `.unclassified.count`, `.unclassified.pct` | Exact E2E population and final Unclassified outcomes |
+| `validation.e2e.<condition>.class.<class>.recall-pct`, `.precision-pct` | Final per-class metrics |
+| `validation.e2e.routing.<class>.support.count`, `.forwarded.count`, `.forwarded.pct` | Actual RT-Unclassified handoff to FI |
+| `validation.random-score.<condition>.random.rejection-pct` | True RANDOM rejected by the isolated production compatibility score |
+| `validation.nist-score.<condition>.random.rejection-pct` | Corresponding adapted NIST rejection rate |
+| `validation.random.threshold`, `validation.nist.threshold` | Frozen score cutoffs |
+| `validation.data.nontrivial-samples-per-class.count`, `.trivial-samples-per-class.count`, `.seed`, `.null-samples.count` | Numerical population and reproducibility settings |
+| `fig.validation.e2e-ideal.confusion-matrix` | Two-stage ideal E2E paper figure |
+| `fig.validation.fi-lossy-vs-lossy-reordered.confusion-matrix` | Additional paired Mass paper figure |
+| `fig.validation.random-score-cdf.<condition>`, `fig.validation.nist-score-cdf.<condition>` | All eight CDFs |
+
+Conditions are `ideal`, `lossy`, `reordered`, `lossy-reordered`; class names use
+lowercase hyphens (e.g. `per-bucket`). Accuracy/recall/precision fractions are
+converted to percentages exactly once. E2E denominators retain early RT errors
+and final Unclassified targets. Isolated score rejection is not full-classifier
+error or proof of a random generator. Precision follows the stored zero value
+when a class has no predictions.
+
+The existing ten validation numeric keys and two figure keys are retained.
+They prefer verified new sidecars and otherwise retain the original
+`classifier-validation-summary.json` reader. The historical public key
+`fig.validation.fi-lossy-reordered.confusion-matrix` continues to mean the
+**lossy-vs-reordered** figure. The new **lossy-vs-lossy-reordered** figure has its
+own explicit key. Legacy RT-only accuracy still concerns the six supported RT
+classes; actual forwarding of MULTI/RANDOM is not counted as an error in that
+legacy key. With new sidecars it uses those six classes of the paired E2E RT
+cohort, with source attribution pointing to the E2E sidecar.
+
+New sidecars are checked against current model/code fingerprints, production
+sample sizes, unchanged cutoffs and exact confusion/routing counts. Small smoke
+runs, altered code, invalid denominators or inconsistent accuracy fail strict
+export and preserve the previous `values.tex`/`values.json`. A missing report
+leaves its values empty. The full historical `make validate-classifier` exporter
+without `--prepare-paper` retains its original behavior and is not required by
+this additive workflow.
 
 ### Matched FI/RT and TCP populations
 

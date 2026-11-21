@@ -459,3 +459,148 @@ timings, not live-S3 performance or scientific results for eighteen VP/protocols
 figure and falls back to its original PDF otherwise. The existing `fig.*` keys
 stay unchanged. Rerun the export after generating paper plots to refresh the
 paths; no `--recompute` is needed. Neither command edits manuscript files.
+
+## Global classifier-validation paper figures
+
+These figures are independent of the geographic campaign and are opt-in:
+
+```sh
+# Selection only; no cache preparation, calibration or artifact writes.
+make paper-plots ARGS="--validation --dry-run"
+
+# First run: prepare missing numerical aggregates in the validation workflow.
+make validate-classifier ARGS="--prepare-paper --dry-run"
+make validate-classifier ARGS="--prepare-paper --workers 8"
+
+# Render the prepared results with four workers.
+make paper-plots ARGS="--validation --workers 4"
+
+# Later runs: render only from persisted aggregates; existing outputs skip.
+make paper-plots ARGS="--validation --workers 4"
+```
+
+`--validation` can also be combined with `CAMPAIGN_ID=...` to select both families.
+`make validate-classifier ARGS="--prepare-paper"` is a dedicated create-only
+mode: it returns before the original validation exporter, and Make skips the
+legacy Random-CDF exporter in this mode. It uses the populations, seed and
+calibration in retained validation metadata; numerical generation overrides are
+rejected. Its `--dry-run` inspects the input identity and destination without
+computing or writing. `--reports-root` and `--processed-root` are available in
+this mode for input/cache remapping. The historical invocation without
+`--prepare-paper` retains its original behavior.
+
+`make paper-plots ARGS="--validation --workers 4"` only renders prepared
+validation inputs. There is no preparation flag for validation in the renderer.
+Missing aggregates produce a clear error pointing to the validation command
+rather than silently running expensive calculations. No separate workflow worker is
+started. Rendering uses the existing bounded process pool and storage transport.
+
+The new outputs, with matching `__paper.json` sidecars, are:
+
+- `mass-4x25-classifier-confusion-ideal__paper.pdf`
+- `mass-4x25-classifier-confusion-lossy-vs-lossy-reordered__paper.pdf`
+- `mass-4x25-classifier-confusion-lossy-vs-reordered__paper.pdf`
+- `mass-4x25-random-score-cdf-{ideal,lossy,reordered,lossy-reordered}__paper.pdf`
+- `nist-baseline/mass-4x25-nist-score-cdf-{ideal,lossy,reordered,lossy-reordered}__paper.pdf`
+- `e2e-classifier-confusion-ideal__paper.pdf`
+
+All are under `reports/figures/classifier-validation/`, next to the corresponding
+validation figure families. The sidecars record exact confusion counts/supports,
+normalization, source fingerprints, numerical model/calibration, thresholds,
+seeds and layout. E2E metrics for **all four** conditions are retained in the
+E2E sidecar, although only the ideal two-stage view is plotted. CDF sidecars
+reference exact score/count Parquet histograms, with per-class support and
+threshold summaries. `make paper-values` exports all twelve global figure paths
+plus E2E accuracy/routing and score metadata; the existing ZIP command includes
+the referenced PDFs automatically. Existing validation keys retain their meaning
+and prefer verified paper sidecars, falling back to the original summary when
+new sidecars are absent.
+
+### One-time preparation and scientific scope
+
+Required existing inputs are:
+
+- `data/processed/classifier-validation/synthetic-classifier-validation.pq`
+- `reports/figures/classifier-validation/out-of-scope-classifier-rejection.json`
+
+The latter supplies the original generator/classifier version, populations,
+request pattern and production calibration. Mismatched versions, calibration,
+or Parquet populations fail explicitly. Mass counts project only the retained
+`DATASET`, `EXPECTED_STRATEGY` and `DETECTED_STRATEGY` columns; sequence columns
+and old PDF pixels are not read. Original Mass results are reused exactly.
+
+The existing Mass counts do not contain target-paired RT/FI decisions. Therefore
+the additional E2E experiment is prepared once with the existing production
+classifiers and generators. Every generating class enters RT; only actual
+RT-`UNCLASSIFIED` targets enter FI. Early RT errors remain errors. A shared latent
+target trace provides **16 RT observations followed by 100 new FI observations**;
+FI does not reuse RT samples. Reflection's request pattern resets at the phase
+boundary. Multi's counters are balanced over the complete 116-position trace,
+not separately within each phase. RT observations are clean for all eight
+classes. FI uses ideal, 20% loss, 20% reordering, or loss plus reordering.
+All 20 lost positions are retained in the loss mask; reordering of the remaining
+samples follows the existing impairment model. The lower heatmap normalizes
+within each actually forwarded true class; overall E2E accuracy uses all original
+targets. This is synthetic **classifier** accuracy, without a network RTT,
+timeout, scheduler, fresh-connection-identity, middlebox or drift model.
+
+For the CDF comparison, both methods use **identical newly generated Mass
+observations, loss masks and reorder permutations**. This creates a paired
+comparison rather than assuming older independently generated NIST/Random
+exports used identical inputs. Both scoring implementations are reused. The
+production RANDOM calibration and adapted short-sequence NIST calibration use
+one million null samples; NIST is an adapted baseline, not NIST certification.
+The first run may take minutes or longer depending on original population and
+CPU/storage speed. No runtime guarantee is implied.
+
+Preparation uses a bounded NumPy thread pool (`--workers`, default 8, maximum
+32), capped by the CPU budget and a conservative available-memory estimate.
+The four shared null references (80/100 IPIDs and 1280/1600 bits) are built in
+bounded blocks and persisted once. Their arrays are read-only and shared by
+all numerical jobs. E2E classes and paired CDF conditions are evaluated in
+parallel. Parent-owned random streams and stable result ordering preserve the
+serial observations, null distributions and decisions exactly; worker count
+is not part of the numerical cache identity. Cached reruns do not rebuild them.
+
+On an otherwise idle 24-vCPU / 256-GiB VM, for example:
+
+```sh
+export IPID_ANALYSIS_THREADS=24
+make validate-classifier ARGS="--prepare-paper --workers 16"
+make paper-plots ARGS="--validation --workers 8"
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
+```
+
+PDF rendering still uses the existing separate process pool. More workers do
+not guarantee linear speedup; memory bandwidth and S3 I/O may become limiting.
+
+Prepared data reside in a content-addressed
+`data/processed/classifier-validation/paper-ready/<identity>/` directory. Its
+manifest binds original source fingerprints, model code and all components.
+Style changes do not invalidate numerical aggregates. Normal rendering reads
+only that manifest and compact prepared inputs; it never regenerates sequences,
+reclassifies original targets or recalibrates tests. Repeating preparation checks
+and reuses the persisted components. Original inputs must remain available for
+source identity checks. `--reports-root`/`--processed-root` can remap both roots.
+
+### Layout and preservation
+
+All figures use 3.33-inch width and Linux Libertine at 7 pt, shared strategy
+colors, percentage colorbar and decimal rounding. Heatmap rows are 10 pt and the
+colorbar is 70 pt high. The ideal Mass view has no heading; paired Mass views use
+“Lossy Dataset”, “Reordered Dataset” and “Lossy & Reordered Dataset”. E2E retains
+the approved RT-based/Fixed-Interval headings, 14.4-pt stage gap and shaded dashed
+connector from RT-Unclassified to the FI frame. Its bottom x labels are shared.
+Both CDF families use the x-axis label `Randomness Test Score`.
+CDF curves are solid, circles have white edges, and the dashed dark-gray
+threshold label is above all curves. Circle spacing is 36 pt along the displayed
+curve. The Random CDF retains its categorical `<10⁻⁶` panel; only its 100% circles
+are offset sideways, never the statistical curves.
+
+All cache, PDF and JSON publications are **create-only** and use existing
+completion receipts/native S3 transport. Existing ordinary validation PDFs,
+JSONs and Parquet files are never changed or deleted. Existing complete paper
+PDF/JSON pairs skip. An incomplete pair or orphan receipt fails and is preserved
+for inspection; it is never automatically repaired or overwritten. Publishing a revised design requires an explicit separate workflow; normal
+rendering never replaces an existing PDF/JSON pair.
