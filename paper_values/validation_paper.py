@@ -25,6 +25,13 @@ MASS = {
     "reordered": "mass-4x25-classifier-confusion-lossy-vs-reordered",
     "lossy-reordered": "mass-4x25-classifier-confusion-lossy-vs-lossy-reordered",
 }
+# A condition's canonical source above is not an inverse panel specification:
+# lossy occurs in both paired figures.
+MASS_CONDITIONS = {
+    "mass-4x25-classifier-confusion-ideal": ("ideal",),
+    "mass-4x25-classifier-confusion-lossy-vs-lossy-reordered": ("lossy", "lossy-reordered"),
+    "mass-4x25-classifier-confusion-lossy-vs-reordered": ("lossy", "reordered"),
+}
 E2E = "e2e-classifier-confusion-ideal"
 FIGURES = {
     *MASS.values(),
@@ -147,7 +154,7 @@ class PaperValidation:
         ):
             raise ValueError("invalid validation data/reference seed metadata")
         if "panels" in value:
-            expected_conditions = {c for c, stem in MASS.items() if stem == figure}
+            expected_conditions = set(MASS_CONDITIONS[figure])
             conditions = [panel["condition"] for panel in value["panels"]]
             if (
                 len(conditions) != len(expected_conditions)

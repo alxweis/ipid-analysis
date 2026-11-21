@@ -308,6 +308,17 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(row, [0, 1, 1, 0, 0, 0, 1, 1, 0])
         self.assertEqual(result["e2e_routing"]["REFLECTION"]["forwarded_to_fi"], 2)
 
+    def test_retained_rt_class_never_generates_fi_impairments(self):
+        rt = np.ones((4, 16), dtype=np.uint16)
+        fi = np.ones((4, 100), dtype=np.uint16)
+        with (
+            patch.object(data, "condition_inputs", side_effect=AssertionError("no FI work")),
+            patch.object(data, "_mass_codes", side_effect=AssertionError("no FI classifier")),
+        ):
+            _, counts, routing, final = data._e2e_class((1, "CONSTANT", rt, fi, 42, None))
+        self.assertEqual(routing["forwarded_to_fi"], 0)
+        self.assertEqual(final, {c: counts for c in data.CONDITIONS})
+
     def test_disjoint_phase_geometry_and_reflection_reset(self):
         cohorts = dict((k, (rt, fi)) for k, rt, fi in data.paired_sequences(10, 42))
         for k, (rt, fi) in cohorts.items():
@@ -469,6 +480,7 @@ class ValidationTest(unittest.TestCase):
             manifest = data.cache_manifest(self.reports, self.processed)
             self.assertTrue(manifest.is_file())
             self.assertEqual(e2e.call_count, 1)
+            self.assertEqual(e2e.call_args.kwargs, {})  # E2E is not sent to the GIL-bound pool.
         stored = {p: stamp(p) for p in manifest.parent.rglob("*") if p.is_file()}
         with patch.object(
             data, "create_candidate_null_tables", side_effect=AssertionError("cache hit")

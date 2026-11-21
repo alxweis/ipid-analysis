@@ -365,6 +365,12 @@ classes; actual forwarding of MULTI/RANDOM is not counted as an error in that
 legacy key. With new sidecars it uses those six classes of the paired E2E RT
 cohort, with source attribution pointing to the E2E sidecar.
 
+The known pre-#168 summary remains readable after the CLI-only extension.
+Compatibility requires its exact historical generator hash, an unchanged
+generator AST excluding only `main`, and exact hashes for all four other
+classifier modules. Unknown generators and numerical changes still fail;
+the exporter never rewrites or re-stamps the old summary.
+
 New sidecars are checked against current model/code fingerprints, production
 sample sizes, unchanged cutoffs and exact confusion/routing counts. Small smoke
 runs, altered code, invalid denominators or inconsistent accuracy fail strict

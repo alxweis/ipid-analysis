@@ -293,6 +293,10 @@ def _e2e_class(job):
         "forwarded_to_fi": int(gate.sum()),
         "retained_rt_counts": _code_counts(codes[~gate]),
     }
+    if not gate.any():
+        # This class never reaches FI. Do not generate four unused impairment
+        # variants; class-local RNG streams keep all other outcomes unchanged.
+        return k, rt_counts, routing, {c: rt_counts.copy() for c in CONDITIONS}
     rng = np.random.default_rng(np.random.SeedSequence([seed, 999, index]))
     rrng = np.random.default_rng(np.random.SeedSequence([seed, 1000, index]))
     for c, (values, missing) in condition_inputs(fi, rng, rrng).items():
@@ -462,7 +466,10 @@ def prepare(reports_root, processed_root, *, workers=8):
             if not e2e_path.exists():
                 _publish(
                     e2e_path,
-                    e2e_metrics(samples, seed, tables, pool=pool, workers=count),
+                    # Row-wise impairment generation is GIL-bound. Threads
+                    # slow this stage down; reserve the pool for NumPy/null/CDF
+                    # work, and retain the same serial seeds and decisions.
+                    e2e_metrics(samples, seed, tables),
                     inputs,
                     parameters,
                 )

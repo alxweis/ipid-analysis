@@ -1,8 +1,10 @@
 """Export verified validation sidecars and include all twelve PDFs in the ZIP."""
 
+from contextlib import ExitStack
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -97,8 +99,15 @@ class PaperValidationValuesTest(unittest.TestCase):
                 payload = {
                     "panels": [
                         {"condition": c, "metrics": self.outcomes[c]}
-                        for c, stem in MASS.items()
-                        if stem == figure
+                        for c in {
+                            "mass-4x25-classifier-confusion-ideal": ("ideal",),
+                            "mass-4x25-classifier-confusion-lossy-vs-lossy-reordered": (
+                                "lossy", "lossy-reordered"
+                            ),
+                            "mass-4x25-classifier-confusion-lossy-vs-reordered": (
+                                "lossy", "reordered"
+                            ),
+                        }[figure]
                     ]
                 }
             else:
@@ -198,6 +207,92 @@ class PaperValidationValuesTest(unittest.TestCase):
         values = self.fixture.run(strict=True)["values"]
         self.assertIsNotNone(values["validation.fi-ideal.accuracy-pct"]["raw"])
         self.assertEqual(old.read_bytes(), before)
+
+    def test_real_mass_renderer_exports_both_panels_and_all_figures(self):
+        from ipid_analysis import artifacts, paper_ready, paper_validation
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, {
+                "IPID_ANALYSIS_STORAGE_MODE": "local",
+                "IPID_ANALYSIS_SCRATCH_STORAGE": "disk",
+                "IPID_ANALYSIS_TMP_DIR": str(self.root / "scratch"),
+                "MPLCONFIGDIR": str(self.root / "mpl"),
+            }))
+            stack.enter_context(patch("ipid_analysis.runtime.available_memory", return_value=8 << 30))
+            aggregate = self.root / "mass.json"
+            aggregate.write_text(json.dumps(self.outcomes))
+            manifest = self.root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "version": 1, **self.model, "mass": aggregate.name,
+                "components": [artifacts.fingerprint(aggregate)],
+            }))
+            jobs = []
+            for figure in MASS.values():
+                if any(job.figure == figure for job in jobs):
+                    continue
+                path = self.paths[figure]
+                path.unlink()
+                path.with_suffix(".pdf").unlink()
+                jobs.append(paper_validation.ValidationJob(manifest, path.with_suffix(".pdf"), figure))
+            results = paper_ready.run(jobs, workers=1)
+            self.assertEqual([(r.status, r.error) for r in results], [("created", "")] * 3)
+        values = self.fixture.run(strict=True)["values"]
+        self.assertEqual(values["validation.data.reordering.pct"]["raw"], 20)
+        self.assertIsNotNone(values["validation.fi-reordered.accuracy-pct"]["raw"])
+        bundle(repository_root=self.root)
+        with zipfile.ZipFile(self.root / "tmp/paper-figures.zip") as archive:
+            self.assertEqual(len(archive.namelist()), 12)
+
+    def test_paired_mass_metadata_requires_both_conditions(self):
+        from paper_values.validation_paper import PaperValidation
+
+        figure = "mass-4x25-classifier-confusion-lossy-vs-reordered"
+        path = self.paths[figure]
+        value = json.loads(path.read_text())
+        self.assertEqual([p["condition"] for p in value["panels"]], ["lossy", "reordered"])
+        for panels in ([value["panels"][1]], [value["panels"][0]] * 2):
+            value["panels"] = panels
+            path.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ValueError, "panels"):
+                PaperValidation(self.directory).load(figure)
+
+    def test_known_old_summary_accepts_cli_only_change_but_not_model_changes(self):
+        from paper_values.validation import Validation, legacy_cli_compatible
+
+        code = Path(__file__).resolve().parents[1] / "ipid_analysis"
+        names = ("strategies.py", "random_classifier_candidate.py", "increment_uniformity.py",
+                 "empirical_random_uniformity.py", "classifier_validation.py")
+        expected = {n: hashlib.sha256((code / n).read_bytes()).hexdigest() for n in names}
+        recorded = {**expected, "classifier_validation.py":
+                    "6a23e0822a9fc8f708a2e17df5538f0a01c0a87fdc1e7e6683e766747b51d4b2"}
+        summary = self.directory / "classifier-validation-summary.json"
+        summary.write_text(json.dumps({
+            "schema_version": 1, "production_profile": True,
+            "classifier_sources": recorded,
+            "datasets": {"mass-4x25-ideal": {"metrics": {"accuracy": 0.99}}},
+        }))
+        before = summary.read_bytes()
+        # Exercise the real fallback with all new sidecars absent.
+        for path in self.paths.values():
+            path.unlink()
+            path.with_suffix(".pdf").unlink()
+        reader = Validation(self.directory)
+        self.assertEqual(reader.load()["classifier_sources"], recorded)
+        value, _ = reader.read({
+            "field": ["datasets", "mass-4x25-ideal", "metrics", "accuracy"], "factor": 100,
+        })
+        self.assertEqual(value, 99)
+        self.assertEqual(summary.read_bytes(), before)
+        source = code / "classifier_validation.py"
+        changed = self.root / "generator.py"
+        original = source.read_text(encoding="utf-8")
+        changed.write_text(original.replace("if prepare_paper:", "if bool(prepare_paper):"))
+        self.assertTrue(legacy_cli_compatible(recorded, expected, changed))
+        changed.write_text(original + "\nUNEXPECTED_MODEL_CHANGE = 1\n")
+        self.assertFalse(legacy_cli_compatible(recorded, expected, changed))
+        self.assertFalse(legacy_cli_compatible({**recorded, "strategies.py": "0" * 64}, expected, source))
+        self.assertFalse(legacy_cli_compatible({**recorded, "classifier_validation.py": "0" * 64}, expected, source))
+        self.assertFalse(legacy_cli_compatible(None, expected, source))
 
     def test_invalid_metrics_or_model_preserve_previous_export(self):
         self.fixture.run(strict=True)
