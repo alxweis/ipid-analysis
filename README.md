@@ -1,5 +1,12 @@
 # ipid-analysis
 
+Revision exports now include per-measurement coverage, six-VP strategy shares and
+min/max/spread, EU interprotocol details and three paper-ready counter UpSets.
+Run `make prepare-paper-review CAMPAIGN_ID=geo-full-20261107-r1` once to cache EU
+TCP Constant/DF and same-run SYN-ACK values plus local-reference coverage; ordinary
+paper exports never trigger those raw scans. See
+[revision keys, denominators and commands](docs/PAPER_VALUES.md#revision-exports-coverage-vp-spread-eu-df-and-interprotocol-cohorts).
+
 Create additional single-column IMC figures from existing small reports/aggregates with
 `make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"`.
 The command supports stateless RT-base/FI-mass measurement-type, ITDK-role-by-strategy

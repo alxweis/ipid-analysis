@@ -140,6 +140,12 @@ analyse-deterministic-transitions:
 prepare-random-reproducibility:
 	$(PYTHON_INTERPRETER) -m ipid_analysis.random_reproducibility_analysis $(ARGS)
 
+## Prepare cached EU TCP Constant/DF and within-run handshake paper values once
+##   usage: make prepare-paper-review CAMPAIGN_ID=geo-full-20261107-r1
+.PHONY: prepare-paper-review
+prepare-paper-review:
+	$(PYTHON_INTERPRETER) -B -m paper_values.tcp_review --campaign "$(CAMPAIGN_ID)" $(ARGS)
+
 ## Evaluate repeated raw Mass runs without overwriting strategies.pq
 ##   usage: make analyse-random-reproducibility ARGS="evaluate data.json --repeat-id id-1 --repeat-id id-2"
 .PHONY: analyse-random-reproducibility
