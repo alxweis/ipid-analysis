@@ -54,7 +54,69 @@ All source PDFs, source receipts, `values.tex` and the numeric cache remain unch
 
 ## Sources and keys
 
-`paper_values/metrics.json` is the single definition of the selected paper scope:
+### Completed full TCP-Connection follow-up
+
+For `geo-full-20261107-r1`, the normal commands also include the completed
+`tcp-connection-full-20261121-r1` follow-up:
+
+```sh
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1
+make paper-figures-zip
+```
+
+`paper_values/followups.json` pins the exact published analysis
+`analysis-20261122T140145060416Z` and its six original TCP discoveries. No
+directory-wide "latest run" search is performed. The exporter reads the existing
+global/site `done__full.json` inventories under
+`reports/followups/<measurement-run>/<analysis-id>/`, the selected small JSON
+summaries, and the six existing `__paper__full.pdf` files per VP. It never starts
+a measurement, classifier, plotting command, raw-data join or follow-up analysis.
+All input files stay unchanged; repeated exports reuse the same pinned results.
+
+The additional public keys end in `.full`; original keys retain their original
+values and PDF paths. Examples:
+
+```text
+results.eu.tcp.conn.rt-base.targets.count.full
+results.eu.tcp.conn.rt-base.success.count.full
+results.eu.tcp.conn.rt-base.coverage.pct.full
+results.eu.tcp.conn.rt-base.success.single.pct.full
+results.eu.tcp.conn.rt-base.itdk-strategy.routers.single.pct.full
+results.eu.tcp.conn.rt-vs-fi-base.paired-success.count.full
+fig.eu.tcp.conn.rt-vs-fi-base.strategy-intersection.full
+```
+
+The JSON-backed RT-BASE strategy counts/shares and selected ITDK role shares
+have `.full` counterparts. Coverage uses **all original SYN-ACK targets** as
+its denominator. The three RT/FI comparison figures instead use **jointly
+successful new RT and historical FI-BASE IPs**, as recorded in the completion
+inventory; FI-BASE was not repeated. The remaining three paper PDFs show the
+full RT ITDK roles, full RT OS groups, and the TCP measurement-type comparison
+with the updated Connection bar. All 36 additional paper PDFs keep their
+`__paper__full.pdf` filenames and `reports/followups/...` paths in the ZIP.
+
+This registration adds only values already represented by the selected JSON
+summaries. It does not fabricate full-population increment quantiles from the
+paired histogram, reinterpret old FI statistics, or derive exact statistics
+from the downsampled increment CDF. Historical increment keys remain unchanged.
+
+If the registered run is unavailable, its keys are empty; another run is never
+substituted. A completed but corrupt/inconsistent run is reported as an input
+error, with no partial follow-up import. `--strict` retains the previous outputs
+on such errors. Archive exports do not implicitly consult live follow-up mounts.
+For an archive or an alternate layout, explicitly provide the existing directory:
+
+```sh
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 \
+  ARGS="--followups-root /path/to/reports/followups --strict"
+```
+
+The ZIP command needs no special option: it already bundles exactly the `fig.*`
+paths in `values.tex`, including the new `.full` entries. Regenerate `values.tex`
+before creating a ZIP after deploying this change.
+
+`paper_values/metrics.json` defines the original campaign paper scope (the
+registered follow-up additions above use separate `.full` keys):
 200 numeric metric families and 29 PDF-path families. Expanding the VP-dependent
 families gives 1,264 public keys: 207 per VP (`af`, `as`, `au`, `eu`, `na`, `sa`)
 and 22 shared/global keys. All six VPs are exported, even when the text discusses EU.

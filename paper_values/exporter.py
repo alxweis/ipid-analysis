@@ -12,6 +12,7 @@ import tempfile
 from time import perf_counter
 import zipfile
 
+from paper_values import followups
 from paper_values.cache import ValueCache, verify_file
 from paper_values.diagnostics import Diagnostics
 from paper_values.inputs import Inputs, select_artifacts
@@ -232,6 +233,7 @@ def export(
     raw_root=None,
     validation_root=None,
     additional_reports=(),
+    followups_root=None,
     repository_root=None,
     strict=False,
     recompute=False,
@@ -248,7 +250,7 @@ def export(
     if validation_root is None and archive is None:
         validation_root = root / "reports/figures/classifier-validation"
     input_roots, input_files = (
-        (reports_root, processed_root, raw_root, validation_root),
+        (reports_root, processed_root, raw_root, validation_root, followups_root),
         (archive, *additional_reports),
     )
     output = output_path(root, "values.tex", input_roots, input_files)
@@ -331,6 +333,17 @@ def export(
                 # A conflicting/invalid recipe must not leak a partly registered value.
                 values[key].update(raw=None, status="missing", sources=[])
                 errors.append({"source": key, "error": str(exc)})
+    followup_values, followup_errors = followups.load(
+        campaign,
+        metrics,
+        reports_root,
+        archive=archive is not None,
+        followups_root=followups_root,
+    )
+    if values.keys() & followup_values.keys():
+        raise ValueError("follow-up keys conflict with original campaign keys")
+    values.update(followup_values)
+    errors.extend(followup_errors)
     for path in additional_reports:
         verify_file(path)
         document = json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -382,6 +395,11 @@ def main():
         parser.add_argument("--" + name, type=Path)
     parser.add_argument("--additional-report", type=Path, action="append", default=[])
     parser.add_argument(
+        "--followups-root",
+        type=Path,
+        help="existing reports/followups directory; auto-detected beside mounted campaign reports",
+    )
+    parser.add_argument(
         "--strict",
         action="store_true",
         help="reject invalid inputs; missing results stay empty",
@@ -425,6 +443,7 @@ def main():
             validation_root=args.validation_root,
             archive=args.archive,
             additional_reports=args.additional_report,
+            followups_root=args.followups_root,
             strict=args.strict,
             recompute=args.recompute,
             io_workers=args.io_workers,
