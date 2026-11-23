@@ -672,7 +672,10 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
   keys. `targets.pct.full` and `success.pct.full` use the same definitions; the
   older `coverage.pct.full` alias is retained unchanged for compatibility.
 * TeX output groups the same metric across `af`, `as`, `au`, `eu`, `na`, `sa`
-  directly on consecutive lines. Blank lines separate metrics, never VPs.
+  directly on consecutive lines, without blank lines between VPs. VP comparison
+  min/max/range statistics for the same family and strategy also form one block,
+  e.g. `results.vp-comparison.icmp.rt-fi.constant.*`. Blank lines separate different
+  comparison families/strategies. Existing key ordering and values are unchanged.
 * `results.<vp>.<family>.distribution.<strategy>.pct` uses the exact population of
   the existing strategy plot, including UNCLASSIFIED and NOT_ENOUGH_SAMPLES.
   Families are `icmp.rt-fi`, `udp.rt-fi`, `tcp.no-conn.rt-fi` and `tcp.conn.rt-base`.

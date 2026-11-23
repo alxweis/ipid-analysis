@@ -8,6 +8,7 @@ from tests.test_paper_values import Fixture
 
 from paper_values.exporter import ValueConflict
 from paper_values.review import population_values
+from paper_values.tex import key_order, render
 
 
 class CompactPopulationTest(unittest.TestCase):
@@ -17,6 +18,42 @@ class CompactPopulationTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.f = Fixture(temporary.name)
+
+    def test_comparison_statistics_form_one_block_and_unrelated_strategies_stay_separate(self):
+        values = {}
+        prefixes = [
+            f"results.vp-comparison.{family}.{strategy}"
+            for family in ("icmp.rt-fi", "tcp.no-conn.rt-fi", "tcp.conn.rt-base")
+            for strategy in ("constant", "single")
+        ]
+        for prefix in prefixes:
+            for suffix, n, unit in (
+                ("min.pct", 1, "percent"),
+                ("max.pct", 3, "percent"),
+                ("range.pp", 2, "percentage-points"),
+            ):
+                values[prefix + "." + suffix] = dict(raw=n, unit=unit)
+        before = {k: dict(v) for k, v in values.items()}
+        text = render(dict(reversed(list(values.items()))), "test")
+        blocks = [
+            block for block in text.split("\n\n") if "\\setval{results.vp-comparison." in block
+        ]
+        self.assertEqual(len(blocks), len(prefixes))
+        for prefix in prefixes:
+            lines = [
+                line for line in text.splitlines() if line.startswith("\\setval{" + prefix + ".")
+            ]
+            self.assertEqual(len(lines), 3)
+            self.assertIn("\n".join(lines), text)
+        self.assertEqual(values, before)
+        self.assertEqual(
+            [
+                line.split("}", 1)[0].removeprefix("\\setval{")
+                for line in text.splitlines()
+                if line.startswith("\\setval{results.")
+            ],
+            sorted(values, key=key_order),
+        )
 
     def test_real_report_processed_layout_reuses_keys_and_compact_six_vp_blocks(self):
         for site in ("af", "as", "au", "eu", "na", "sa"):

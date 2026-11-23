@@ -25,6 +25,12 @@ def key_order(key):
 
 def blank_line_group(key):
     parts = key.split(".")
+    if key.startswith("results.vp-comparison.") and parts[-2:] in (
+        ["min", "pct"],
+        ["max", "pct"],
+        ["range", "pp"],
+    ):
+        return tuple(parts[:-2])  # one strategy/family: min, max and range together
     if key.startswith("validation."):
         family = parts[1]
         if family == "e2e":
