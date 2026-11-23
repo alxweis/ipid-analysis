@@ -7,8 +7,9 @@ from pathlib import Path, PurePosixPath
 import re
 
 from paper_values.cache import verify_file
-from paper_values.inputs import SITES, Artifact, identify, validate_plot_path
+from paper_values.inputs import SITES, Artifact, component, identify, validate_plot_path
 from paper_values.readers import Readers, counts, validate_report
+from paper_values.review import STRATEGIES, percentage
 
 COMPARISON = "connection/comparison/rt-based-base_fixed-interval-base"
 MERGED = "no-connection/merged/rt-based-base_fixed-interval-mass"
@@ -105,6 +106,26 @@ def empty_values(metrics):
             result[f"fig.{site}.{suffix}.full"] = record(
                 "pdf-path", "Existing full follow-up PDF; paired comparisons use joint successes"
             )
+        for strategy in STRATEGIES:
+            result[
+                f"results.{site}.tcp.conn.rt-base.distribution.{component(strategy)}.pct.full"
+            ] = record(
+                "percent",
+                "Strategy share in the complete Full RT plot population, including UNCLASSIFIED/NES",
+            )
+        result[f"results.{site}.tcp.conn.rt-base.itdk.strict-agreement.pct.full"] = record(
+            "percent",
+            "Full RT ITDK nodes with strict agreement / nodes with at least two classified interfaces",
+        )
+    for strategy in STRATEGIES:
+        for stat, unit in (
+            ("min.pct", "percent"),
+            ("max.pct", "percent"),
+            ("range.pp", "percentage-points"),
+        ):
+            result[f"results.vp-comparison.tcp.conn.rt-base.{component(strategy)}.{stat}.full"] = (
+                record(unit, "Statistic of unrounded Full RT shares across all six VPs")
+            )
     return result
 
 
@@ -186,6 +207,7 @@ def site_values(campaign, spec, site, done, root, metrics):
     if data.get("measurement_id") != measurement["measurement_id"] or data.get("zmap_id") != zmap:
         raise ValueError("full strategy report differs from registered measurement")
     c, population = counts(data)
+    strategy_source = source
     if population - c.get("NOT_ENOUGH_SAMPLES", 0) != success:
         raise ValueError("full strategy population differs from completion")
     reports = []
@@ -198,6 +220,31 @@ def site_values(campaign, spec, site, done, root, metrics):
         reports.append(artifact)
     readers = Readers(reports, None, None, None, [])
     result = {}
+    for strategy in STRATEGIES:
+        result[f"results.{site}.tcp.conn.rt-base.distribution.{component(strategy)}.pct.full"] = (
+            percentage(c.get(strategy, 0), population),
+            (strategy_source,),
+        )
+    consistency = (
+        f"full/figures/{zmap}/connection/rt-based-base/c-rt-b_itdk-consistency-summary__full.json"
+    )
+    if consistency in inventory:
+        data, consistency_source = report(consistency)
+        if (
+            data.get("zmap_id") != zmap
+            or data.get("measurement_id") != measurement["measurement_id"]
+        ):
+            raise ValueError("Full ITDK consistency report differs from registered measurement")
+        eligible, strict = (
+            data["eligible_nodes_with_two_classified_interfaces"],
+            data["strict_agreement_nodes"],
+        )
+        if type(eligible) is not int or type(strict) is not int or not 0 <= strict <= eligible:
+            raise ValueError("invalid Full ITDK consistency counts")
+        result[f"results.{site}.tcp.conn.rt-base.itdk.strict-agreement.pct.full"] = (
+            percentage(strict, eligible),
+            (consistency_source,),
+        )
     for metric in definitions(metrics):
         proposals = [readers.read(recipe, site) for recipe in metric["sources"]]
         available = [(value, sources) for value, sources in proposals if value is not None]
@@ -279,10 +326,33 @@ def load(campaign, metrics, reports_root, *, archive=False, followups_root=None)
             if read_json(site_root / "done__full.json") != site_done:
                 raise ValueError("global and site follow-up completion disagree")
             staged.update(site_values(campaign, spec, site, site_done, site_root, metrics))
+        for strategy in STRATEGIES:
+            entries = [
+                staged[
+                    f"results.{site}.tcp.conn.rt-base.distribution.{component(strategy)}.pct.full"
+                ]
+                for site in SITES
+            ]
+            shares = [entry[0] for entry in entries]
+            for stat in ("min", "max", "range"):
+                raw = (
+                    (
+                        max(shares) - min(shares)
+                        if stat == "range"
+                        else min(shares)
+                        if stat == "min"
+                        else max(shares)
+                    )
+                    if all(v is not None for v in shares)
+                    else None
+                )
+                staged[
+                    f"results.vp-comparison.tcp.conn.rt-base.{component(strategy)}.{stat}.{'pp' if stat == 'range' else 'pct'}.full"
+                ] = (raw, tuple(s for entry in entries for s in entry[1]))
         for key, (raw, _) in staged.items():
             if values[key]["unit"] == "pdf-path":
                 validate_plot_path(raw)
-            elif (
+            elif raw is not None and (
                 type(raw) not in (int, float)
                 or isinstance(raw, float)
                 and not math.isfinite(raw)

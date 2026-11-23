@@ -20,17 +20,26 @@ def key_order(key):
     parts = key.split(".")
     site = parts[1] if len(parts) > 1 and parts[1] in SITES else ""
     metric = (parts[0], *parts[2:]) if site else tuple(parts)
+    comparison = parts[:-1] if parts[-1:] == ["full"] else parts
+    if key.startswith("results.vp-comparison.") and comparison[-2:] in (
+        ["min", "pct"],
+        ["max", "pct"],
+        ["range", "pp"],
+    ):
+        # Keep each historical or Full min/max/range block contiguous.
+        metric = (*comparison[:-2], "full" if comparison != parts else "", *comparison[-2:])
     return THEMES.index(parts[0]) if parts[0] in THEMES else len(THEMES), metric, site
 
 
 def blank_line_group(key):
     parts = key.split(".")
-    if key.startswith("results.vp-comparison.") and parts[-2:] in (
+    comparison = parts[:-1] if parts[-1:] == ["full"] else parts
+    if key.startswith("results.vp-comparison.") and comparison[-2:] in (
         ["min", "pct"],
         ["max", "pct"],
         ["range", "pp"],
     ):
-        return tuple(parts[:-2])  # one strategy/family: min, max and range together
+        return (*comparison[:-2], "full") if comparison != parts else tuple(parts[:-2])
     if key.startswith("validation."):
         family = parts[1]
         if family == "e2e":

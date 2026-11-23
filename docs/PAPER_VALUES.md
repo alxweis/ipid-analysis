@@ -638,8 +638,12 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
   `targets.count` comes from the phase's coverage metadata. `success.count` is the
   strategy population minus NOT_ENOUGH_SAMPLES, **including UNCLASSIFIED**.
   `success.pct = 100 * success.count / targets.count` for every phase.
-* Selection percentages use the actual source population: RT/BASE and FI/BASE
-  `targets.pct` divide by `results.<vp>.<protocol>.zmap.count`; FI/MASS divides by
+* Selection percentages use the actual source population: stateless RT/BASE and FI/BASE
+  `targets.pct` divide by `results.<vp>.<protocol>.zmap.count`; TCP Connection
+  RT/BASE and FI/BASE divide by `results.<vp>.tcp.zmap.syn-ack.count`, read from
+  `eligible_rows` in the frozen `zmap-connection-sample.json`. The original TCP
+  ZMap count still includes the other TCP reply types; it is not overwritten.
+  FI/MASS divides by
   the same VP/protocol's RT/BASE `success.count`. For example, selecting 20 FI/MASS
   targets from 200 RT successes gives 10%, even if original discovery had 1,000 IPs.
   Missing or zero denominators remain empty, not zero or an assumed 100%.
@@ -669,7 +673,11 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
   `success.pct` still uses the known selected-target denominator. An upstream
   population must not be invented from the measured target count.
 * Pinned full TCP follow-ups retain their separate `.full` suffix and existing
-  keys. `targets.pct.full` and `success.pct.full` use the same definitions; the
+  keys. `targets.pct.full` uses the original SYN-ACK eligible pool (100% for a
+  completed full selection), independently checked against its selected targets.
+  Historical Connection RT/BASE and FI/BASE select the frozen sample (10% for this
+  campaign, subject to the sampler's minimum and integer rounding in other campaigns).
+  `success.pct.full` uses full selected targets; the
   older `coverage.pct.full` alias is retained unchanged for compatibility.
 * TeX output groups the same metric across `af`, `as`, `au`, `eu`, `na`, `sa`
   directly on consecutive lines, without blank lines between VPs. VP comparison
@@ -696,6 +704,78 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
   separate from `results.<vp>.tcp.rt-no-conn-to-conn.constant.per-connection.column-pct`,
   which joins two separate RT measurements. Neither existing definition nor value
   is replaced. The preparation checks four connections and valid handshake slots.
+
+### Full TCP Connection RT/BASE (historical FI/BASE retained)
+
+The old Connection RT sample values and figures remain available under their
+existing keys. New RT results always carry the final `.full` suffix. Missing Full
+inputs never fall back to the sample. This does **not** replace the historical
+FI/BASE sample or request a new measurement, reclassification or plot rendering.
+
+Small, pinned published reports immediately provide:
+
+* `results.<vp>.tcp.conn.rt-base.distribution.<strategy>.pct.full` for all ten
+  classes, with the complete strategy-plot denominator (including UNCLASSIFIED/NES).
+* `results.vp-comparison.tcp.conn.rt-base.<strategy>.<min.pct|max.pct|range.pp>.full`
+  across all six **unrounded** VP shares. Partial VP sets never produce a range.
+* `results.<vp>.tcp.conn.rt-base.itdk.strict-agreement.pct.full`: agreement among
+  ITDK nodes with at least two concretely classified interfaces, using the existing
+  Full consistency summary. This is the existing node-level definition, not an
+  IP-level agreement rate or an assumption that every matched node is a router.
+
+Prepare the additional per-IP-derived values once on the analysis VM, using the
+usual mounted-storage/RAM environment and paired-reader resource budgets:
+
+```bash
+make prepare-paper-full CAMPAIGN_ID=geo-full-20261107-r1
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
+```
+
+`prepare-paper-full` reuses the pinned registration in `followups.json`, publication
+inventories/receipts, original SYN-ACK sample metadata and canonical original SYN/FI
+reports. It processes one VP at a time without file spilling. It writes only new
+`data/processed/continental/<campaign>/<vp>/paper-review/tcp-full-review-v1.json`
+summaries with exact audit counts, provenance and input/code fingerprints. Cache
+hits avoid per-IP and raw reads; a failed later VP can be retried without repeating
+finished VPs. Existing raw/processed/reports files and the old review summaries
+are only read. An updated input refreshes this new cache, not the old sample values.
+
+The prepared keys are:
+
+* EU only: `results.eu.tcp.conn.rt-base.constant.<df0|df1|ipid-zero>.pct.full` and
+  `results.eu.tcp.conn.rt-base.per-connection.handshake.constant.pct.full`. The
+  existing Constant/DF and four-SYN-ACK preparation is reused with the **Full** raw
+  measurement and labels. Unknown/mixed DF remains in the Constant denominator;
+  missing DF cannot become zero. This is not the separate-run transition metric.
+* Every VP: `results.<vp>.tcp.conn.rt-base.increments.<per-bucket.p99|single.below-2000.pct>.full`
+  from all positive strategy-selected increments of the Full run. P99 is the
+  nearest-rank discrete quantile; the threshold is strictly `<2000`, excluding zero
+  increments in both numerator and denominator.
+* Paired plot population, every VP:
+  `results.<vp>.tcp.conn.rt-vs-fi-base.<rt-base|fi-base>.increments.<per-bucket.p99|single.below-2000.pct>.full`.
+  These reuse the **published paired histogram** for jointly successful new RT /
+  historical FI IPs. They retain its original full positive-increment counts,
+  not the renormalized p99.9 display counts. When a clipped tail cannot determine
+  the exact `<2000` fraction, this explicit preparation reads the already-published
+  paired per-IP increments for that mode; the ordinary exporter never does so.
+  These are the appropriate keys when describing the
+  paired figures; neither the whole Full RT nor historical whole FI is substituted.
+* `results.<vp>.tcp.conn.fi-to-rt-success.pct.full` reuses the existing matched-cohort
+  calculation with Full RT labels: FI successes / Full RT successes **within the
+  frozen FI target list**, including UNCLASSIFIED and excluding NES. This is a
+  ratio and can exceed 100%; it is not FI successes / all Full RT successes.
+* `results.<vp>.tcp.rt-no-conn-to-conn.constant.per-connection.column-pct.full`
+  reuses the existing separate-run transition join: the fraction of Full
+  PER_CONNECTION IPs with a sufficiently sampled original SYN-based observation
+  that was CONSTANT. It never reads old Connection RT sample labels.
+
+Ordinary `paper-values` only checks fingerprints and reads these small summaries;
+it never performs Full preparation implicitly, even with `--recompute`. Missing
+preparation yields empty `.full` values, while stale/corrupt evidence is an input
+error (`--strict` preserves the previous exports). All prior value keys remain.
+Only the incorrect Connection `targets.pct` denominators are corrected. The TeX
+writer keeps historical and Full VP min/max/range blocks separate and compact.
 
 ### EU interprotocol values and three additional paper figures
 

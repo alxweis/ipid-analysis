@@ -1,6 +1,7 @@
 """Production storage layout, stable metric keys and explicit selection denominators."""
 
 import hashlib
+import json
 import unittest
 from unittest.mock import patch
 
@@ -144,8 +145,24 @@ class CompactPopulationTest(unittest.TestCase):
         self.f.report(
             "coverage", dict(zmap_ip_count=5, ipid_ip_count=2), processed=True, mode="connection"
         )
+        from tests.test_paper_values import RUNS
+
+        metadata = self.f.raw / "eu/zmap" / RUNS["tcp"] / "zmap-connection-sample.json"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_text(
+            json.dumps(
+                dict(
+                    version=1,
+                    zmap_id=RUNS["tcp"],
+                    reply_type="synack",
+                    source_rows=20,
+                    eligible_rows=10,
+                    sample_rows=5,
+                )
+            )
+        )
         values = self.f.run(strict=True)["values"]
-        self.assertEqual(values["results.eu.tcp.conn.rt-base.targets.pct"]["raw"], 25)
+        self.assertEqual(values["results.eu.tcp.conn.rt-base.targets.pct"]["raw"], 50)
         self.assertEqual(values["results.eu.tcp.conn.rt-base.success.pct"]["raw"], 40)
         values["results.eu.tcp.conn.rt-base.targets.count.full"] = record(
             10, "count", "", ("full",)
@@ -154,7 +171,7 @@ class CompactPopulationTest(unittest.TestCase):
             8, "count", "", ("full",)
         )
         full = full_coverage_values(values)
-        self.assertEqual(full["results.eu.tcp.conn.rt-base.targets.pct.full"]["raw"], 50)
+        self.assertEqual(full["results.eu.tcp.conn.rt-base.targets.pct.full"]["raw"], 100)
         self.assertEqual(full["results.eu.tcp.conn.rt-base.success.pct.full"]["raw"], 80)
 
 

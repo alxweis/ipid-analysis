@@ -146,6 +146,11 @@ prepare-random-reproducibility:
 prepare-paper-review:
 	$(PYTHON_INTERPRETER) -B -m paper_values.tcp_review --campaign "$(CAMPAIGN_ID)" $(ARGS)
 
+## Prepare missing pinned Full TCP scalars; keep all historical sample values
+.PHONY: prepare-paper-full
+prepare-paper-full:
+	$(PYTHON_INTERPRETER) -B -m paper_values.full_review --campaign "$(CAMPAIGN_ID)" $(ARGS)
+
 ## Evaluate repeated raw Mass runs without overwriting strategies.pq
 ##   usage: make analyse-random-reproducibility ARGS="evaluate data.json --repeat-id id-1 --repeat-id id-2"
 .PHONY: analyse-random-reproducibility
