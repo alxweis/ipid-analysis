@@ -1,5 +1,6 @@
 """Export verified validation sidecars and include all twelve PDFs in the ZIP."""
 
+import ast
 from contextlib import ExitStack
 import copy
 import hashlib
@@ -256,7 +257,7 @@ class PaperValidationValuesTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "panels"):
                 PaperValidation(self.directory).load(figure)
 
-    def test_known_old_summary_accepts_cli_only_change_but_not_model_changes(self):
+    def test_legacy_summary_is_rejected_after_the_generator_model_changes(self):
         from paper_values.validation import Validation, legacy_cli_compatible
 
         code = Path(__file__).resolve().parents[1] / "ipid_analysis"
@@ -277,22 +278,47 @@ class PaperValidationValuesTest(unittest.TestCase):
             path.unlink()
             path.with_suffix(".pdf").unlink()
         reader = Validation(self.directory)
-        self.assertEqual(reader.load()["classifier_sources"], recorded)
+        # The generator changed numerically in 6ea242a (Multi increments), not
+        # just in main(). Old validation must now be rejected by the real guard.
+        self.assertFalse(legacy_cli_compatible(recorded, expected, code / "classifier_validation.py"))
+        with self.assertRaisesRegex(ValueError, "different classifier code"):
+            reader.load()
+        self.assertEqual(summary.read_bytes(), before)
+        # An exact current fingerprint still loads through the ordinary path.
+        current = json.loads(before)
+        current["classifier_sources"] = expected
+        summary.write_text(json.dumps(current))
+        current_bytes = summary.read_bytes()
+        self.assertEqual(reader.load()["classifier_sources"], expected)
         value, _ = reader.read({
             "field": ["datasets", "mass-4x25-ideal", "metrics", "accuracy"], "factor": 100,
         })
         self.assertEqual(value, 99)
-        self.assertEqual(summary.read_bytes(), before)
-        source = code / "classifier_validation.py"
+        self.assertEqual(summary.read_bytes(), current_bytes)
+
+    def test_legacy_cli_guard_accepts_only_cli_changes_to_a_frozen_model(self):
+        from paper_values.validation import LEGACY_GENERATOR_SHA256, legacy_cli_compatible
+
+        # A small frozen model keeps this unit test independent of future
+        # production-generator evolution. Only this fixture's model hash is
+        # injected; the production hash and acceptance policy remain untouched.
+        original = "MODEL = 1\ndef generate():\n    return MODEL\ndef main():\n    return 'old CLI'\n"
+        tree = ast.parse(original)
+        tree.body = [n for n in tree.body if not isinstance(n, ast.FunctionDef) or n.name != "main"]
+        model = hashlib.sha256(ast.dump(tree, include_attributes=False).encode()).hexdigest()
+        expected = {"strategies.py": "1" * 64, "classifier_validation.py": "2" * 64}
+        recorded = {**expected, "classifier_validation.py": LEGACY_GENERATOR_SHA256}
         changed = self.root / "generator.py"
-        original = source.read_text(encoding="utf-8")
-        changed.write_text(original.replace("if prepare_paper:", "if bool(prepare_paper):"))
-        self.assertTrue(legacy_cli_compatible(recorded, expected, changed))
-        changed.write_text(original + "\nUNEXPECTED_MODEL_CHANGE = 1\n")
-        self.assertFalse(legacy_cli_compatible(recorded, expected, changed))
-        self.assertFalse(legacy_cli_compatible({**recorded, "strategies.py": "0" * 64}, expected, source))
-        self.assertFalse(legacy_cli_compatible({**recorded, "classifier_validation.py": "0" * 64}, expected, source))
-        self.assertFalse(legacy_cli_compatible(None, expected, source))
+        with patch("paper_values.validation.LEGACY_GENERATOR_MODEL_SHA256", model):
+            changed.write_text(original.replace("'old CLI'", "'new CLI'"))
+            self.assertTrue(legacy_cli_compatible(recorded, expected, changed))
+            self.assertFalse(legacy_cli_compatible({**recorded, "strategies.py": "0" * 64}, expected, changed))
+            self.assertFalse(legacy_cli_compatible({**recorded, "classifier_validation.py": "0" * 64}, expected, changed))
+            self.assertFalse(legacy_cli_compatible(None, expected, changed))
+            changed.write_text(original.replace("MODEL = 1", "MODEL = 2"))
+            self.assertFalse(legacy_cli_compatible(recorded, expected, changed))
+            changed.write_text(original + "\nUNEXPECTED_MODEL_CHANGE = 1\n")
+            self.assertFalse(legacy_cli_compatible(recorded, expected, changed))
 
     def test_invalid_metrics_or_model_preserve_previous_export(self):
         self.fixture.run(strict=True)
