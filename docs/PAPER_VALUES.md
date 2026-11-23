@@ -699,6 +699,14 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
   handshake family, TCP no-connection RT/FI Constant, and `fig.<vp>.interprotocol.*`.
   Related historical and `.full` values stay together; different classes/families
   retain their separating blank line. Existing same-metric VP ordering is preserved.
+* Results and figure keys follow pipeline order within each protocol (ICMP, TCP,
+  UDP): ZMap, RT/BASE, FI/MASS and repeats, FI/BASE, final RT/FI merge, then method
+  comparisons. TCP discovery is followed by no-connection phases, Connection
+  phases and their cross-mode transition. Local reference families follow the
+  protocol families, followed by interprotocol results and VP comparisons.
+  This is a semantic reading order; asynchronous jobs need not finish in this order.
+  Identical metrics remain consecutive across the six VPs. Keys, numbers and the
+  final `.full` suffix do not change; only the order/spacing of TeX lines changes.
 * `results.<vp>.<family>.distribution.<strategy>.pct` uses the exact population of
   the existing strategy plot, including UNCLASSIFIED and NOT_ENOUGH_SAMPLES.
   Families are `icmp.rt-fi`, `udp.rt-fi`, `tcp.no-conn.rt-fi` and `tcp.conn.rt-base`.

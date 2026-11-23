@@ -245,6 +245,64 @@ class CompactPopulationTest(unittest.TestCase):
         self.assertGreater(min(single), max(bucket))
         self.assertEqual(values, before)
 
+    def test_pipeline_order_per_protocol_keeps_each_metric_consecutive_across_vps(self):
+        families = [
+            "icmp.zmap",
+            "icmp.rt-base",
+            "icmp.fi-mass",
+            "icmp.repeat",
+            "icmp.fi-base",
+            "icmp.rt-fi",
+            "icmp.rt-vs-fi-base",
+            "icmp.fi-to-rt-success",
+            "tcp.zmap",
+            "tcp.no-conn.rt-base",
+            "tcp.no-conn.fi-mass",
+            "tcp.no-conn.fi-base",
+            "tcp.no-conn.rt-fi",
+            "tcp.no-conn.rt-vs-fi-base",
+            "tcp.conn.rt-base",
+            "tcp.conn.fi-base",
+            "tcp.conn.rt-vs-fi-base",
+            "tcp.rt-no-conn-to-conn",
+            "udp.zmap",
+            "udp.rt-base",
+            "udp.fi-mass",
+            "udp.fi-base",
+            "udp.rt-fi",
+            "udp.rt-vs-fi-base",
+            "reference.icmp.base",
+            "reference.icmp.mass",
+            "reference.tcp.base",
+            "reference.udp.base",
+            "interprotocol.single.icmp-tcp",
+        ]
+        sites = ("af", "as", "au", "eu", "na", "sa")
+        expected = [f"results.{site}.{family}.count" for family in families for site in sites]
+        values = {key: dict(raw=17, unit="count") for key in reversed(expected)}
+        text = render(values, "test")
+        actual = [
+            line.split("}", 1)[0].removeprefix("\\setval{")
+            for line in text.splitlines()
+            if line.startswith("\\setval{")
+        ]
+        self.assertEqual(actual, expected)
+        for family in families:
+            block = "\n".join(f"\\setval{{results.{site}.{family}.count}}{{17}}" for site in sites)
+            self.assertIn(block, text)
+        # Figures follow the same protocol/phase order; unknown future keys remain sortable.
+        figure_keys = [
+            "fig.eu.udp.rt-fi.example",
+            "fig.eu.tcp.conn.rt-base.example",
+            "fig.eu.tcp.no-conn.rt-fi.example",
+            "fig.eu.icmp.rt-vs-fi-base.example",
+            "fig.eu.icmp.rt-fi.example",
+        ]
+        self.assertEqual(sorted(figure_keys, key=key_order), list(reversed(figure_keys)))
+        self.assertEqual(
+            len(sorted(["results.eu.tcp", "results.eu.future.phase.count"], key=key_order)), 2
+        )
+
     def test_invalid_population_is_rejected(self):
         for args in ((4, 5, 10), (11, 1, 10), (True, 0, 10), (-1, 0, 10)):
             with self.subTest(args=args), self.assertRaises(ValueError):
