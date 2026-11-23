@@ -33,6 +33,18 @@ def key_order(key):
 
 def blank_line_group(key):
     parts = key.split(".")
+    metric = (parts[0], *parts[2:]) if len(parts) > 1 and parts[1] in SITES else tuple(parts)
+    if metric[:2] == ("results", "interprotocol") and len(metric) > 3:
+        return metric[:3]  # one strategy's groups, outcomes and detail rows
+    if metric[:2] == ("fig", "interprotocol"):
+        return metric[:2]
+    for prefix in (
+        ("results", "tcp", "conn", "rt-base", "constant"),
+        ("results", "tcp", "conn", "rt-base", "per-connection", "handshake"),
+        ("results", "tcp", "no-conn", "rt-fi", "constant"),
+    ):
+        if metric[: len(prefix)] == prefix and len(metric) > len(prefix):
+            return prefix  # retain adjacent VP lines and both historical/.full keys
     comparison = parts[:-1] if parts[-1:] == ["full"] else parts
     if key.startswith("results.vp-comparison.") and comparison[-2:] in (
         ["min", "pct"],

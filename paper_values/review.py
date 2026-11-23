@@ -199,11 +199,16 @@ def coverage_values(canonical):
                 phases = (
                     ("rt-base", "fi-base")
                     if mode == "connection"
-                    else ("rt-base", "fi-mass", "fi-base")
+                    else ("rt-base", "fi-mass", "fi-base", "rt-fi-merged")
                 )
                 for phase in phases:
                     a = index.get((site, protocol, mode, phase, "strategies"))
-                    coverage = index.get((site, protocol, mode, phase, "coverage"))
+                    merged = phase == "rt-fi-merged"
+                    if merged and a is None:
+                        continue  # RT alone does not prove a published final merge.
+                    coverage = index.get(
+                        (site, protocol, mode, "rt-base" if merged else phase, "coverage")
+                    )
                     if a is None and coverage is None:
                         continue
                     success = None
@@ -220,7 +225,7 @@ def coverage_values(canonical):
                         if protocol == "tcp"
                         else protocol
                     )
-                    prefix = f"results.{site}.{family}.{phase}"
+                    prefix = f"results.{site}.{family}.{'rt-fi' if merged else phase}"
                     result.update(
                         population_values(
                             prefix,
