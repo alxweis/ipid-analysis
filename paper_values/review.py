@@ -245,7 +245,14 @@ def full_coverage_values(values):
         success = values.get(prefix + ".success.count.full")
         if target is None or success is None:
             continue
-        discovery = values.get(f"results.{site}.tcp.zmap.count")
+        discovery = values.get(f"results.{site}.tcp.zmap.syn-ack.count")
+        if (
+            target["raw"] is not None
+            and discovery is not None
+            and discovery["raw"] is not None
+            and target["raw"] != discovery["raw"]
+        ):
+            raise ValueError("Full RT targets differ from original SYN-ACK eligibility")
         sources = (
             target["sources"] + success["sources"] + (discovery["sources"] if discovery else [])
         )
@@ -255,7 +262,7 @@ def full_coverage_values(values):
             success["raw"],
             discovery["raw"] if discovery else None,
             sources,
-            "original TCP ZMap IPs at this VP",
+            "original TCP ZMap SYN-ACK eligible IPs at this VP",
         )
         for suffix in ("targets.pct", "success.pct"):
             key = prefix + "." + suffix
@@ -516,13 +523,22 @@ def figure_destination(summary, processed_root, reports_root, strategy, paper=Tr
     )
 
 
-def load(artifacts, processed_root, reports_root, campaign, *, archive=False):
+def load(artifacts, processed_root, reports_root, campaign, *, archive=False, raw_root=None):
     values = {
         **tcp_defaults(),
         **vp_values(artifacts),
         **coverage_values(artifacts),
     }
     errors = []
+    from paper_values.selection import values as selection_values
+
+    for key, entry in values.items():
+        if ".tcp.conn." in key and key.endswith(".targets.pct"):
+            entry.update(raw=None, status="missing", sources=[])
+    try:
+        values.update(selection_values(artifacts, values, None if archive else raw_root))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        errors.append(dict(source="TCP SYN-ACK selection", error=str(exc)))
     for strategy in COUNTERS:
         values[f"fig.eu.interprotocol.{component(strategy)}.upset"] = record(
             None, "pdf-path", "EU interprotocol UpSet; paper PDF preferred"

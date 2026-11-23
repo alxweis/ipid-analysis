@@ -346,7 +346,12 @@ def export(
     values.update(followup_values)
     errors.extend(followup_errors)
     revision_values, revision_errors = review.load(
-        valid, processed_root, reports_root, campaign, archive=archive is not None
+        valid,
+        processed_root,
+        reports_root,
+        campaign,
+        archive=archive is not None,
+        raw_root=raw_root,
     )
     for key, entry in revision_values.items():
         if key in values:
@@ -360,6 +365,15 @@ def export(
             values[key] = entry
     values.update(review.full_coverage_values(values))
     errors.extend(revision_errors)
+    from paper_values.full_review import load as load_full_review
+
+    full_review_values, full_review_errors = load_full_review(
+        processed_root, campaign, archive=archive is not None
+    )
+    if values.keys() & full_review_values.keys():
+        raise ValueError("Full review keys conflict with existing values")
+    values.update(full_review_values)
+    errors.extend(full_review_errors)
     for path in additional_reports:
         verify_file(path)
         document = json.loads(Path(path).read_text(encoding="utf-8-sig"))
