@@ -14,6 +14,41 @@ PREAMBLE = r"""% Generated paper values; requires todonotes for missing values.
 """
 THEMES = "params classifier validation results fig".split()
 SITES = {"af", "as", "au", "eu", "na", "sa"}
+PHASES = "zmap rt-base fi-mass repeat fi-base rt-fi rt-vs-fi-base fi-to-rt-success".split()
+PROTOCOLS = "icmp tcp udp".split()
+
+
+def pipeline_order(metric):
+    """Order protocol families by their workflow, retaining exact keys and VP grouping."""
+    ranks = [0] * len(metric)
+    if len(metric) > 1 and metric[0] in ("results", "fig"):
+        families = (*PROTOCOLS, "reference", "interprotocol", "vp-comparison")
+        ranks[1] = families.index(metric[1]) if metric[1] in families else len(families)
+        protocol_index = (
+            1
+            if metric[1] in PROTOCOLS
+            else 2
+            if metric[1] in ("reference", "vp-comparison")
+            and len(metric) > 2
+            and metric[2] in PROTOCOLS
+            else None
+        )
+        if protocol_index is not None:
+            protocol = metric[protocol_index]
+            if protocol_index == 2:
+                ranks[2] = PROTOCOLS.index(protocol)
+            phase_index = protocol_index + 1
+            if protocol == "tcp" and phase_index < len(metric):
+                modes = ("zmap", "no-conn", "conn", "rt-no-conn-to-conn")
+                mode = metric[phase_index]
+                ranks[phase_index] = modes.index(mode) if mode in modes else len(modes)
+                phase_index += 1 if mode in ("no-conn", "conn") else 0
+            if phase_index < len(metric) and (
+                protocol != "tcp" or metric[protocol_index + 1] in ("no-conn", "conn")
+            ):
+                phase = metric[phase_index]
+                ranks[phase_index] = PHASES.index(phase) if phase in PHASES else len(PHASES)
+    return tuple(zip(ranks, metric))
 
 
 def key_order(key):
@@ -28,11 +63,27 @@ def key_order(key):
     ):
         # Keep each historical or Full min/max/range block contiguous.
         metric = (*comparison[:-2], "full" if comparison != parts else "", *comparison[-2:])
-    return THEMES.index(parts[0]) if parts[0] in THEMES else len(THEMES), metric, site
+    return (
+        THEMES.index(parts[0]) if parts[0] in THEMES else len(THEMES),
+        pipeline_order(metric),
+        site,
+    )
 
 
 def blank_line_group(key):
     parts = key.split(".")
+    metric = (parts[0], *parts[2:]) if len(parts) > 1 and parts[1] in SITES else tuple(parts)
+    if metric[:2] == ("results", "interprotocol") and len(metric) > 3:
+        return metric[:3]  # one strategy's groups, outcomes and detail rows
+    if metric[:2] == ("fig", "interprotocol"):
+        return metric[:2]
+    for prefix in (
+        ("results", "tcp", "conn", "rt-base", "constant"),
+        ("results", "tcp", "conn", "rt-base", "per-connection", "handshake"),
+        ("results", "tcp", "no-conn", "rt-fi", "constant"),
+    ):
+        if metric[: len(prefix)] == prefix and len(metric) > len(prefix):
+            return prefix  # retain adjacent VP lines and both historical/.full keys
     comparison = parts[:-1] if parts[-1:] == ["full"] else parts
     if key.startswith("results.vp-comparison.") and comparison[-2:] in (
         ["min", "pct"],
@@ -89,6 +140,7 @@ def render(values, campaign):
         "% VPs: af/as/au/eu/na/sa. Blank values are unavailable, not zero.",
         "% success: sufficient replies; rt-pop: original RT population; pct: percent with metric-specific denominator.",
         "% rt-fi: RT/Mass merge; rt-vs-fi-base: paired probing-method comparison.",
+        "% Per protocol: ZMap -> RT-BASE -> FI-MASS/repeats -> FI-BASE -> RT/FI merge -> comparisons.",
     ]
     previous = None
     for key in sorted(values, key=key_order):

@@ -638,6 +638,16 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
   `targets.count` comes from the phase's coverage metadata. `success.count` is the
   strategy population minus NOT_ENOUGH_SAMPLES, **including UNCLASSIFIED**.
   `success.pct = 100 * success.count / targets.count` for every phase.
+* Final RT/FI-MASS populations also expose these four suffixes under
+  `results.<vp>.<icmp|udp>.rt-fi.*` and `results.<vp>.tcp.no-conn.rt-fi.*`.
+  The published merged strategy report supplies `success.count` (all rows except
+  NOT_ENOUGH_SAMPLES, including UNCLASSIFIED). `targets.count` remains the original
+  RT/BASE selected target count from coverage metadata; it is not the number of
+  RT responders or RT plus FI targets. `targets.pct` uses the original protocol
+  ZMap population, and `success.pct` uses these original selected RT targets.
+  Original RT nonresponders and failed FI refinements therefore remain failures.
+  No Connection RT/FI-MASS merge is invented; Full Connection RT stays separate.
+  These values only read existing small JSON reports and do not require preparation.
 * Selection percentages use the actual source population: stateless RT/BASE and FI/BASE
   `targets.pct` divide by `results.<vp>.<protocol>.zmap.count`; TCP Connection
   RT/BASE and FI/BASE divide by `results.<vp>.tcp.zmap.syn-ack.count`, read from
@@ -684,6 +694,19 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
   min/max/range statistics for the same family and strategy also form one block,
   e.g. `results.vp-comparison.icmp.rt-fi.constant.*`. Blank lines separate different
   comparison families/strategies. Existing key ordering and values are unchanged.
+  In addition, each `results.<vp>.interprotocol.<class>.*` family forms one
+  uninterrupted block, as do TCP Connection RT Constant, its Per-Connection
+  handshake family, TCP no-connection RT/FI Constant, and `fig.<vp>.interprotocol.*`.
+  Related historical and `.full` values stay together; different classes/families
+  retain their separating blank line. Existing same-metric VP ordering is preserved.
+* Results and figure keys follow pipeline order within each protocol (ICMP, TCP,
+  UDP): ZMap, RT/BASE, FI/MASS and repeats, FI/BASE, final RT/FI merge, then method
+  comparisons. TCP discovery is followed by no-connection phases, Connection
+  phases and their cross-mode transition. Local reference families follow the
+  protocol families, followed by interprotocol results and VP comparisons.
+  This is a semantic reading order; asynchronous jobs need not finish in this order.
+  Identical metrics remain consecutive across the six VPs. Keys, numbers and the
+  final `.full` suffix do not change; only the order/spacing of TeX lines changes.
 * `results.<vp>.<family>.distribution.<strategy>.pct` uses the exact population of
   the existing strategy plot, including UNCLASSIFIED and NOT_ENOUGH_SAMPLES.
   Families are `icmp.rt-fi`, `udp.rt-fi`, `tcp.no-conn.rt-fi` and `tcp.conn.rt-base`.

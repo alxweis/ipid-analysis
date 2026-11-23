@@ -117,6 +117,192 @@ class CompactPopulationTest(unittest.TestCase):
         self.assertIsNone(zero["test.targets.pct"]["raw"])
         self.assertIsNone(zero["test.success.pct"]["raw"])
 
+    def test_merged_coverage_keeps_original_targets_and_counts_each_ip_once(self):
+        for site in ("af", "as", "au", "eu", "na", "sa"):
+            for protocol in ("icmp", "tcp", "udp"):
+                self.f.baseline(site=site, protocol=protocol)
+                # Same ten RT responders: eight retained, one successful
+                # refinement, one failed refinement. UNCLASSIFIED is a success.
+                self.f.strategy(
+                    {"CONSTANT": 6, "SINGLE": 1, "UNCLASSIFIED": 2, "NOT_ENOUGH_SAMPLES": 1},
+                    phase="rt-fi",
+                    site=site,
+                    protocol=protocol,
+                )
+        sources = {
+            p: (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
+            for p in self.f.root.rglob("*.json")
+        }
+        values = self.f.run(strict=True)["values"]
+        for site in ("af", "as", "au", "eu", "na", "sa"):
+            for family in ("icmp", "udp", "tcp.no-conn"):
+                prefix = f"results.{site}.{family}.rt-fi"
+                for suffix, expected in (
+                    ("targets.count", 20),
+                    ("targets.pct", 100),
+                    ("success.count", 9),
+                    ("success.pct", 45),
+                ):
+                    self.assertEqual(values[prefix + "." + suffix]["raw"], expected, prefix)
+                self.assertEqual(len(values[prefix + ".targets.count"]["sources"]), 2)
+            self.assertFalse(any(k.startswith(f"results.{site}.tcp.conn.rt-fi.") for k in values))
+        self.assertEqual(
+            sources,
+            {
+                p: (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
+                for p in sources
+            },
+        )
+
+    def test_merge_requires_its_report_and_does_not_infer_missing_target_evidence(self):
+        self.f.strategy(
+            {"UNCLASSIFIED": 2, "NOT_ENOUGH_SAMPLES": 1}, phase="rt-fi", protocol="icmp"
+        )
+        values = self.f.run(strict=True)["values"]
+        prefix = "results.eu.icmp.rt-fi."
+        self.assertEqual(values[prefix + "success.count"]["raw"], 2)
+        for suffix in ("targets.count", "targets.pct", "success.pct"):
+            self.assertIsNone(values[prefix + suffix]["raw"])
+        self.f.report(
+            "coverage", dict(zmap_ip_count=20, ipid_ip_count=10), processed=True, protocol="udp"
+        )
+        values = self.f.run(strict=True)["values"]
+        self.assertNotIn("results.eu.udp.rt-fi.targets.count", values)
+
+    def test_requested_semantic_blocks_preserve_values_and_six_vp_order(self):
+        values = {}
+        blocks = [
+            (
+                "results.eu.interprotocol.per-bucket",
+                (
+                    "icmp-tcp.targets.count",
+                    "icmp-tcp.outcome.fully-protocol-shared.pct",
+                    "icmp-tcp-udp.partial.shared-icmp-tcp.pct",
+                ),
+            ),
+            (
+                "results.eu.interprotocol.single",
+                ("icmp-tcp.targets.count", "icmp-udp.targets.count"),
+            ),
+            (
+                "results.eu.tcp.conn.rt-base.constant",
+                (
+                    "df0.pct",
+                    "df0.pct.full",
+                    "df1.pct",
+                    "df1.pct.full",
+                    "ipid-zero.pct",
+                    "ipid-zero.pct.full",
+                ),
+            ),
+            (
+                "results.eu.tcp.conn.rt-base.per-connection.handshake",
+                ("constant.pct", "constant.pct.full"),
+            ),
+            ("results.eu.tcp.no-conn.rt-fi.constant", ("df0.pct", "df1.pct", "ipid-zero.pct")),
+            (
+                "fig.eu.interprotocol",
+                ("per-bucket.upset", "per-destination.upset", "single.upset"),
+            ),
+        ]
+        for prefix, suffixes in blocks:
+            for suffix in suffixes:
+                values[prefix + "." + suffix] = dict(raw=12, unit="percent")
+        for site in ("af", "as", "au", "na", "sa"):
+            values[f"results.{site}.tcp.conn.rt-base.constant.df0.pct.full"] = dict(
+                raw=12, unit="percent"
+            )
+        before = {k: dict(v) for k, v in values.items()}
+        text = render(dict(reversed(list(values.items()))), "test")
+        all_lines = text.splitlines()
+        for prefix, _ in blocks:
+            positions = [
+                i
+                for i, line in enumerate(all_lines)
+                if line.startswith("\\setval{" + prefix + ".")
+            ]
+            # Other VPs may be interleaved, but no blank lines within the family.
+            self.assertTrue(positions)
+            self.assertTrue(
+                all(all_lines[i] for i in range(min(positions), max(positions) + 1)), prefix
+            )
+        block = "\n".join(
+            f"\\setval{{results.{site}.tcp.conn.rt-base.constant.df0.pct.full}}{{12.00\\%}}"
+            for site in ("af", "as", "au", "eu", "na", "sa")
+        )
+        self.assertIn(block, text)
+        bucket = [
+            i
+            for i, line in enumerate(all_lines)
+            if line.startswith("\\setval{results.eu.interprotocol.per-bucket.")
+        ]
+        single = [
+            i
+            for i, line in enumerate(all_lines)
+            if line.startswith("\\setval{results.eu.interprotocol.single.")
+        ]
+        self.assertEqual(all_lines[max(bucket) + 1], "")
+        self.assertGreater(min(single), max(bucket))
+        self.assertEqual(values, before)
+
+    def test_pipeline_order_per_protocol_keeps_each_metric_consecutive_across_vps(self):
+        families = [
+            "icmp.zmap",
+            "icmp.rt-base",
+            "icmp.fi-mass",
+            "icmp.repeat",
+            "icmp.fi-base",
+            "icmp.rt-fi",
+            "icmp.rt-vs-fi-base",
+            "icmp.fi-to-rt-success",
+            "tcp.zmap",
+            "tcp.no-conn.rt-base",
+            "tcp.no-conn.fi-mass",
+            "tcp.no-conn.fi-base",
+            "tcp.no-conn.rt-fi",
+            "tcp.no-conn.rt-vs-fi-base",
+            "tcp.conn.rt-base",
+            "tcp.conn.fi-base",
+            "tcp.conn.rt-vs-fi-base",
+            "tcp.rt-no-conn-to-conn",
+            "udp.zmap",
+            "udp.rt-base",
+            "udp.fi-mass",
+            "udp.fi-base",
+            "udp.rt-fi",
+            "udp.rt-vs-fi-base",
+            "reference.icmp.base",
+            "reference.icmp.mass",
+            "reference.tcp.base",
+            "reference.udp.base",
+            "interprotocol.single.icmp-tcp",
+        ]
+        sites = ("af", "as", "au", "eu", "na", "sa")
+        expected = [f"results.{site}.{family}.count" for family in families for site in sites]
+        values = {key: dict(raw=17, unit="count") for key in reversed(expected)}
+        text = render(values, "test")
+        actual = [
+            line.split("}", 1)[0].removeprefix("\\setval{")
+            for line in text.splitlines()
+            if line.startswith("\\setval{")
+        ]
+        self.assertEqual(actual, expected)
+        for family in families:
+            block = "\n".join(f"\\setval{{results.{site}.{family}.count}}{{17}}" for site in sites)
+            self.assertIn(block, text)
+        # Figures follow the same protocol/phase order; unknown future keys remain sortable.
+        figure_keys = [
+            "fig.eu.udp.rt-fi.example",
+            "fig.eu.tcp.conn.rt-base.example",
+            "fig.eu.tcp.no-conn.rt-fi.example",
+            "fig.eu.icmp.rt-vs-fi-base.example",
+            "fig.eu.icmp.rt-fi.example",
+        ]
+        self.assertEqual(sorted(figure_keys, key=key_order), list(reversed(figure_keys)))
+        self.assertEqual(
+            len(sorted(["results.eu.tcp", "results.eu.future.phase.count"], key=key_order)), 2
+        )
+
     def test_invalid_population_is_rejected(self):
         for args in ((4, 5, 10), (11, 1, 10), (True, 0, 10), (-1, 0, 10)):
             with self.subTest(args=args), self.assertRaises(ValueError):
