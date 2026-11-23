@@ -306,11 +306,14 @@ class PaperValuesTest(unittest.TestCase):
 
     def test_automated_paper_keys_and_six_vps_remain(self):
         result = self.f.run(strict=True)
-        self.assertEqual(len(result["values"]), 1400)
+        self.assertEqual(len(result["values"]), 1770)
         self.assertEqual(result["available"], 0)
         self.assertFalse(result["input_errors"])
         self.assertTrue(
-            all(".vp-" not in k and not k.startswith("reports.") for k in result["values"])
+            all(
+                (".vp-" not in k or k.startswith("results.vp-comparison."))
+                and not k.startswith("reports.") for k in result["values"]
+            )
         )
         for site in ("af", "as", "au", "eu", "na", "sa"):
             self.assertIn(
@@ -963,7 +966,7 @@ class PaperValuesTest(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("1400 empty", result.stdout)
+        self.assertIn("1770 empty", result.stdout)
         self.assertNotIn("Operations (", result.stdout)
         profiled = subprocess.run(
             [*result.args, "--timings"], cwd=self.f.root, text=True, capture_output=True
@@ -999,7 +1002,7 @@ class PaperValuesTest(unittest.TestCase):
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("1400 empty", result.stdout)
+            self.assertIn("1770 empty", result.stdout)
 
 
 class DerivedCacheTest(unittest.TestCase):

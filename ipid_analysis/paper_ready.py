@@ -92,10 +92,11 @@ class Job:
     source: Path
     kind: str
     processed_root: Path | None = None
+    output: Path | None = None
 
     @property
     def destination(self):
-        return self.source.with_name(self.source.stem + "__paper.pdf")
+        return self.output or self.source.with_name(self.source.stem + "__paper.pdf")
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,29 @@ def discover(
             if relative.parts[-len(suffix) - 1 : -1] != suffix:
                 continue
             jobs.append(job_for(path, processed_root=processed_root))
+        if "eu" in sites and set(protocols) == set(PROTOCOLS):
+            from paper_values.review import COUNTERS, figure_destination, find_summary
+
+            processed = Path(processed_root or reports_root.parent / "data/processed")
+            scope = (
+                processed
+                if processed.parts[-2:] == ("continental", campaign)
+                else processed / "continental" / campaign
+            )
+            summary = find_summary(scope)
+            if summary:
+                for strategy in COUNTERS:
+                    from paper_values.inputs import component
+
+                    kind = "interprotocol-upset-" + component(strategy)
+                    jobs.append(
+                        Job(
+                            summary,
+                            kind,
+                            processed_root,
+                            figure_destination(summary, scope, root, strategy),
+                        )
+                    )
         return jobs
     finally:
         inventory.close()
@@ -292,7 +316,13 @@ def worker(job: Job) -> Result:
         report = json.loads(content)
         profile = Path(__file__).with_name("paper_plot_style.py")
         profile_bytes = profile.read_bytes()
-        if job.kind in PROBING_KINDS:
+        if job.kind.startswith("interprotocol-upset-"):
+            from ipid_analysis.paper_interprotocol_plot import draw
+            from paper_values.review import validate_summary
+
+            data = validate_summary(report)
+            profile_bytes += Path(__file__).with_name("paper_interprotocol_plot.py").read_bytes()
+        elif job.kind in PROBING_KINDS:
             from ipid_analysis.paper_probing_plot import draw, load_series, paths
 
             aggregate, metadata = paths(job.source, report, job.processed_root)

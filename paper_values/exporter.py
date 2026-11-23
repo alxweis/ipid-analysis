@@ -12,7 +12,7 @@ import tempfile
 from time import perf_counter
 import zipfile
 
-from paper_values import followups
+from paper_values import followups, review
 from paper_values.cache import ValueCache, verify_file
 from paper_values.diagnostics import Diagnostics
 from paper_values.inputs import Inputs, select_artifacts
@@ -269,7 +269,8 @@ def export(
         diagnostics=details,
     )
     try:
-        artifacts, conflicts = select_artifacts(list(inputs.artifacts(campaign)))
+        all_artifacts = list(inputs.artifacts(campaign))
+        artifacts, conflicts = select_artifacts(all_artifacts)
         plots = list(inputs.plots(campaign))
     finally:
         inputs.close()
@@ -344,6 +345,13 @@ def export(
         raise ValueError("follow-up keys conflict with original campaign keys")
     values.update(followup_values)
     errors.extend(followup_errors)
+    revision_values, revision_errors = review.load(
+        valid, all_artifacts, processed_root, reports_root, campaign, archive=archive is not None
+    )
+    if values.keys() & revision_values.keys():
+        raise ValueError("revision keys conflict with existing public keys")
+    values.update(revision_values)
+    errors.extend(revision_errors)
     for path in additional_reports:
         verify_file(path)
         document = json.loads(Path(path).read_text(encoding="utf-8-sig"))

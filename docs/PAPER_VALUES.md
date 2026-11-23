@@ -588,3 +588,117 @@ The optional supplied EU archive test checks known populations and partial-VP
 behavior. The Python diagnostic return now uses public keys directly; the former
 internal-key `key_map` and `profile` API are removed together with the diagnostic
 catalog.
+
+## Revision exports: coverage, VP spread, EU DF and interprotocol cohorts
+
+The additional families are defined in `paper_values/review.py`. They extend the
+existing keys; historical TCP transitions and registered `.full` follow-up values
+retain their original populations and definitions.
+
+### One-off preparation and ordinary exports
+
+```sh
+# Use the same mounted-storage environment as the existing paper commands.
+# The background workflow worker can keep running. Run one preparation at a time.
+IPID_ANALYSIS_THREADS=4 IPID_ANALYSIS_DUCKDB_MEMORY=16GB \
+  make prepare-paper-review CAMPAIGN_ID=geo-full-20261107-r1
+
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--dry-run"
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--workers 4"
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
+```
+
+Only explicit preparation scans the EU TCP IPID/DF sequences and the small local
+reference label tables. It publishes new versioned JSON aggregates below
+`data/processed/continental/<campaign>/<vp>/paper-review/`. Existing reports,
+labels, snapshots and raw files are read only. Unchanged inputs reuse the prepared
+aggregate without scanning sequences again. Source metadata/receipts are checked;
+stale preparation is an error, not permission for an ordinary export to reread raw
+data. `--recompute` on paper-values does not opt into TCP raw preparation.
+Changed source data can be prepared again; no original analysis is overwritten.
+The resource limits reuse the existing paired-reader environment, with disk
+spilling disabled. Default small budgets may be insufficient for the EU merge.
+
+Ordinary paper-values reads small coverage/strategy/outcome JSONs and prepared
+summaries. Missing preparation leaves the seven EU TCP percentages empty. A zero
+denominator is empty, never a measured 0%. Prepared audit JSONs retain exact counts,
+unknown/mixed DF and input identities, even when these are not public TeX metrics.
+
+### Populations and keys
+
+* `results.<vp>.measurements.<protocol>.<no-conn|conn>.<phase>.<report-run>.<measurement-id>.*`
+  exports every published measurement context, including repetitions excluded from
+  canonical paper-run selection. IDs are normalized to lowercase/hyphens. Suffixes:
+  `zmap-total.count`, `targets.count`, `success.count`, `coverage.pct`. Original
+  discovery size comes from the same VP/protocol's canonical stateless RT coverage;
+  selected targets come from the phase's own coverage. Success means sufficient
+  replies, including UNCLASSIFIED and excluding NOT_ENOUGH_SAMPLES. Missing target
+  evidence remains empty. There is no attempted-target count or `S/N` rate.
+* Interprotocol measurements use
+  `results.<vp>.measurements.interprotocol.<measurement-id>.*`, with separate
+  BASE/MASS identities, targets, successes and coverage. Success requires enough
+  replies in every participating protocol. Each original discovery is exported
+  separately as `zmap.<icmp|tcp|udp>.count`; protocol populations are not summed.
+* Local controls use `results.<vp>.measurements.reference.<protocol>.<base|mass>.*`,
+  with the same four suffixes and provenance pointing to their frozen classified
+  reference table. These controls do not deduplicate cohorts from comparison.json;
+  their actual reference table already contains one row per selected IP.
+* `results.<vp>.<family>.distribution.<strategy>.pct` uses the exact population of
+  the existing strategy plot, including UNCLASSIFIED and NOT_ENOUGH_SAMPLES.
+  Families are `icmp.rt-fi`, `udp.rt-fi`, `tcp.no-conn.rt-fi` and `tcp.conn.rt-base`.
+  `results.vp-comparison.<family>.<strategy>.min.pct`, `.max.pct`, `.range.pp` use
+  all six unrounded percentages. If any VP is unavailable, the range is empty.
+* `results.eu.tcp.<no-conn.rt-fi|conn.rt-base>.constant.<df0|df1|ipid-zero>.pct`:
+  one vote per Constant IP. DF0/DF1 means exclusively that flag among received
+  samples used by the classifier. Both percentages divide by **all Constant IPs**;
+  mixed samples are not removed or renormalized. Missing DF telemetry is never
+  treated as DF0; incomplete telemetry leaves DF percentages unavailable.
+  IPID-zero uses the constant value on these same classifier-used positions.
+  The stateless merge routes retained RT Constant rows to RT raw and refined RT
+  UNCLASSIFIED rows to FI-MASS raw. BASE follows production's first-round skip;
+  MASS preserves missing positions. No rankings are exported.
+* `results.eu.tcp.conn.rt-base.per-connection.handshake.constant.pct` counts
+  PER_CONNECTION labels whose **first four SYN-ACK IPIDs in that same raw run are
+  equal**, divided by all PER_CONNECTION IPs in that run. This is deliberately
+  separate from `results.<vp>.tcp.rt-no-conn-to-conn.constant.per-connection.column-pct`,
+  which joins two separate RT measurements. Neither existing definition nor value
+  is replaced. The preparation checks four connections and valid handshake slots.
+
+### EU interprotocol values and three additional paper figures
+
+One completed version-2 EU campaign summary is selected explicitly by its unique
+`eu/interprotocol/*/runs/*/interprotocol-campaign-summary.json` path. Multiple runs
+are an ambiguity error; a newer timestamp is not a selection policy.
+
+For Per-Destination, Single and Per-Bucket, public families are
+`results.eu.interprotocol.<strategy>.<protocol-group>.*`:
+
+* `targets.count`, `outcome.<outcome>.count` and `.pct` preserve all UpSet outcome
+  categories and their original whole-cohort denominators, including insufficient
+  samples. `results.eu.interprotocol.<strategy>.set.<protocol>.count` exports the
+  set sizes displayed by the plot. Counts refer to cohort IPs, not globally unique
+  addresses across groups or strategies.
+* `changed.<protocol>-<label>....pct` exports only observed label combinations
+  **strictly above 1% of Changed cases** within that baseline/protocol group.
+  Identical label combinations are pooled across hidden state-count fields first;
+  the threshold uses exact counts before rounding. UNCLASSIFIED remains explicit.
+  No additional whole-population percentage is exported for these detail rows.
+* `partial.shared-<pair-set>.partitions-<partition-set>.pct` exports every observed
+  Partial relationship, divided by all Partial cases in its baseline/group.
+  Compatible pair sets are retained together: an ambiguous IP is not counted once
+  per candidate pair. There is no additional whole-population detail percentage.
+* Reflection, Constant, Multi and Random export `targets.count`, `consistent.count`
+  and `consistent.pct` for every protocol group. Consistent means all individual
+  protocol classes stayed unchanged, not equality of Constant values/Reflection
+  offsets. Both joint Multi outcomes count as class-consistent. The denominator
+  includes insufficient replies, as in the original console table.
+
+`make paper-plots` additionally discovers the three EU counter UpSets, from the
+existing summary only, and writes sibling `interprotocol-upset-<strategy>__paper.pdf`
+files in the original reports figure directory. The originals are untouched.
+The common 3.33-inch width, 7pt Linux Libertine and 4pt legend squares are reused.
+Existing paper PDFs are preserved on repeated runs. The new figure keys are
+`fig.eu.interprotocol.<per-destination|single|per-bucket>.upset`: paper PDFs are
+preferred, with original-PDF fallback. They enter paper-figures.zip automatically
+with the same reports-relative paths as every other figure key.
