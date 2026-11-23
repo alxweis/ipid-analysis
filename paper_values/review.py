@@ -1,6 +1,6 @@
 """Small, read-only revision exports; raw TCP preparation is explicitly opt-in."""
 
-from collections import Counter, defaultdict
+from collections import Counter
 import json
 from pathlib import Path
 
@@ -129,71 +129,137 @@ def vp_values(artifacts):
     return result
 
 
-def coverage_values(artifacts, canonical):
-    """All published measurement IDs, not only canonical paper runs. No bulk reads."""
-    result = {}
-    original = {}
-    for a in canonical:
-        if a.kind == "coverage" and a.phase == "rt-base" and a.connection == "no-connection":
-            original[a.site, a.protocol] = (a.data["zmap_ip_count"], a.name)
-    by_directory = defaultdict(dict)
-    for a in artifacts:
-        if a.kind in ("strategies", "coverage"):
-            key = (a.site, str(Path(a.relative).parent), Path(a.relative).stem.rsplit("_", 1)[0])
-            previous = by_directory[key].get(a.kind)
-            if previous and previous.data != a.data:
-                # Identical metadata can be published in reports and processed.
-                if a.kind == "coverage" or counts(previous.data) != counts(a.data):
-                    raise ValueError(f"conflicting per-measurement population: {a.name}")
-            by_directory[key][a.kind] = a
-    seen = {}
-    for group in by_directory.values():
-        a = group.get("strategies")
-        if not a or a.phase == "rt-fi-merged" or not a.data.get("measurement_id"):
-            continue
-        mid = a.data["measurement_id"]
-        if not isinstance(mid, str) or Path(mid).name != mid:
-            raise ValueError("invalid coverage measurement identity")
-        population, total = counts(a.data)
-        success = total - population.get("NOT_ENOUGH_SAMPLES", 0)
-        coverage = group.get("coverage")
-        targets = coverage.data["zmap_ip_count"] if coverage else None
-        if targets is not None and (type(targets) is not int or targets < 0):
-            raise ValueError(f"invalid selected-target count: {mid}")
-        if targets is not None and not 0 <= success <= targets:
-            raise ValueError(f"successful population exceeds selected targets: {mid}")
-        zmap, source = original.get((a.site, a.protocol), (None, None))
-        values = dict(
-            zmap=zmap,
-            targets=targets,
-            successful=success,
-            coverage=percentage(success, targets) if targets is not None else None,
+def population_values(prefix, targets, success, denominator, sources, denominator_definition):
+    """Use one public population vocabulary, with an explicit selection denominator."""
+    for value in (targets, success, denominator):
+        if value is not None and (type(value) is not int or value < 0):
+            raise ValueError(f"invalid measurement population: {prefix}")
+    if targets is not None and success is not None and success > targets:
+        raise ValueError(f"successful population exceeds selected targets: {prefix}")
+    if targets is not None and denominator is not None and targets > denominator:
+        raise ValueError(f"selected targets exceed their source population: {prefix}")
+    return {
+        prefix + "." + suffix: record(raw, unit, definition, sources)
+        for suffix, raw, unit, definition in (
+            ("targets.count", targets, "count", "Frozen selected target IPs"),
+            (
+                "targets.pct",
+                percentage(targets, denominator)
+                if targets is not None and denominator is not None
+                else None,
+                "percent",
+                "100 * selected targets / " + denominator_definition,
+            ),
+            (
+                "success.count",
+                success,
+                "count",
+                "Enough samples under this phase's eligibility rules; UNCLASSIFIED included",
+            ),
+            (
+                "success.pct",
+                percentage(success, targets)
+                if success is not None and targets is not None
+                else None,
+                "percent",
+                "100 * sufficiently sampled IPs / selected targets",
+            ),
         )
-        identity = (a.site, a.protocol, a.run, a.connection, a.phase, mid)
-        if identity in seen and seen[identity] != values:
-            raise ValueError(f"conflicting coverage aliases for {mid}")
-        seen[identity] = values
-        sources = [a.name] + ([coverage.name] if coverage else []) + ([source] if source else [])
-        mode = "conn" if a.connection == "connection" else "no-conn"
-        prefix = f"results.{a.site}.measurements.{a.protocol}.{mode}.{a.phase}.{component(a.run or mid)}.{component(mid)}"
-        for suffix, value in values.items():
-            key = {
-                "zmap": "zmap-total.count",
-                "targets": "targets.count",
-                "successful": "success.count",
-                "coverage": "coverage.pct",
-            }[suffix]
-            result[f"{prefix}.{key}"] = record(
-                value,
-                "percent" if suffix == "coverage" else "count",
-                {
-                    "zmap": "Original protocol discovery population at this VP, not this phase's selected targets",
-                    "targets": "Frozen selected targets for this measurement",
-                    "successful": "Enough samples under this phase's eligibility rules; UNCLASSIFIED included",
-                    "coverage": "100 * sufficiently sampled IPs / selected targets",
-                }[suffix],
-                sources,
-            )
+    }
+
+
+def coverage_values(canonical):
+    """Reuse canonical phase selection across reports/figures and processed storage."""
+    # Physical directories differ between strategy plots and coverage metadata.
+    # select_artifacts already resolves discovery/streaming aliases and repeats.
+    index = {
+        (a.site, a.protocol, a.connection, a.phase, a.kind): a
+        for a in canonical
+        if a.kind in ("coverage", "strategies")
+    }
+    result = {}
+    for site in SITES:
+        for protocol in ("icmp", "tcp", "udp"):
+            discovery = index.get((site, protocol, "no-connection", "rt-base", "coverage"))
+            zmap = discovery.data["zmap_ip_count"] if discovery else None
+            if discovery:
+                result[f"results.{site}.{protocol}.zmap.count"] = record(
+                    zmap,
+                    "count",
+                    "Original protocol ZMap population at this VP",
+                    (discovery.name,),
+                )
+            modes = ("no-connection", "connection") if protocol == "tcp" else ("no-connection",)
+            for mode in modes:
+                rt = index.get((site, protocol, mode, "rt-base", "strategies"))
+                rt_success = None
+                if rt:
+                    population, total = counts(rt.data)
+                    rt_success = total - population.get("NOT_ENOUGH_SAMPLES", 0)
+                phases = (
+                    ("rt-base", "fi-base")
+                    if mode == "connection"
+                    else ("rt-base", "fi-mass", "fi-base")
+                )
+                for phase in phases:
+                    a = index.get((site, protocol, mode, phase, "strategies"))
+                    coverage = index.get((site, protocol, mode, phase, "coverage"))
+                    if a is None and coverage is None:
+                        continue
+                    success = None
+                    if a:
+                        population, total = counts(a.data)
+                        success = total - population.get("NOT_ENOUGH_SAMPLES", 0)
+                    targets = coverage.data["zmap_ip_count"] if coverage else None
+                    denominator = rt_success if phase == "fi-mass" else zmap
+                    sources = [entry.name for entry in (a, coverage, discovery) if entry]
+                    if phase == "fi-mass" and rt:
+                        sources.append(rt.name)
+                    family = (
+                        protocol + (".conn" if mode == "connection" else ".no-conn")
+                        if protocol == "tcp"
+                        else protocol
+                    )
+                    prefix = f"results.{site}.{family}.{phase}"
+                    result.update(
+                        population_values(
+                            prefix,
+                            targets,
+                            success,
+                            denominator,
+                            sources,
+                            "successful RT-BASE IPs at this VP/protocol"
+                            if phase == "fi-mass"
+                            else "original protocol ZMap IPs at this VP",
+                        )
+                    )
+    return result
+
+
+def full_coverage_values(values):
+    """Extend the pinned full TCP follow-up without changing its historical aliases."""
+    result = {}
+    for site in SITES:
+        prefix = f"results.{site}.tcp.conn.rt-base"
+        target = values.get(prefix + ".targets.count.full")
+        success = values.get(prefix + ".success.count.full")
+        if target is None or success is None:
+            continue
+        discovery = values.get(f"results.{site}.tcp.zmap.count")
+        sources = (
+            target["sources"] + success["sources"] + (discovery["sources"] if discovery else [])
+        )
+        population = population_values(
+            prefix,
+            target["raw"],
+            success["raw"],
+            discovery["raw"] if discovery else None,
+            sources,
+            "original TCP ZMap IPs at this VP",
+        )
+        for suffix in ("targets.pct", "success.pct"):
+            key = prefix + "." + suffix
+            result[key + ".full"] = population[key]
     return result
 
 
@@ -212,59 +278,55 @@ def find_summary(processed_root, site="eu"):
     return paths[0] if paths else None
 
 
+def target_population(processed_root, site):
+    """Read the upstream selection pool, never substitute measured outcomes for it."""
+    paths = sorted((Path(processed_root) / site / "interprotocol").glob("*/target-summary.json"))
+    if len(paths) > 1:
+        raise ValueError("ambiguous interprotocol target populations")
+    if not paths:
+        return {}, None
+    path = paths[0]
+    data = read_json(path)
+    if data.get("pair_semantics") != "pair intersection minus same-strategy triple":
+        raise ValueError("unsupported interprotocol target population semantics")
+    targets = data.get("targets")
+    if not isinstance(targets, dict) or set(targets) - set(GROUPS):
+        raise ValueError("invalid interprotocol target groups")
+    for group, entries in targets.items():
+        if not isinstance(entries, dict) or any(
+            strategy not in (*COUNTERS, *UNCHANGED) or type(n) is not int or n < 0
+            for strategy, n in entries.items()
+        ):
+            raise ValueError(f"invalid upstream target population: {group}")
+    return targets, path
+
+
 def interprotocol_coverage(processed_root, canonical):
-    """Version-2 runs retain every selected target, including zero-reply rows."""
-    original = {
-        (a.site, a.protocol): (a.data["zmap_ip_count"], a.name)
-        for a in canonical
-        if a.kind == "coverage" and a.phase == "rt-base" and a.connection == "no-connection"
-    }
+    """One protocol-group population; BASE/MASS have disjoint baseline strategies."""
     values = {}
     for site in SITES:
         path = find_summary(processed_root, site)
         if path is None:
             continue
         summary = validate_summary(read_json(path))
-        for group, measurements in summary.get("measurements", {}).items():
-            if not isinstance(measurements, dict):
-                raise ValueError("expected separate base/mass interprotocol measurement IDs")
-            for sample, mid in measurements.items():
-                if (
-                    sample not in ("base", "mass")
-                    or not isinstance(mid, str)
-                    or Path(mid).name != mid
-                ):
-                    raise ValueError("invalid interprotocol measurement identity")
-                entries = summary["groups"][group]["counts"]
-                selected = {
-                    k: v
-                    for k, v in entries.items()
-                    if (k.split(":")[0] in ("MULTI", "RANDOM")) == (sample == "mass")
-                }
-                total = sum(selected.values())
-                success = total - sum(
-                    v for k, v in selected.items() if k.endswith(":NOT_ENOUGH_SAMPLES")
+        targets, target_source = target_population(processed_root, site)
+        for group, row in summary["groups"].items():
+            entries = row["counts"]
+            total = sum(entries.values())
+            success = total - sum(
+                n for key, n in entries.items() if key.endswith(":NOT_ENOUGH_SAMPLES")
+            )
+            prefix = f"results.{site}.interprotocol.{group}"
+            values.update(
+                population_values(
+                    prefix,
+                    total,
+                    success,
+                    sum(targets[group].values()) if group in targets else None,
+                    (path, target_source) if target_source else (path,),
+                    "upstream generated same-strategy protocol-group cohort (pairs exclude the same-strategy triple); not an original ZMap intersection",
                 )
-                prefix = f"results.{site}.measurements.interprotocol.{component(mid)}"
-                for suffix, raw, unit in (
-                    ("targets.count", total, "count"),
-                    ("success.count", success, "count"),
-                    ("coverage.pct", percentage(success, total), "percent"),
-                ):
-                    values[prefix + "." + suffix] = record(
-                        raw,
-                        unit,
-                        "Interprotocol measurement: enough samples in every participating protocol / all selected IPs",
-                        (path,),
-                    )
-                for protocol in group.split("-"):
-                    n, source = original.get((site, protocol), (None, None))
-                    values[f"{prefix}.zmap.{protocol}.count"] = record(
-                        n,
-                        "count",
-                        "Original discovery for this participating protocol; no sum across protocols",
-                        (source,) if source else (),
-                    )
+            )
     return values
 
 
@@ -454,11 +516,11 @@ def figure_destination(summary, processed_root, reports_root, strategy, paper=Tr
     )
 
 
-def load(artifacts, all_artifacts, processed_root, reports_root, campaign, *, archive=False):
+def load(artifacts, processed_root, reports_root, campaign, *, archive=False):
     values = {
         **tcp_defaults(),
         **vp_values(artifacts),
-        **coverage_values(all_artifacts, artifacts),
+        **coverage_values(artifacts),
     }
     errors = []
     for strategy in COUNTERS:

@@ -346,11 +346,19 @@ def export(
     values.update(followup_values)
     errors.extend(followup_errors)
     revision_values, revision_errors = review.load(
-        valid, all_artifacts, processed_root, reports_root, campaign, archive=archive is not None
+        valid, processed_root, reports_root, campaign, archive=archive is not None
     )
-    if values.keys() & revision_values.keys():
-        raise ValueError("revision keys conflict with existing public keys")
-    values.update(revision_values)
+    for key, entry in revision_values.items():
+        if key in values:
+            # Population exports extend existing success.count families. Reuse
+            # those keys, but reject disagreement instead of silently replacing.
+            compatible_units = {values[key]["unit"], entry["unit"]} <= {"count", "ips"}
+            if values[key]["unit"] != entry["unit"] and not compatible_units:
+                raise ValueError(f"revision unit conflicts with existing public key: {key}")
+            put(values, key, entry["raw"], entry["sources"])
+        else:
+            values[key] = entry
+    values.update(review.full_coverage_values(values))
     errors.extend(revision_errors)
     for path in additional_reports:
         verify_file(path)

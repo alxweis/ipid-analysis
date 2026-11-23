@@ -181,8 +181,12 @@ class RevisionValuesTest(unittest.TestCase):
         )
         self.assertIsNone(vp_values(reports[:-1])[prefix + "max.pct"]["raw"])
 
-    def test_all_measurement_ids_use_original_discovery_not_followup_targets(self):
-        canonical = [artifact(phase="rt-base", kind="coverage", data=dict(zmap_ip_count=1000))]
+    def test_compact_phase_keys_use_canonical_reports_and_phase_specific_denominators(self):
+        discovery = artifact(phase="rt-base", kind="coverage", data=dict(zmap_ip_count=1000))
+        rt = artifact(
+            phase="rt-base",
+            data=dict(counts={"CONSTANT": 100, "UNCLASSIFIED": 100}, total_ips=200),
+        )
         report = artifact(
             phase="fi-mass",
             data=dict(
@@ -195,13 +199,20 @@ class RevisionValuesTest(unittest.TestCase):
             "figures/tcp-80_repeat/no-connection/fixed-interval-mass/n-fi-m_strategies.json"
         )
         coverage = artifact(phase="fi-mass", kind="coverage", data=dict(zmap_ip_count=20))
-        coverage.relative = report.relative.replace("strategies", "coverage")
-        values = coverage_values([report, coverage], canonical)
-        prefix = "results.eu.measurements.tcp.no-conn.fi-mass.tcp-80-repeat.tcp-80-repeat."
-        self.assertEqual(values[prefix + "zmap-total.count"]["raw"], 1000)
+        # Production regression: coverage is in processed, strategy in figures.
+        coverage.relative = report.relative.replace("figures/", "").replace(
+            "strategies", "coverage"
+        )
+        canonical = [discovery, rt, report, coverage]
+        values = coverage_values(canonical)
+        prefix = "results.eu.tcp.no-conn.fi-mass."
+        self.assertEqual(values["results.eu.tcp.zmap.count"]["raw"], 1000)
         self.assertEqual(values[prefix + "targets.count"]["raw"], 20)
         self.assertEqual(values[prefix + "success.count"]["raw"], 5)
-        self.assertEqual(values[prefix + "coverage.pct"]["raw"], 25)
+        self.assertEqual(values[prefix + "success.pct"]["raw"], 25)
+        self.assertEqual(values[prefix + "targets.pct"]["raw"], 10)
+        self.assertEqual(values["results.eu.tcp.no-conn.rt-base.targets.pct"]["raw"], 100)
+        self.assertFalse(any(".measurements." in k or "repeat" in k for k in values))
 
     def test_changed_cutoff_is_strict_after_pooling_and_partial_is_not_double_counted(self):
         values = interprotocol_values(summary(self.root))
@@ -346,7 +357,7 @@ class RevisionValuesTest(unittest.TestCase):
         with patch(
             "paper_values.tcp_review.connection", side_effect=AssertionError("export raw read")
         ):
-            found, errors = load([], [], processed, reports, CAMPAIGN)
+            found, errors = load([], processed, reports, CAMPAIGN)
         self.assertFalse(errors)
         self.assertEqual(
             found["results.eu.tcp.conn.rt-base.per-connection.handshake.constant.pct"]["raw"], 50
@@ -363,7 +374,7 @@ class RevisionValuesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stale"):
             read_prepared(processed, CAMPAIGN)
 
-    def test_interprotocol_measurement_coverage_separates_base_mass_and_original_protocols(self):
+    def test_interprotocol_group_coverage_combines_disjoint_base_mass_populations(self):
         path = summary(self.root)
         data = json.loads(path.read_text())
         data["measurements"] = {
@@ -375,14 +386,20 @@ class RevisionValuesTest(unittest.TestCase):
             for p, n in (("icmp", 1000), ("tcp", 2000), ("udp", 3000))
         ]
         processed = self.root / "data/processed/continental" / CAMPAIGN
+        write(
+            path.parents[2] / "target-summary.json",
+            dict(
+                pair_semantics="pair intersection minus same-strategy triple",
+                targets={"icmp-tcp-udp": {"SINGLE": 190, "MULTI": 10}},
+            ),
+        )
         values = interprotocol_coverage(processed, canonical)
-        base = "results.eu.measurements.interprotocol.interprotocol-base."
-        mass = "results.eu.measurements.interprotocol.interprotocol-mass."
-        self.assertEqual(values[base + "targets.count"]["raw"], 108)
-        self.assertEqual(values[base + "success.count"]["raw"], 107)
-        self.assertEqual(values[mass + "targets.count"]["raw"], 10)
-        self.assertEqual(values[mass + "success.count"]["raw"], 6)
-        self.assertEqual(values[base + "zmap.tcp.count"]["raw"], 2000)
+        prefix = "results.eu.interprotocol.icmp-tcp-udp."
+        self.assertEqual(values[prefix + "targets.count"]["raw"], 118)
+        self.assertEqual(values[prefix + "success.count"]["raw"], 113)
+        self.assertAlmostEqual(values[prefix + "success.pct"]["raw"], 100 * 113 / 118)
+        self.assertEqual(values[prefix + "targets.pct"]["raw"], 59)
+        self.assertFalse(any(".measurements." in k or "interprotocol-base" in k for k in values))
 
     def test_local_reference_coverage_counts_unclassified_and_caches_without_raw_reads(self):
         from paper_values.reference_review import prepare as prepare_references
@@ -401,12 +418,13 @@ class RevisionValuesTest(unittest.TestCase):
         before = path.read_bytes()
         with redirect_stdout(io.StringIO()):
             prepare_references(CAMPAIGN, processed, [])
-        prefix = "results.eu.measurements.reference.tcp.base."
+        prefix = "results.eu.reference.tcp.base."
         values = read_references(processed, CAMPAIGN)
         self.assertEqual(values[prefix + "targets.count"]["raw"], 3)
         self.assertEqual(values[prefix + "success.count"]["raw"], 2)
-        self.assertAlmostEqual(values[prefix + "coverage.pct"]["raw"], 200 / 3)
-        self.assertIsNone(values[prefix + "zmap-total.count"]["raw"])
+        self.assertAlmostEqual(values[prefix + "success.pct"]["raw"], 200 / 3)
+        self.assertIsNone(values[prefix + "targets.pct"]["raw"])
+        self.assertFalse(any(".measurements." in k or "zmap-total" in k for k in values))
         with (
             patch(
                 "paper_values.reference_review.connection",
@@ -416,6 +434,15 @@ class RevisionValuesTest(unittest.TestCase):
         ):
             prepare_references(CAMPAIGN, processed, [])
             read_references(processed, CAMPAIGN)
+            write(
+                processed / "eu/interprotocol/interprotocol/target-summary.json",
+                dict(
+                    pair_semantics="pair intersection minus same-strategy triple",
+                    targets={"icmp-tcp": {"SINGLE": 2}, "tcp-udp": {"CONSTANT": 3, "MULTI": 7}},
+                ),
+            )
+            values = read_references(processed, CAMPAIGN)
+            self.assertEqual(values[prefix + "targets.pct"]["raw"], 60)
         self.assertEqual(before, path.read_bytes())
 
     def test_legacy_df_is_unknown_and_does_not_become_df_zero(self):
