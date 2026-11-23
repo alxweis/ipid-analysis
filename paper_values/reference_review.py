@@ -5,7 +5,7 @@ from pathlib import Path
 
 from paper_values.cache import fingerprint
 from paper_values.paired import connection
-from paper_values.review import percentage, read_json, record
+from paper_values.review import percentage, population_values, read_json, record, target_population
 
 VERSION = "local-reference-coverage-v1"
 
@@ -31,14 +31,53 @@ def read_prepared(processed_root, campaign):
             raise ValueError("invalid prepared local-reference identity")
         if any(fingerprint(p["path"]) != p for p in data["inputs"]):
             raise ValueError("local-reference coverage is stale; rerun prepare-paper-review")
+        target_groups, target_source = target_population(processed_root, site)
+        cohorts = {}
         for key, entry in data["values"].items():
             if not key.startswith(f"results.{site}.measurements.reference."):
                 raise ValueError("invalid local-reference coverage key")
             raw = entry["raw"]
             if raw is not None and (type(raw) not in (int, float) or raw < 0):
                 raise ValueError("invalid local-reference coverage value")
-            values[key] = record(
-                raw, entry["unit"], entry["definition"], (path, *entry["sources"])
+            relative = key.removeprefix(f"results.{site}.measurements.reference.")
+            protocol, sample, suffix = relative.split(".", 2)
+            if protocol not in ("icmp", "tcp", "udp") or sample not in ("base", "mass"):
+                raise ValueError("invalid local-reference protocol/sample")
+            if suffix not in (
+                "targets.count",
+                "success.count",
+                "coverage.pct",
+                "zmap-total.count",
+            ):
+                raise ValueError("invalid local-reference metric")
+            cohorts.setdefault((protocol, sample), {})[suffix] = entry
+        # Keep existing v1 preparation/cache files usable. Only the public keys
+        # change; no table rescan or cache rewrite is needed for this migration.
+        for (protocol, sample), entries in cohorts.items():
+            targets = entries["targets.count"]["raw"]
+            success = entries["success.count"]["raw"]
+            sources = {str(path)} | {p for entry in entries.values() for p in entry["sources"]}
+            denominator = None
+            if target_source:
+                # Pair cohorts exclude the same-strategy triple. Every IP can
+                # belong to only one such cohort; their protocol union is disjoint.
+                denominator = sum(
+                    n
+                    for group, counts in target_groups.items()
+                    if protocol in group.split("-")
+                    for strategy, n in counts.items()
+                    if (strategy in ("MULTI", "RANDOM")) == (sample == "mass")
+                )
+                sources.add(str(target_source))
+            values.update(
+                population_values(
+                    f"results.{site}.reference.{protocol}.{sample}",
+                    targets,
+                    success,
+                    denominator,
+                    sources,
+                    "upstream generated target union for this protocol and BASE/MASS sample",
+                )
             )
     return values
 

@@ -627,23 +627,52 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
 
 ### Populations and keys
 
-* `results.<vp>.measurements.<protocol>.<no-conn|conn>.<phase>.<report-run>.<measurement-id>.*`
-  exports every published measurement context, including repetitions excluded from
-  canonical paper-run selection. IDs are normalized to lowercase/hyphens. Suffixes:
-  `zmap-total.count`, `targets.count`, `success.count`, `coverage.pct`. Original
-  discovery size comes from the same VP/protocol's canonical stateless RT coverage;
-  selected targets come from the phase's own coverage. Success means sufficient
-  replies, including UNCLASSIFIED and excluding NOT_ENOUGH_SAMPLES. Missing target
-  evidence remains empty. There is no attempted-target count or `S/N` rate.
-* Interprotocol measurements use
-  `results.<vp>.measurements.interprotocol.<measurement-id>.*`, with separate
-  BASE/MASS identities, targets, successes and coverage. Success requires enough
-  replies in every participating protocol. Each original discovery is exported
-  separately as `zmap.<icmp|tcp|udp>.count`; protocol populations are not summed.
-* Local controls use `results.<vp>.measurements.reference.<protocol>.<base|mass>.*`,
-  with the same four suffixes and provenance pointing to their frozen classified
-  reference table. These controls do not deduplicate cohorts from comparison.json;
-  their actual reference table already contains one row per selected IP.
+* `results.<vp>.<icmp|tcp|udp>.zmap.count` stores the original protocol discovery
+  population once, using canonical stateless RT coverage. It is not a later
+  sample size. Protocol/VP populations must not be summed as globally unique IPs.
+* Phase populations extend the existing key families:
+  `results.<vp>.<icmp|udp>.<rt-base|fi-mass|fi-base>.*` and
+  `results.<vp>.tcp.<no-conn|conn>.<phase>.*` (connection has RT/BASE and FI/BASE).
+  The four suffixes are `targets.count`, `targets.pct`, `success.count`,
+  `success.pct`. Existing `success.count` keys are reused and checked for agreement.
+  `targets.count` comes from the phase's coverage metadata. `success.count` is the
+  strategy population minus NOT_ENOUGH_SAMPLES, **including UNCLASSIFIED**.
+  `success.pct = 100 * success.count / targets.count` for every phase.
+* Selection percentages use the actual source population: RT/BASE and FI/BASE
+  `targets.pct` divide by `results.<vp>.<protocol>.zmap.count`; FI/MASS divides by
+  the same VP/protocol's RT/BASE `success.count`. For example, selecting 20 FI/MASS
+  targets from 200 RT successes gives 10%, even if original discovery had 1,000 IPs.
+  Missing or zero denominators remain empty, not zero or an assumed 100%.
+* Phase matching uses existing canonical artifact selection by VP/protocol/mode/
+  phase, not physical directories: strategy reports may be under `reports/.../
+  figures`, while coverage is under `data/processed`. Canonical discovery/streaming
+  aliases and repetitions follow the existing selection rules. Dates and
+  measurement IDs remain in JSON provenance, not public population keys. The
+  date-heavy `results.<vp>.measurements.*` keys are no longer emitted.
+* Interprotocol uses `results.<vp>.interprotocol.<protocol-group>.*` with the same
+  four suffixes, combining the disjoint BASE/MASS strategy cohorts of that group.
+  Success requires enough replies in **every** participating protocol. Version-2
+  outcomes retain every generated target, including zero-reply targets, so the
+  source population comes from the upstream `target-summary.json`, not from
+  the measured outcome count (100% when the entire nonempty pool was selected).
+  Pair cohorts exclude the same-strategy triple. This is not coverage
+  of an original ZMap intersection; no such unmeasured denominator is inferred.
+* Local controls use `results.<vp>.reference.<protocol>.<base|mass>.*`, with the
+  same four suffixes. Their source population is the upstream union of
+  participating protocol cohorts for this protocol/sample, read from the target
+  summary. These exclusive pair/triple cohorts are disjoint for a given IP, so
+  the union size is their sum after filtering BASE/MASS strategies.
+  The classified reference table includes one row per frozen target, with missing
+  replies classified as NOT_ENOUGH_SAMPLES. Existing v1 prepared reference JSONs
+  are translated on read without any table/raw rescan or cache rewrite. If the
+  upstream target summary is unavailable, only `targets.pct` remains empty;
+  `success.pct` still uses the known selected-target denominator. An upstream
+  population must not be invented from the measured target count.
+* Pinned full TCP follow-ups retain their separate `.full` suffix and existing
+  keys. `targets.pct.full` and `success.pct.full` use the same definitions; the
+  older `coverage.pct.full` alias is retained unchanged for compatibility.
+* TeX output groups the same metric across `af`, `as`, `au`, `eu`, `na`, `sa`
+  directly on consecutive lines. Blank lines separate metrics, never VPs.
 * `results.<vp>.<family>.distribution.<strategy>.pct` uses the exact population of
   the existing strategy plot, including UNCLASSIFIED and NOT_ENOUGH_SAMPLES.
   Families are `icmp.rt-fi`, `udp.rt-fi`, `tcp.no-conn.rt-fi` and `tcp.conn.rt-base`.
