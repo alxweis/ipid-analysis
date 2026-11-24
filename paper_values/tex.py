@@ -139,6 +139,8 @@ def render(values, campaign):
         "% Measurement keys: prefix.VP.protocol.[TCP mode].phase.metric; TCP mode: no-conn|conn.",
         "% VPs: af/as/au/eu/na/sa. Blank values are unavailable, not zero.",
         "% success: sufficient replies; rt-pop: original RT population; pct: percent with metric-specific denominator.",
+        "% fi-mass.all: Phase 2 plot population, including insufficient/missing replies.",
+        "% rt-fi.success-all.count: RT-based successes with all Phase 2 outcomes; counts each IP once.",
         "% rt-fi: RT/Mass merge; rt-vs-fi-base: paired probing-method comparison.",
         "% Per protocol: ZMap -> RT-BASE -> FI-MASS/repeats -> FI-BASE -> RT/FI merge -> comparisons.",
     ]

@@ -535,8 +535,12 @@ def load(artifacts, processed_root, reports_root, campaign, *, archive=False, ra
         **coverage_values(artifacts),
     }
     errors = []
+    from paper_values.phase_populations import load as load_phase_populations
     from paper_values.selection import values as selection_values
 
+    phase_values, phase_errors = load_phase_populations(artifacts)
+    values.update(phase_values)
+    errors.extend(phase_errors)
     for key, entry in values.items():
         if ".tcp.conn." in key and key.endswith(".targets.pct"):
             entry.update(raw=None, status="missing", sources=[])
