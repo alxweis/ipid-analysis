@@ -146,10 +146,12 @@ def choose_plot(spec, site, plots, artifacts):
     )
     if not chosen:
         return None, ()
-    # Canonical run selection comes first. Prefer the sibling paper PDF per
-    # figure identity, without hiding ambiguity between different runs/paths.
-    paper_variants = {p.original_path for p in chosen if p.paper_path != p.original_path}
-    chosen = [p for p in chosen if p.paper_path not in paper_variants]
+    # Canonical run selection comes first. Prefer Final > paper > original for
+    # each identity, preserving ambiguity between unrelated runs/paths.
+    ranks = {}
+    for plot in chosen:
+        ranks[plot.original_path] = max(ranks.get(plot.original_path, 0), plot.variant_rank)
+    chosen = [p for p in chosen if p.variant_rank == ranks[p.original_path]]
     identities = {(p.paper_path, p.size_bytes) for p in chosen}
     hashes = {p.receipt_sha256 for p in chosen if p.receipt_sha256}
     if len(identities) != 1 or len(hashes) > 1:

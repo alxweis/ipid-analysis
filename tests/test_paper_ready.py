@@ -147,6 +147,55 @@ class PaperReadyTest(unittest.TestCase):
         ):
             self.assertEqual(paper_ready.run([job], workers=1)[0].status, "created")
 
+    def test_all_bar_legends_center_and_cap_spacing_at_four_points(self):
+        import matplotlib.pyplot as plt
+        from matplotlib.textpath import TextPath
+
+        from ipid_analysis import paper_plot_style as style
+
+        font, _ = style._font()
+        cases = (
+            ({"itdk": False}, False),  # All ten strategy labels require a smaller gap.
+            ({"itdk": True}, True),  # Hidden insufficient-sample label reserves no width.
+            ({"itdk": True, "entries": [(str(i), chr(65 + i), "red") for i in range(10)]}, True),
+            ({"itdk": True, "entries": [("one", "One", "red")]}, True),
+        )
+        for options, capped in cases:
+            with self.subTest(options=options):
+                fig = plt.figure(figsize=(style.WIDTH, style.HEIGHT))
+                try:
+                    texts = style._legend(fig, font, **options)
+                    w = style.WIDTH * 72
+                    columns = {}
+                    for text, box in zip(texts, fig.artists):
+                        left = box.get_x() * w
+                        right = (
+                            text.get_position()[0] * w
+                            + TextPath((0, 0), text.get_text(), prop=font).get_extents().x1
+                        )
+                        columns[left] = max(columns.get(left, 0), right)
+                    self.assertAlmostEqual(min(columns), w - max(columns.values()))
+                    self.assertGreaterEqual(min(columns), 72 / 300 - 1e-9)
+                    lefts = sorted(columns)
+                    gaps = [b - columns[a] for a, b in zip(lefts, lefts[1:])]
+                    for gap in gaps:
+                        self.assertGreater(gap, 0)
+                        self.assertLessEqual(gap, 4 + 1e-9)
+                        self.assertAlmostEqual(gap, gaps[0])
+                        if capped:
+                            self.assertAlmostEqual(gap, 4)
+                    if not capped:
+                        self.assertLess(gaps[0], 4)
+                        self.assertAlmostEqual(min(columns), 72 / 300)
+                finally:
+                    plt.close(fig)
+        fig = plt.figure(figsize=(style.WIDTH, style.HEIGHT))
+        try:
+            with self.assertRaisesRegex(ValueError, "legend does not fit"):
+                style._legend(fig, font, itdk=False, entries=[("wide", "W" * 200, "red")])
+        finally:
+            plt.close(fig)
+
     def test_existing_paper_output_even_invalid_is_never_repaired(self):
         job = self.fixture(paper_ready.KINDS[0])
         job.destination.write_bytes(b"pre-existing paper file")

@@ -156,6 +156,7 @@ class ConnectionITDKTest(unittest.TestCase):
         )
         canonical.source.write_text(json.dumps(report))
         expected.append(canonical)
+        expected.append(paper_ready.final_job(canonical))
         before = {p: stamp(p) for p in root.rglob("*") if p.is_file()}
         jobs = paper_ready.discover(root, "campaign", sites=["eu"], protocols=["tcp"])
         self.assertEqual(set(jobs), set(expected))

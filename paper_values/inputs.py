@@ -162,9 +162,25 @@ class Plot:
 
     @property
     def original_path(self):
-        """Stable figure identity shared by the original and its paper variant."""
+        """Stable identity shared by the original, paper and approved Final PDF."""
         path = PurePosixPath(self.paper_path)
-        return path.with_name(path.stem.removesuffix("__paper") + path.suffix).as_posix()
+        return path.with_name(original_plot_stem(path.stem) + path.suffix).as_posix()
+
+    @property
+    def variant_rank(self):
+        stem = PurePosixPath(self.paper_path).stem
+        return 2 if stem in FINAL_PLOT_STEMS else 1 if stem.endswith("__paper") else 0
+
+
+# Deliberately exact: arbitrary files ending in __final are not figure variants.
+FINAL_PLOT_STEMS = {
+    "n-rt-b_fi-m_itdk-role-by-strategy__paper__final": "n-rt-b_fi-m_itdk-role-by-strategy",
+    "n-rt-b_fi-m_itdk-role-by-os__paper_final": "n-rt-b_fi-m_itdk-role-by-os",
+}
+
+
+def original_plot_stem(stem):
+    return FINAL_PLOT_STEMS.get(stem, stem.removesuffix("__paper"))
 
 
 class Inputs:
@@ -551,7 +567,7 @@ def validate_plot_path(path):
 
 def identify_plot(name, site, relative, campaign):
     path = PurePosixPath(relative)
-    stem = path.stem.removesuffix("__paper")
+    stem = original_plot_stem(path.stem)
     identity = path.with_name(stem + path.suffix).as_posix()
     if stem.startswith(("interprotocol-campaign-", "interprotocol-upset-")):
         scope = "interprotocol." + stem.removeprefix("interprotocol-").replace("-", ".", 1)

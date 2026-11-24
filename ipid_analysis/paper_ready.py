@@ -85,6 +85,10 @@ PHASES = {
     },
 }
 MAX_REPORT_BYTES = 4 << 20
+FINAL_KINDS = {
+    "itdk-role-by-strategy-final": ("itdk-role-by-strategy", "__paper__final"),
+    "itdk-role-by-os-final": ("itdk-role-by-os", "__paper_final"),
+}
 
 
 @dataclass(frozen=True)
@@ -96,7 +100,8 @@ class Job:
 
     @property
     def destination(self):
-        return self.output or self.source.with_name(self.source.stem + "__paper.pdf")
+        suffix = FINAL_KINDS[self.kind][1] if self.kind in FINAL_KINDS else "__paper"
+        return self.output or self.source.with_name(self.source.stem + suffix + ".pdf")
 
 
 @dataclass(frozen=True)
@@ -108,6 +113,12 @@ class Result:
 
 
 def job_for(path: Path, *, processed_root: Path | None = None) -> Job:
+    for final, (base, suffix) in FINAL_KINDS.items():
+        if path.name == f"n-rt-b_fi-m_{base}{suffix}.pdf":
+            original = path.with_name(f"n-rt-b_fi-m_{base}.json")
+            if not original.is_file():
+                raise FileNotFoundError(original)
+            return Job(original.absolute(), final, processed_root)
     if path.suffix == ".pdf":
         path = path.with_suffix(".json")
     if path.name not in REPORTS:
@@ -115,6 +126,13 @@ def job_for(path: Path, *, processed_root: Path | None = None) -> Job:
     if not path.is_file():
         raise FileNotFoundError(path)
     return Job(path.absolute(), REPORTS[path.name], processed_root)
+
+
+def final_job(job):
+    for kind, (base, _) in FINAL_KINDS.items():
+        if job.kind == base:
+            return Job(job.source, kind, job.processed_root)
+    return job if job.kind in FINAL_KINDS else None
 
 
 def discover(
@@ -157,7 +175,11 @@ def discover(
             suffix = (mode, *PHASES[kind][1:])
             if relative.parts[-len(suffix) - 1 : -1] != suffix:
                 continue
-            jobs.append(job_for(path, processed_root=processed_root))
+            job = job_for(path, processed_root=processed_root)
+            jobs.append(job)
+            final = final_job(job)
+            if final:
+                jobs.append(final)
         if "eu" in sites and set(protocols) == set(PROTOCOLS):
             from paper_values.review import COUNTERS, figure_destination, find_summary
 
@@ -316,7 +338,26 @@ def worker(job: Job) -> Result:
         report = json.loads(content)
         profile = Path(__file__).with_name("paper_plot_style.py")
         profile_bytes = profile.read_bytes()
-        if job.kind.startswith("interprotocol-upset-"):
+        if job.kind in FINAL_KINDS:
+            from ipid_analysis.paper_itdk_final import COMPANIONS, draw, load_data
+
+            companion = job.source.with_name(f"n-rt-b_fi-m_{COMPANIONS[job.kind]}.json")
+            assert_complete(companion)
+            inputs.append(companion)
+            before.append(fingerprint(companion))
+            with companion.open("rb") as stream:
+                payload = stream.read(MAX_REPORT_BYTES + 1)
+            if len(payload) > MAX_REPORT_BYTES:
+                raise ValueError("Final ITDK companion report is unexpectedly large")
+            data = load_data(job.kind, report, json.loads(payload))
+            for name in (
+                "paper_itdk_final.py",
+                "plot_itdk_strategy.py",
+                "plot_itdk_os.py",
+                "plot_os_group_strategy.py",
+            ):
+                profile_bytes += Path(__file__).with_name(name).read_bytes()
+        elif job.kind.startswith("interprotocol-upset-"):
             from ipid_analysis.paper_interprotocol_plot import draw
             from paper_values.review import validate_summary
 
@@ -392,6 +433,9 @@ def worker(job: Job) -> Result:
             "profile_sha256": hashlib.sha256(profile_bytes).hexdigest(),
             "report_sha256": hashlib.sha256(content).hexdigest(),
         }
+        if job.kind in FINAL_KINDS:
+            parameters["population"] = data.populations
+            parameters["companion_report_sha256"] = hashlib.sha256(payload).hexdigest()
         # A competing renderer may have published while this report was read.
         if os.path.lexists(destination):
             status = (
@@ -486,6 +530,11 @@ def main(argv=None):
     parser.add_argument("--protocols", nargs="+", choices=PROTOCOLS, default=list(PROTOCOLS))
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument(
+        "--final-only",
+        action="store_true",
+        help="create only the two Final ITDK complement variants; existing paper PDFs stay untouched",
+    )
+    parser.add_argument(
         "--validation",
         action="store_true",
         help="include the 12 global classifier-validation paper figures and their JSON metadata",
@@ -524,6 +573,8 @@ def main(argv=None):
                     processed_root=args.processed_root,
                 )
             )
+        if args.final_only:
+            jobs = [final for job in jobs if (final := final_job(job)) is not None]
         if not jobs:
             raise ValueError("no supported paper-plot reports found")
         start = perf_counter()

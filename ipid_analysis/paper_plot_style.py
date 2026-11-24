@@ -85,8 +85,7 @@ def _font():
 
 
 def _legend(fig, font, *, itdk, entries=None):
-    # Reserve the same five columns in both figures, even when the last entry
-    # is absent because the ITDK report combines insufficient samples with Unclassified.
+    """Center aligned column pairs, using the available gap up to 4 points."""
     strategy_legend = entries is None
     if strategy_legend:
         entries = [(key, STRATEGY_PRETTY[key], COLORS[key]) for key in ORDER]
@@ -98,10 +97,20 @@ def _legend(fig, font, *, itdk, entries=None):
     column_count = min(5, len(entries))
     row_count = (len(entries) + column_count - 1) // column_count
     columns = [
-        handle + gap + max(widths[i : i + row_count]) for i in range(0, len(entries), row_count)
+        handle
+        + gap
+        + max(
+            widths[j]
+            for j in range(i, min(i + row_count, len(entries)))
+            if not (strategy_legend and itdk and entries[j][0] == "NOT_ENOUGH_SAMPLES")
+        )
+        for i in range(0, len(entries), row_count)
     ]
-    x = 72 / 300
-    between = (WIDTH * 72 - 2 * x - sum(columns)) / max(1, len(columns) - 1)
+    available_gap = (WIDTH * 72 - 2 * 72 / 300 - sum(columns)) / max(1, len(columns) - 1)
+    between = min(4.0, available_gap)
+    x = (WIDTH * 72 - sum(columns) - between * (len(columns) - 1)) / 2
+    if x < 72 / 300 - 1e-9:
+        raise ValueError("centered legend does not fit the 3.33-inch page")
     if between <= 0:
         raise ValueError("Linux Libertine legend does not fit the 3.33-inch page")
     texts = []
@@ -138,16 +147,21 @@ def _legend(fig, font, *, itdk, entries=None):
     return texts
 
 
-def draw(kind: str, percentages, output: Path) -> None:
+def draw(kind: str, percentages, output: Path, *, final=False) -> None:
     """Render normalized rows; no analysis, joins, or source-file writes."""
     font, _ = _font()
     os_roles = kind == "itdk-role-by-os"
     itdk = kind in ("itdk-role-by-strategy", "itdk-role-by-os")
+    if final and not itdk:
+        raise ValueError("Final style is only approved for the two ITDK role figures")
     entries = None
     if os_roles:
         from ipid_analysis.plot_itdk_os import _group_color, _group_label
 
         entries = [(key, _group_label(key), _group_color(key)) for key in percentages.groups]
+        if final:
+            labels = {"router": "Router", "server": "Server"}
+            entries = [(key, labels.get(key, label), color) for key, label, color in entries]
         percentages = percentages.percentages
     connection = kind == "measurement-type-by-strategy-with-connection"
     tcp_flags = kind == "tcp-flags-by-strategy"
@@ -192,6 +206,7 @@ def draw(kind: str, percentages, output: Path) -> None:
                 connection=connection,
                 tcp_flags=tcp_flags,
                 os_entries=entries,
+                final=final,
             )
         finally:
             plt.close(fig)
@@ -209,6 +224,7 @@ def _draw(
     connection=False,
     tcp_flags=False,
     os_entries=None,
+    final=False,
 ):
     os_roles = os_entries is not None
     order = tuple(key for key, _, _ in os_entries) if os_roles else ORDER
@@ -359,7 +375,8 @@ def _draw(
             else "Device type by strategy"
             if itdk
             else "Measurement type by strategy",
-            "Subject": f"{STYLE_VERSION}; Linux Libertine 7 pt; 3.33 inches",
+            "Subject": f"{STYLE_VERSION}; Linux Libertine 7 pt; 3.33 inches"
+            + ("; Final ITDK complement population" if final else ""),
             "Creator": "ipid-analysis paper-ready renderer",
         },
     )
