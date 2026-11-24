@@ -266,7 +266,7 @@ class PaperOSTest(unittest.TestCase):
                         selected.append(job)
         before = {p: stamp(p) for p in root.rglob("*") if p.is_file()}
         jobs = paper_ready.discover(root, "campaign", sites=["eu"])
-        self.assertEqual(set(jobs), set(selected))
+        self.assertEqual(set(jobs), set(selected + [paper_ready.final_job(j) for j in selected]))
         self.assertTrue(
             all(r.status == "would-create" for r in paper_ready.run(jobs, dry_run=True))
         )

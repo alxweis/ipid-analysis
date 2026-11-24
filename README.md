@@ -20,6 +20,11 @@ and stateless/connection-oriented continent probing-interval violins,
 writing sibling `__paper.pdf` variants. The violins require a separate p99.9/256
 aggregate, prepared once with `ARGS="--prepare-probing-intervals --workers 4"`.
 Original artifacts and existing paper variants are never overwritten.
+The two stateless merged ITDK role figures also get Final variants with
+`All Other = all measured IPs minus Router IPs`, including ITDK-unmatched IPs
+(resolved OS IPs only for the OS figure). Render just these additions with
+`make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--final-only --workers 4"`.
+They read existing small aggregate JSONs; no raw scan or ITDK join is required.
 See [Paper-ready plots](docs/PAPER_PLOTS.md)
 for selection, RAM/S3 publication, the design profile and read-only repeat runs.
 Global classifier-validation figures are available with
@@ -31,8 +36,8 @@ additional `__paper.pdf` files with matching JSON metadata. Subsequent rendering
 uses `ARGS="--validation --workers 4"`; original validation results stay untouched.
 `make paper-values` also exports the new E2E metrics and all twelve validation
 figure paths; `make paper-figures-zip` includes them automatically.
-`make paper-values` automatically prefers available sibling `__paper.pdf` paths
-for its existing `fig.*` keys, falling back to the original PDF otherwise.
+`make paper-values` automatically prefers the approved Final ITDK variants,
+then sibling `__paper.pdf` paths, then the original PDF for its existing `fig.*` keys.
 After exporting values, run `make paper-figures-zip` to bundle exactly their
 referenced PDFs into `tmp/paper-figures.zip`, preserving the `reports/...` paths
 for extraction at the manuscript repository root.

@@ -13,6 +13,8 @@ Supported input/output pairs, in the same directory:
 | `n-rt-b_fi-m_itdk-role-by-strategy.json` | `n-rt-b_fi-m_itdk-role-by-strategy__paper.pdf` |
 | `c-rt-b_itdk-role-by-strategy.json` | `c-rt-b_itdk-role-by-strategy__paper.pdf` |
 | `n-rt-b_fi-m_itdk-role-by-os.json` | `n-rt-b_fi-m_itdk-role-by-os__paper.pdf` |
+| `n-rt-b_fi-m_itdk-role-by-strategy.json` plus sibling `n-rt-b_fi-m_strategies.json` | `n-rt-b_fi-m_itdk-role-by-strategy__paper__final.pdf` |
+| `n-rt-b_fi-m_itdk-role-by-os.json` plus sibling `n-rt-b_fi-m_operating-system-group-by-strategy.json` | `n-rt-b_fi-m_itdk-role-by-os__paper_final.pdf` |
 | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection.json` | `n-rt-b_fi-m_measurement-type-by-strategy-with-connection__paper.pdf` |
 | `n-rt-b_fi-m_tcp-flags-by-strategy.json` | `n-rt-b_fi-m_tcp-flags-by-strategy__paper.pdf` |
 | `n-rt-b_fi-b_increment-distributions.json` plus its existing histogram | `n-rt-b_fi-b_increment-distributions__paper.pdf` |
@@ -54,6 +56,56 @@ The first adapter reads `bars[mode].percentages`; the second reads
 `plot_percentages` and `plot_role_totals`. Percentages and populations are not
 recomputed or renormalized. Unsupported schemas and invalid percentages fail
 without changing their sources. Empty ITDK role populations remain empty rows.
+
+### Final ITDK complement figures
+
+Campaign discovery creates both the legacy paper figures and the two additional
+Final figures above for each available VP/protocol. To create only the Final
+additions, use:
+
+```sh
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--final-only --dry-run"
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--final-only --workers 4"
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
+```
+
+Explicit original JSON paths retain their legacy paper output unless
+`--final-only` is supplied. An explicit Final PDF path also selects its Final
+adapter. The two different suffix spellings are intentional.
+
+Router retains the existing exact measured-IP ITDK `T=true` selection, independent
+of `D`; there is no alias-node expansion. All Other is the **entire measured
+population minus Router**, including both matched non-transit and ITDK-unmatched
+IPs. The strategy population is the merged RT-BASE/FI-MASS strategy table,
+including its existing Unclassified/Not Enough Samples rows. Insufficient samples
+remain folded into Unclassified for display, as before. Each role normalizes
+independently. The OS plot uses the measured, resolved OS intersection, not the
+whole shared OS scan; unresolved OS IPs are excluded from both bars.
+
+The adapters subtract exact integer Router category counts from the sibling
+global category counts. They validate protocol, merged target, ZMap/base/mass
+IDs, OS measurement ID, coverage, and subset/count consistency before publication.
+Only bounded aggregate JSON reports are read; no new per-IP scan, classification,
+ITDK/OS join or DuckDB query is performed. The existing OS group selection and
+Other grouping are reused on the expanded population. Missing or incompatible
+reports fail explicitly, without reverting to the old matched-only population.
+Receipts record both report fingerprints and the resulting role populations.
+
+Final design retains Linux Libertine 7 pt, 3.33-inch width, pastel palettes,
+axes/bar geometry and integer segment labels at >=1%. Its compact five-column
+legend is centered as one block, preserving vertically aligned column pairs,
+with 4-pt square swatches, 1.2-pt label gaps and 4-pt column gaps. The OS legend
+uses Router/Server instead of Generic router/Generic server.
+
+All source JSONs, original PDFs and existing paper/Final PDFs remain untouched.
+Existing outputs skip rendering; this is not an overwrite or refresh command.
+`paper-values` prefers Final > paper > original **within the same canonical
+figure identity/run**. The existing `fig.*.itdk-role-by-strategy` and
+`fig.*.itdk-role-by-os` keys then reference the Final filenames, so the ZIP
+includes them automatically with unchanged directory structure. Numerical ITDK
+scalar keys retain their existing report definitions; this addition changes
+figure populations, not historical scalar cohorts.
 
 The connection-oriented TCP ITDK variant reads the same exact `plot_percentages`
 and `plot_role_totals` fields. It is discovered only in TCP

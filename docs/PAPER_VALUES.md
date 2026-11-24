@@ -239,6 +239,12 @@ PDF paths; copy `reports/` without changing its relative structure.
 
 For each selected `fig.*` value, the exporter prefers the sibling
 `<original-stem>__paper.pdf` when present; otherwise it exports the original PDF.
+For the two merged stateless ITDK role figures it first prefers
+`n-rt-b_fi-m_itdk-role-by-strategy__paper__final.pdf` and
+`n-rt-b_fi-m_itdk-role-by-os__paper_final.pdf`, respectively. These Final
+figures use all measured IPs minus Router for All Other (with resolved OS only
+in the OS figure). Existing numeric ITDK scalar keys retain their original
+report populations. See [Final ITDK figures](PAPER_PLOTS.md#final-itdk-complement-figures).
 This works for mounted directories, ZIP archives and mixed inputs, without
 changing public keys or selecting a different measurement run. Canonical-run
 selection happens first; paper/original variants of the same figure are then
