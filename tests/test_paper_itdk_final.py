@@ -294,7 +294,7 @@ class FinalITDKTest(unittest.TestCase):
         font, _ = style._font()
         fig = plt.figure(figsize=(style.WIDTH, style.HEIGHT))
         self.addCleanup(plt.close, fig)
-        labels = style._legend(fig, font, itdk=True, centered=True)
+        labels = style._legend(fig, font, itdk=True)
         w, h = fig.get_size_inches() * 72
         self.assertEqual(len(labels), 9)
         for text, box in zip(labels, fig.artists):

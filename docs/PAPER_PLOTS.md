@@ -95,7 +95,8 @@ Receipts record both report fingerprints and the resulting role populations.
 Final design retains Linux Libertine 7 pt, 3.33-inch width, pastel palettes,
 axes/bar geometry and integer segment labels at >=1%. Its compact five-column
 legend is centered as one block, preserving vertically aligned column pairs,
-with 4-pt square swatches, 1.2-pt label gaps and 4-pt column gaps. The OS legend
+with 4-pt square swatches and 1.2-pt label gaps. Column gaps are automatically
+limited to 4 pt, like all shared paper bar legends. The OS legend
 uses Router/Server instead of Generic router/Generic server.
 
 All source JSONs, original PDFs and existing paper/Final PDFs remain untouched.
@@ -334,6 +335,15 @@ The opt-in `paper_plot_style` profile matches the approved drafts: exact PDF
 width 3.33 inches, Linux Libertine at 7 pt, pastel colors (including the lighter
 Constant blue and the chosen gray/brown), two-row/five-column legend with
 4-by-4-point squares, and rounded integer labels for shares >=1%.
+All shared paper bar legends center their entire column block. The column gap
+is `min(4 pt, available width after column widths and outer padding / gap count)`:
+compact legends retain 4 pt, while the full ten-label strategy legend uses
+approximately 2.8 pt depending on font metrics. Both rows retain aligned
+column starts. Hidden ITDK Not Enough Samples entries reserve no label width.
+The 1.2-pt swatch/label gap, 7-pt text and page width remain fixed; labels that
+cannot fit fail rather than shrinking the font or clipping. This shared rule
+also applies when the renderer is used for TCP-Connection Full follow-up plots.
+Previously generated PDFs still skip rendering and remain unchanged.
 Python's nearest-even rounding at exact halves is retained. The free gap between
 bars is 8.316 pt and each outer frame clearance is 1.980 pt. The refinement guide
 retains its chosen light gray. The ITDK labels are `Router`, `All Other`, and
@@ -385,8 +395,8 @@ The approved TCP three-bar design reuses the same renderer, palette, text size,
 The frame is 0.6325 inches high; its left edge is at 1.01 inches to fit the
 two-line `RT-based &` / `Connection-oriented` tick label. `Measurement Type` is
 centered on that frame with a 2-point downward offset. The legend keeps the
-original five-column/two-row distribution; the compact centered experiment is
-not applied. The gray refinement guide connects only the top RT-based
+original five-column/two-row order with the same centered block and automatic
+column spacing capped at 4 pt. The gray refinement guide connects only the top RT-based
 Unclassified segment to the Fixed-Interval bar, never to the independent third bar.
 
 The approved TCP-flags design uses the same three-bar frame, spacing and legend.

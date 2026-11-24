@@ -84,9 +84,8 @@ def _font():
     return font_manager.FontProperties(fname=path, size=FONT_SIZE), temporary
 
 
-def _legend(fig, font, *, itdk, entries=None, centered=False):
-    # Reserve the same five columns in both figures, even when the last entry
-    # is absent because the ITDK report combines insufficient samples with Unclassified.
+def _legend(fig, font, *, itdk, entries=None):
+    """Center aligned column pairs, using the available gap up to 4 points."""
     strategy_legend = entries is None
     if strategy_legend:
         entries = [(key, STRATEGY_PRETTY[key], COLORS[key]) for key in ORDER]
@@ -103,17 +102,14 @@ def _legend(fig, font, *, itdk, entries=None, centered=False):
         + max(
             widths[j]
             for j in range(i, min(i + row_count, len(entries)))
-            if not (
-                centered and strategy_legend and itdk and entries[j][0] == "NOT_ENOUGH_SAMPLES"
-            )
+            if not (strategy_legend and itdk and entries[j][0] == "NOT_ENOUGH_SAMPLES")
         )
         for i in range(0, len(entries), row_count)
     ]
-    between = (
-        4.0 if centered else (WIDTH * 72 - 2 * 72 / 300 - sum(columns)) / max(1, len(columns) - 1)
-    )
-    x = (WIDTH * 72 - sum(columns) - between * (len(columns) - 1)) / 2 if centered else 72 / 300
-    if x < 72 / 300:
+    available_gap = (WIDTH * 72 - 2 * 72 / 300 - sum(columns)) / max(1, len(columns) - 1)
+    between = min(4.0, available_gap)
+    x = (WIDTH * 72 - sum(columns) - between * (len(columns) - 1)) / 2
+    if x < 72 / 300 - 1e-9:
         raise ValueError("centered legend does not fit the 3.33-inch page")
     if between <= 0:
         raise ValueError("Linux Libertine legend does not fit the 3.33-inch page")
@@ -299,7 +295,7 @@ def _draw(
                 )
                 segments.append((x, y, value))
             x += value
-    legends = _legend(fig, font, itdk=itdk, entries=os_entries, centered=final)
+    legends = _legend(fig, font, itdk=itdk, entries=os_entries)
     for text in fig.findobj(match=Text):
         text.set_fontproperties(font)
     fig.canvas.draw()

@@ -20,6 +20,8 @@ and stateless/connection-oriented continent probing-interval violins,
 writing sibling `__paper.pdf` variants. The violins require a separate p99.9/256
 aggregate, prepared once with `ARGS="--prepare-probing-intervals --workers 4"`.
 Original artifacts and existing paper variants are never overwritten.
+Shared paper bar legends are centered as a block, with automatically fitted
+column gaps capped at 4 pt; the 7-pt font, 4-pt squares and 1.2-pt label gaps stay fixed.
 The two stateless merged ITDK role figures also get Final variants with
 `All Other = all measured IPs minus Router IPs`, including ITDK-unmatched IPs
 (resolved OS IPs only for the OS figure). Render just these additions with
