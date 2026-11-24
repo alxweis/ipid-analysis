@@ -734,6 +734,69 @@ unknown/mixed DF and input identities, even when these are not public TeX metric
   which joins two separate RT measurements. Neither existing definition nor value
   is replaced. The preparation checks four connections and valid handshake slots.
 
+### Strategy shares aligned with the Phase 2 plot
+
+Text describing the two measurement-type bars needs two explicit denominators:
+RT-based shares use sufficiently sampled Phase 1 IPs (`success`, including
+Unclassified). The Fixed-Interval bar includes **all selected Phase 2 IPs**,
+including Unclassified and Not Enough Samples. Existing `.success.*` keys and
+coverage definitions are retained; none is renamed or silently renormalized.
+
+For every VP and family (`icmp`, `udp`, `tcp.no-conn`), ordinary `make paper-values`
+additionally exports:
+
+| Suffix after `results.<vp>.<family>` | Definition |
+| --- | --- |
+| `fi-mass.all.count` | Complete Phase 2 target cohort, including insufficient and missing replies |
+| `fi-mass.all.<strategy>.count` | Exact class count in that cohort; missing result rows contribute to `not-enough-samples` |
+| `fi-mass.all.<strategy>.pct` | Class count / complete Phase 2 cohort, for all ten classes |
+| `fi-mass.all.single-per-destination-per-bucket.pct` | Sum of these three class counts / the same complete cohort |
+| `rt-fi.success-all.count` | RT-based sufficiently sampled IPs with their Unclassified rows replaced by all Phase 2 outcomes, counted once |
+
+The internal phase key is retained for compatibility; manuscript prose can use
+**RT-based**, **Fixed-Interval**, and **Phase 1/2/3**. For example, use
+`results.eu.icmp.fi-mass.all.random.pct` when discussing the Fixed-Interval bar.
+The existing `...fi-mass.success.random.pct` continues to describe Random among
+IPs with sufficient replies. A 56.18% success-normalized share at about 97.24%
+coverage corresponds to about 54.6% of all Phase 2 targets, displayed as 55 in
+the integer-labelled bar. The exact EU counts, 2,633,904 Random IPs / 4,820,880
+targets, give 54.64%. Calculate from exact counts, not rounded TeX values.
+
+`success-all.count` is **not** `success.count + Phase 2 targets`: the refined IPs
+already occurred in Phase 1. It includes failed Phase 2 refinements but excludes
+original Phase 1 failures. For current EU ICMP, final `rt-fi.success.count` is
+318,972,823 while `rt-fi.success-all.count` is 319,105,777. The original selected
+target count remains 375,963,342. Actual combined coverage still uses
+`rt-fi.success.count / rt-fi.targets.count`, not the presentation count.
+If a Phase 1 strategy report itself retains insufficient rows, those rows are
+excluded from `success-all.count`; they are not retroactively called successes.
+
+The exporter reuses the existing small measurement-type report's bar counts,
+cross-checking them against canonical strategy reports when available. Legacy
+campaigns without that plot report use the same counting rule as the existing
+refinement plot: Phase 1 Unclassified defines the cohort, and missing Phase 2
+rows are Not Enough Samples. Unbound legacy phase reports that do not establish
+this relationship leave the new values empty without blocking old exports.
+Conflicting published bar counts, percentages or target metadata fail strict
+export and preserve previous outputs. Missing evidence leaves values empty;
+a zero cohort has zero counts and undefined percentages.
+The combined count requires both the original and merged strategy reports.
+
+Existing merged `distribution.*.pct`, VP min/max/spread, conditional OS/ITDK
+metrics and all original success/coverage keys are unchanged. This extension
+only reads small reports, works with the existing archive input, and does not
+open per-IP Parquet or raw measurement files, prepare new aggregates, alter
+plots, or require `--recompute`. Refresh with:
+
+```sh
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
+```
+
+Figure paths and ZIP selection are unchanged. Switch the manuscript's Phase 2
+references to the new `.all.*` keys; the paper repository is not edited by these
+commands.
+
 ### Full TCP Connection RT/BASE (historical FI/BASE retained)
 
 The old Connection RT sample values and figures remain available under their
