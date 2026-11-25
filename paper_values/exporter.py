@@ -334,7 +334,13 @@ def export(
             proposals = []
             try:
                 for spec in metric["sources"]:
-                    scopes = (site,) if site is not None or "protocol" not in spec else sites
+                    scopes = (
+                        (spec["site"],)
+                        if "site" in spec
+                        else (site,)
+                        if site is not None or "protocol" not in spec
+                        else sites
+                    )
                     for scope in scopes:
                         raw, sources = (
                             choose_plot(spec, scope, plots, valid)
