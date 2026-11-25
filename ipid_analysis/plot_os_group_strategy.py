@@ -395,10 +395,12 @@ def _validate_raw_schema(os_path: Path) -> None:
         )
 
 
-def _group_file_is_current(os_path: Path, group_path: Path) -> bool:
+def _group_file_is_current(
+    os_path: Path, group_path: Path, taxonomy_version=TAXONOMY_VERSION
+) -> bool:
     metadata_path = group_path.with_suffix(".meta.json")
     if (
-        not cache_current(group_path, [os_path], {"taxonomy_version": TAXONOMY_VERSION})
+        not cache_current(group_path, [os_path], {"taxonomy_version": taxonomy_version})
         or not metadata_path.is_file()
     ):
         return False
@@ -410,7 +412,7 @@ def _group_file_is_current(os_path: Path, group_path: Path) -> bool:
     return tuple(pq.read_schema(group_path).names) == tuple(GROUP_SCHEMA.names) and metadata == {
         "source_mtime_ns": source.st_mtime_ns,
         "source_size": source.st_size,
-        "taxonomy_version": TAXONOMY_VERSION,
+        "taxonomy_version": taxonomy_version,
     }
 
 
@@ -420,12 +422,16 @@ def write_os_groups(
     *,
     compression: str | None = "zstd",
     threads: int = 0,
+    tag_mapping=None,
+    taxonomy_version=TAXONOMY_VERSION,
 ) -> dict:
     """Validate current os.pq and write resolved IP_ADDR -> OS_GROUP rows."""
+    if tag_mapping is not None and taxonomy_version == TAXONOMY_VERSION:
+        raise ValueError("custom OS tag mappings require a separate taxonomy version")
     if not os_path.is_file():
         raise FileNotFoundError(os_path)
     _validate_raw_schema(os_path)
-    if _group_file_is_current(os_path, output_path):
+    if _group_file_is_current(os_path, output_path, taxonomy_version):
         return {
             "os_evidence_ip_count": pq.ParquetFile(os_path).metadata.num_rows,
             "grouped_ip_count": pq.ParquetFile(output_path).metadata.num_rows,
@@ -437,7 +443,9 @@ def write_os_groups(
     temporary.unlink(missing_ok=True)
     source = _sql_literal(str(os_path))
     destination = _sql_literal(str(temporary))
-    group_expression = _case_mapping("OS_TAG", TAG_TO_GROUP, "NULL")
+    group_expression = _case_mapping(
+        "OS_TAG", TAG_TO_GROUP if tag_mapping is None else tag_mapping, "NULL"
+    )
     parquet_compression = compression or "uncompressed"
     with connect(config={"threads": threads} if threads else {}) as con:
         try:
@@ -493,7 +501,7 @@ def write_os_groups(
             temporary,
             output_path,
             inputs=[os_path],
-            parameters={"taxonomy_version": TAXONOMY_VERSION},
+            parameters={"taxonomy_version": taxonomy_version},
         )
         temporary.unlink(missing_ok=True)
         source_stat = os_path.stat()
@@ -502,7 +510,7 @@ def write_os_groups(
             {
                 "source_mtime_ns": source_stat.st_mtime_ns,
                 "source_size": source_stat.st_size,
-                "taxonomy_version": TAXONOMY_VERSION,
+                "taxonomy_version": taxonomy_version,
             },
         )
         return {
@@ -519,8 +527,10 @@ def aggregate_os_groups(
     *,
     compression: str | None = "zstd",
     threads: int = 0,
+    group_info=None,
 ) -> dict:
     """Join processed groups to strategies and write row-normalized counts."""
+    group_info = GROUP_INFO if group_info is None else group_info
     for path in (strategy_path, group_path):
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -558,7 +568,7 @@ def aggregate_os_groups(
         unknown_strategies = sorted(set(strategy_values or []) - set(STRATEGY_NAMES))
         if unknown_strategies:
             raise ValueError(f"{strategy_path}: unknown IP-ID strategies: {unknown_strategies}")
-        unknown_groups = sorted({str(row[0]) for row in counts} - set(GROUP_INFO))
+        unknown_groups = sorted({str(row[0]) for row in counts} - set(group_info))
         if unknown_groups:
             raise ValueError(f"{group_path}: unknown OS_GROUP values: {unknown_groups}")
         if not counts:
@@ -571,11 +581,11 @@ def aggregate_os_groups(
         }
         ordered_groups = sorted(
             totals,
-            key=lambda group: (GROUP_INFO[group][0], -totals[group], GROUP_INFO[group][1]),
+            key=lambda group: (group_info[group][0], -totals[group], group_info[group][1]),
         )
         rows = []
         for group in ordered_groups:
-            section, label = GROUP_INFO[group]
+            section, label = group_info[group]
             total = totals[group]
             for strategy in HEATMAP_STRATEGIES:
                 count = count_map.get((group, strategy), 0)
@@ -603,8 +613,8 @@ def aggregate_os_groups(
             "os_group_count": len(totals),
             "groups": {
                 group: {
-                    "section": GROUP_INFO[group][0],
-                    "label": GROUP_INFO[group][1],
+                    "section": group_info[group][0],
+                    "label": group_info[group][1],
                     "ip_count": totals[group],
                 }
                 for group in ordered_groups

@@ -142,12 +142,18 @@ def _paper_order_index(group: str) -> int:
 def _select_groups(
     counts: dict[str, dict[str, int]],
     role_totals: dict[str, int],
+    group_order=None,
 ) -> tuple[str, ...]:
+    order = PAPER_OS_GROUP_ORDER if group_order is None else group_order
+
+    def order_index(group):
+        return order.index(group) if group in order else len(order)
+
     represented = {
         group for role in ROLE_ORDER for group, count in counts[role].items() if count > 0
     }
     if len(represented) <= MAX_LEGEND_GROUPS:
-        return tuple(sorted(represented, key=_paper_order_index))
+        return tuple(sorted(represented, key=order_index))
 
     def mean_role_percentage(group: str) -> float:
         shares = [
@@ -159,19 +165,22 @@ def _select_groups(
 
     strongest = sorted(
         represented,
-        key=lambda group: (-mean_role_percentage(group), _paper_order_index(group)),
+        key=lambda group: (-mean_role_percentage(group), order_index(group)),
     )[:MAX_NAMED_GROUPS]
-    return (*sorted(strongest, key=_paper_order_index), OTHER_GROUP)
+    return (*sorted(strongest, key=order_index), OTHER_GROUP)
 
 
-def _role_plot_data(rows: list[tuple[str, str, int]]) -> OSRolePlotData:
+def _role_plot_data(
+    rows: list[tuple[str, str, int]], *, group_info=None, group_order=None
+) -> OSRolePlotData:
+    group_info = GROUP_INFO if group_info is None else group_info
     counts = {role: {} for role in ROLE_ORDER}
     for role, group, count in rows:
-        if role not in counts or group not in GROUP_INFO:
+        if role not in counts or group not in group_info:
             continue
         counts[role][group] = counts[role].get(group, 0) + int(count)
     role_totals = {role: sum(counts[role].values()) for role in ROLE_ORDER}
-    groups = _select_groups(counts, role_totals)
+    groups = _select_groups(counts, role_totals, group_order)
     percentages = {role: {} for role in ROLE_ORDER}
     plot_counts = {role: {} for role in ROLE_ORDER}
     named = set(groups) - {OTHER_GROUP}

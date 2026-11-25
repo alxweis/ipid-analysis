@@ -146,7 +146,7 @@ def choose_plot(spec, site, plots, artifacts):
     )
     if not chosen:
         return None, ()
-    # Canonical run selection comes first. Prefer Final > paper > original for
+    # Canonical run selection comes first. Prefer adjusted > Final > paper > original for
     # each identity, preserving ambiguity between unrelated runs/paths.
     ranks = {}
     for plot in chosen:
@@ -158,6 +158,16 @@ def choose_plot(spec, site, plots, artifacts):
         raise ValueError(f"ambiguous PDF for {site}/{scope}")
     if any(p.error for p in chosen):
         raise ValueError("; ".join(p.error for p in chosen if p.error))
+    for plot in chosen:
+        if plot.variant_rank == 3:
+            expected = {
+                a.sha256
+                for a in reports
+                if (a.connection, a.phase, a.kind, a.run)
+                == (spec["connection"], spec["phase"], spec["kind"], plot.run)
+            }
+            if plot.source_report_sha256 not in expected:
+                raise ValueError("adjusted OS PDF source differs from its canonical report")
     return chosen[0].paper_path, tuple(p.name for p in chosen)
 
 

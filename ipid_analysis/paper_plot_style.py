@@ -84,7 +84,7 @@ def _font():
     return font_manager.FontProperties(fname=path, size=FONT_SIZE), temporary
 
 
-def _legend(fig, font, *, itdk, entries=None):
+def _legend(fig, font, *, itdk, entries=None, columns=5):
     """Center aligned column pairs, using the available gap up to 4 points."""
     strategy_legend = entries is None
     if strategy_legend:
@@ -94,7 +94,7 @@ def _legend(fig, font, *, itdk, entries=None):
     widths = [TextPath((0, 0), label, prop=font).get_extents().x1 for _, label, _ in entries]
     handle, gap = 4.0, 1.2
     height = fig.get_size_inches()[1]
-    column_count = min(5, len(entries))
+    column_count = min(columns, len(entries))
     row_count = (len(entries) + column_count - 1) // column_count
     columns = [
         handle
@@ -147,7 +147,16 @@ def _legend(fig, font, *, itdk, entries=None):
     return texts
 
 
-def draw(kind: str, percentages, output: Path, *, final=False) -> None:
+def draw(
+    kind: str,
+    percentages,
+    output: Path,
+    *,
+    final=False,
+    os_group_info=None,
+    os_colors=None,
+    os_xlabel=None,
+) -> None:
     """Render normalized rows; no analysis, joins, or source-file writes."""
     font, _ = _font()
     os_roles = kind == "itdk-role-by-os"
@@ -155,19 +164,50 @@ def draw(kind: str, percentages, output: Path, *, final=False) -> None:
     if final and not itdk:
         raise ValueError("Final style is only approved for the two ITDK role figures")
     entries = None
+    legend_columns = 5
+    extra_legend_height = 0
     if os_roles:
         from ipid_analysis.plot_itdk_os import _group_color, _group_label
 
-        entries = [(key, _group_label(key), _group_color(key)) for key in percentages.groups]
+        entries = [
+            (
+                key,
+                os_group_info[key][1]
+                if os_group_info is not None and key in os_group_info
+                else _group_label(key),
+                os_colors[key] if os_colors is not None else _group_color(key),
+            )
+            for key in percentages.groups
+        ]
         if final:
             labels = {"router": "Router", "server": "Server"}
             entries = [(key, labels.get(key, label), color) for key, label, color in entries]
+        if os_group_info is not None and entries:
+            # New, longer adjusted names retain 7 pt and aligned column pairs.
+            # Prefer two rows; use more rows only if the labels cannot fit.
+            legend_columns = min(5, (len(entries) + 1) // 2)
+            while legend_columns > 1:
+                row_count = (len(entries) + legend_columns - 1) // legend_columns
+                widths = [
+                    5.2
+                    + max(
+                        TextPath((0, 0), label, prop=font).get_extents().x1
+                        for _, label, _ in entries[i : i + row_count]
+                    )
+                    for i in range(0, len(entries), row_count)
+                ]
+                if sum(widths) + 0.48 < WIDTH * 72:
+                    break
+                legend_columns -= 1
+            extra_legend_height = (
+                max(0, (len(entries) + legend_columns - 1) // legend_columns - 2) * 9 / 72
+            )
         percentages = percentages.percentages
     connection = kind == "measurement-type-by-strategy-with-connection"
     tcp_flags = kind == "tcp-flags-by-strategy"
     rows = ROLES if itdk else MODES
     labels = ("Router", "All Other") if itdk else MODES
-    height = HEIGHT
+    height = HEIGHT + extra_legend_height
     if connection:
         from ipid_analysis.plot_strategy_refinement import MODE_LABELS, MODES_WITH_CONNECTION
 
@@ -207,6 +247,8 @@ def draw(kind: str, percentages, output: Path, *, final=False) -> None:
                 tcp_flags=tcp_flags,
                 os_entries=entries,
                 final=final,
+                os_xlabel=os_xlabel,
+                legend_columns=legend_columns,
             )
         finally:
             plt.close(fig)
@@ -225,6 +267,8 @@ def _draw(
     tcp_flags=False,
     os_entries=None,
     final=False,
+    os_xlabel=None,
+    legend_columns=5,
 ):
     os_roles = os_entries is not None
     order = tuple(key for key, _, _ in os_entries) if os_roles else ORDER
@@ -242,7 +286,8 @@ def _draw(
     ax.set_xticks(range(0, 101, 20))
     ax.set_xticks([n for n in range(5, 100, 5) if n % 20], minor=True)
     ax.set_xlabel(
-        "OS Distribution [%]" if os_roles else "IP-ID Selection Strategy [%]", labelpad=1
+        (os_xlabel or "OS Distribution [%]") if os_roles else "IP-ID Selection Strategy [%]",
+        labelpad=1,
     )
     ax.tick_params(axis="x", which="major", length=2.5, width=0.45, pad=1)
     ax.tick_params(axis="x", which="minor", length=1.4, width=0.35)
@@ -295,7 +340,7 @@ def _draw(
                 )
                 segments.append((x, y, value))
             x += value
-    legends = _legend(fig, font, itdk=itdk, entries=os_entries)
+    legends = _legend(fig, font, itdk=itdk, entries=os_entries, columns=legend_columns)
     for text in fig.findobj(match=Text):
         text.set_fontproperties(font)
     fig.canvas.draw()

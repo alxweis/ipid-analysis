@@ -159,6 +159,7 @@ class Plot:
     size_bytes: int = 0
     receipt_sha256: str | None = None
     error: str | None = None
+    source_report_sha256: str | None = None
 
     @property
     def original_path(self):
@@ -169,6 +170,8 @@ class Plot:
     @property
     def variant_rank(self):
         stem = PurePosixPath(self.paper_path).stem
+        if stem in ADJUSTED_PLOT_STEMS:
+            return 3
         return 2 if stem in FINAL_PLOT_STEMS else 1 if stem.endswith("__paper") else 0
 
 
@@ -177,10 +180,14 @@ FINAL_PLOT_STEMS = {
     "n-rt-b_fi-m_itdk-role-by-strategy__paper__final": "n-rt-b_fi-m_itdk-role-by-strategy",
     "n-rt-b_fi-m_itdk-role-by-os__paper_final": "n-rt-b_fi-m_itdk-role-by-os",
 }
+ADJUSTED_PLOT_STEMS = {
+    "n-rt-b_fi-m_operating-system-group-by-strategy__paper__adjusted": "n-rt-b_fi-m_operating-system-group-by-strategy",
+    "n-rt-b_fi-m_itdk-role-by-os__paper_final__adjusted": "n-rt-b_fi-m_itdk-role-by-os",
+}
 
 
 def original_plot_stem(stem):
-    return FINAL_PLOT_STEMS.get(stem, stem.removesuffix("__paper"))
+    return ADJUSTED_PLOT_STEMS.get(stem, FINAL_PLOT_STEMS.get(stem, stem.removesuffix("__paper")))
 
 
 class Inputs:
@@ -451,6 +458,13 @@ class Inputs:
             )
             plot.size_bytes = payload["size_bytes"]
             plot.receipt_sha256 = marker["sha256"] if marker is not None else None
+            if PurePosixPath(plot.paper_path).stem in ADJUSTED_PLOT_STEMS:
+                params = marker.get("parameters", {}) if marker is not None else {}
+                if params.get("operation") != "paper-os-adjusted-v1" or not re.fullmatch(
+                    r"[a-f0-9]{64}", str(params.get("report_sha256", ""))
+                ):
+                    raise ValueError("adjusted OS PDF lacks its source-report receipt")
+                plot.source_report_sha256 = params["report_sha256"]
         except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
             plot.error = str(exc)
         return plot

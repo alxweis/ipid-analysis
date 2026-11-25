@@ -287,6 +287,24 @@ def site_values(campaign, spec, site, done, root, metrics):
         with path.open("rb") as stream:
             if stream.read(5) != b"%PDF-":
                 raise ValueError(f"invalid follow-up PDF: {path}")
+        if suffix == "tcp.conn.rt-base.os-by-strategy":
+            adjusted = path.with_name(path.stem + "__adjusted.pdf")
+            if adjusted.is_file():
+                verify_file(adjusted)
+                marker = adjusted.parent / ".ipid-complete" / (adjusted.name + ".json")
+                params = read_json(marker).get("parameters", {})
+                original = relative.replace("__paper__full.pdf", "__full.json")
+                if (
+                    params.get("operation") != "paper-os-adjusted-v1"
+                    or params.get("adjusted_original_report_sha256")
+                    != inventory[original]["sha256"]
+                ):
+                    raise ValueError("adjusted OS PDF differs from the pinned Full report")
+                with adjusted.open("rb") as stream:
+                    if stream.read(5) != b"%PDF-":
+                        raise ValueError("invalid adjusted Full OS PDF")
+                path = adjusted
+                relative = str(Path(relative).with_name(adjusted.name).as_posix())
         member = (
             f"reports/followups/{spec['measurement_run']}/{spec['analysis_id']}/{site}/{relative}"
         )
