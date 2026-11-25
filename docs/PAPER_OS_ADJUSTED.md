@@ -84,8 +84,14 @@ run directories and connection-sample heatmaps are not adjusted
 or substituted for Full measurements.
 
 Heatmap rows are normalized by the newly split group's measured, resolved
-population. Both children of each split have their own rows and inline IP
-counts. The heatmap y-label is exactly
+population, with inline IP counts. The Network OS panel uses this fixed row
+selection/order: Cisco, Huawei, ZTE, HPE Comware, Aruba, MikroTik RouterOS,
+DrayTek, Zyxel, TP-Link, F5, SonicWall, Check Point, pfSense, OPNsense.
+The General-Purpose OS panel keeps its original rows/order. Missing groups
+remain visible with zero IPs. SwOS and the HPE remainder remain in the full
+adjusted aggregate and the bar selection but are not rows in this heatmap.
+Changing this display selection does not invalidate numerical preparation.
+The heatmap y-label is exactly
 `Operating-System Group / Vendor (#IP Addr.)`.
 
 The ITDK bars retain the Final populations: Router is the unchanged exact-IP

@@ -45,6 +45,22 @@ COLORS.update(
 )
 HEATMAP_Y_LABEL = "Operating-System Group / Vendor (#IP Addr.)"
 BAR_X_LABEL = "Operating-System Group / Vendor [%]"
+NETWORK_HEATMAP_GROUPS = (
+    "cisco",
+    "huawei",
+    "zte",
+    "hpe-comware",
+    "aruba",
+    "mikrotik-routeros",
+    "draytek",
+    "zyxel",
+    "tp-link",
+    "f5",
+    "sonicwall",
+    "check-point",
+    "pfsense",
+    "opnsense",
+)
 
 
 def parent(group):
@@ -57,6 +73,11 @@ def parent(group):
 
 def selection(original):
     return tuple(
-        (title, tuple(key for old in keys for key in SPLITS.get(old, (old,))))
+        (
+            title,
+            NETWORK_HEATMAP_GROUPS
+            if title == "Network OS"
+            else tuple(key for old in keys for key in SPLITS.get(old, (old,))),
+        )
         for title, keys in original
     )

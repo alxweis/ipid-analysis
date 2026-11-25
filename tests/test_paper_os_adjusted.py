@@ -33,7 +33,7 @@ def stamp(path):
     return path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def fixture(root, *, connection=False):
+def fixture(root, *, connection=False, extra_tags=()):
     root.mkdir(parents=True, exist_ok=True)
     data = root / "data/icmp_fixture/no-connection/merged/rt-based-base_fixed-interval-mass"
     if connection:
@@ -41,7 +41,7 @@ def fixture(root, *, connection=False):
     data.mkdir(parents=True)
     prefix = "c-rt-b_" if connection else "n-rt-b_fi-m_"
     raw = root / "os.pq"
-    ips = [f"192.0.2.{i}" for i in range(1, 11)]
+    ips = [f"192.0.2.{i}" for i in range(1, 11 + len(extra_tags))]
     tags = [
         "mikrotik-routeros",
         "mikrotik-routeros",
@@ -53,14 +53,14 @@ def fixture(root, *, connection=False):
         None,
         "mikrotik-routeros",
         "mikrotik",
-    ]
+    ] + list(extra_tags)
     raw_data = {
         "IP_ADDR": ips,
         "OS_STATUS": ["resolved" if t else "unclassified" for t in tags],
         "OS_TAG": tags,
     }
     for column in RAW_OS_COLUMNS[3:]:
-        raw_data[column] = [None] * 10
+        raw_data[column] = [None] * len(tags)
     pq.write_table(pa.table(raw_data), raw)
     classifications = [
         "CONSTANT",
@@ -72,10 +72,10 @@ def fixture(root, *, connection=False):
         "CONSTANT",
         "UNCLASSIFIED",
         "CONSTANT",
-    ]
+    ] + ["CONSTANT"] * len(extra_tags)
     labels = data / (prefix + "strategies.pq")
     pq.write_table(
-        pa.table({"IP_ADDR": ips[:8] + [ips[9]], "IPID_SELECTION_STRATEGY": classifications}),
+        pa.table({"IP_ADDR": ips[:8] + ips[9:], "IPID_SELECTION_STRATEGY": classifications}),
         labels,
     )
     groups = root / "original-os-groups.pq"
@@ -118,8 +118,8 @@ def fixture(root, *, connection=False):
         connection_mode="connection" if connection else "no-connection",
         os=dict(measurement_id="shared-os"),
         coverage=dict(
-            total_measured=9,
-            os_resolved=8,
+            total_measured=len(classifications),
+            os_resolved=stats["matched_grouped_ip_count"],
             itdk_os_resolved=4,
             transit_observed_os_resolved=2,
             no_transit_evidence_os_resolved=2,
@@ -183,6 +183,63 @@ class AdjustedOSTest(unittest.TestCase):
         for key, group in TAG_TO_GROUP.items():
             if group not in SPLITS:
                 self.assertEqual(TAGS[key], group)
+
+    def test_heatmap_network_order_and_tp_link_pfsense_from_cached_counts(self):
+        expected = (
+            "Cisco",
+            "Huawei",
+            "ZTE",
+            "HPE Comware",
+            "Aruba",
+            "MikroTik RouterOS",
+            "DrayTek",
+            "Zyxel",
+            "TP-Link",
+            "F5",
+            "SonicWall",
+            "Check Point",
+            "pfSense",
+            "OPNsense",
+        )
+        for connection in (False, True):
+            with self.subTest(connection=connection):
+                source, _ = fixture(
+                    self.root / str(connection),
+                    connection=connection,
+                    extra_tags=("tp-link", "pfsense"),
+                )
+                self.prepare(source)
+                cache = prepared.paths(source)[-1]
+                before = stamp(cache)
+                job = paper_ready.Job(
+                    source,
+                    adjusted.FULL_HEATMAP if connection else adjusted.HEATMAP,
+                    output=self.root / f"network-order-{connection}.pdf",
+                )
+                with patch("duckdb.connect", side_effect=AssertionError("cached render only")):
+                    data, *_ = adjusted.load_data(job)
+                    section = data["sections"][1]
+                    labels = tuple(data["group_info"][g][1] for g in section["groups"])
+                    self.assertEqual(labels, expected)
+                    for group in ("tp-link", "pfsense"):
+                        i = section["groups"].index(group)
+                        self.assertEqual(section["totals"][i], 1)
+                        self.assertEqual(sum(section["counts"][i]), 1)
+                        self.assertEqual(sum(section["percentages"][i]), 100)
+                    self.assertEqual(section["totals"][0], 0)  # Absent Cisco stays visible.
+                    self.assertEqual(len(section["groups"]), 14)
+                    self.assertEqual(
+                        data["sections"][0]["groups"], adjusted.heatmap.SELECTION[0][1]
+                    )
+                    self.assertEqual(len(section["counts"][0]), 7 if connection else 10)
+                    adjusted.draw(job.kind, data, job.destination)
+                self.assertEqual(stamp(cache), before)
+                # The complete cache still contains both remainder groups for bars.
+                groups = json.loads(cache.read_text())["report"]["groups"]
+                self.assertIn("mikrotik-swos", groups)
+                self.assertIn("hpe-network", groups)
+        self.assertNotIn("tp-link", adjusted.heatmap.SELECTION[1][1])
+        self.assertNotIn("pfsense", adjusted.heatmap.SELECTION[1][1])
 
     def test_adjusted_bars_use_top_ten_plus_other_and_centered_four_by_three_legend(self):
         from matplotlib import pyplot as plt
@@ -385,7 +442,7 @@ class AdjustedOSTest(unittest.TestCase):
         self.assertEqual(len(data["strategies"]), 7)
         self.assertEqual(data["y_label"], "Operating-System Group / Vendor (#IP Addr.)")
         network = data["sections"][1]
-        self.assertEqual(network["groups"][:2], ("mikrotik-routeros", "mikrotik-swos"))
+        self.assertEqual(network["groups"][:2], ("cisco", "huawei"))
         self.assertIn("hpe-comware", network["groups"])
         result = paper_ready.run([job], workers=1)[0]
         self.assertEqual(result.status, "created", result)
