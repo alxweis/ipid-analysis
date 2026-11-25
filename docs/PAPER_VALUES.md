@@ -826,6 +826,39 @@ Small, pinned published reports immediately provide:
   Full consistency summary. This is the existing node-level definition, not an
   IP-level agreement rate or an assumption that every matched node is a router.
 
+Router-only agreement is exported separately for every VP:
+
+```text
+results.<vp>.icmp.rt-fi.itdk.router-strict-agreement.pct
+results.<vp>.udp.rt-fi.itdk.router-strict-agreement.pct
+results.<vp>.tcp.no-conn.rt-fi.itdk.router-strict-agreement.pct
+results.<vp>.tcp.conn.rt-base.itdk.router-strict-agreement.pct.full
+```
+
+Each value is `100 * transit_evidenced_strict_nodes /
+transit_evidenced_eligible_nodes` from the corresponding existing
+`itdk-consistency-summary` report. Eligible nodes have at least two measured,
+concretely classified interfaces and T evidence on at least one of those
+interfaces. `UNCLASSIFIED`/`NOT_ENOUGH_SAMPLES` interfaces are excluded by the
+existing analysis. A node agrees strictly when all its concretely classified
+measured interfaces share one strategy, including interfaces without their own
+T flag. Each node contributes one vote, regardless of its number of interfaces.
+This is not a claim about unmeasured interfaces or agreement across protocols.
+
+The exporter validates integer counts, subset bounds and the report's cached
+router percentage (when present), and computes the percentage from the counts.
+Missing router fields or zero eligible router nodes leave the new key unavailable;
+they never substitute the general all-node rate or a different VP/run. Malformed
+counts fail strict export and retain the previous outputs. Existing all-node
+`itdk.strict-agreement.pct` values and the historical Connection sample remain
+unchanged. Connection router keys select only the registered `.full` follow-up,
+with its existing six-VP completion, report hash and measurement identity checks.
+
+Only small existing JSON summaries are needed. After updating the checkout,
+rerun `make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"`
+and `make paper-figures-zip` in the normal VM storage environment. No raw/per-IP
+scan, outlier/OS preparation, new measurement or plot render is needed.
+
 Prepare the additional per-IP-derived values once on the analysis VM, using the
 usual mounted-storage/RAM environment and paired-reader resource budgets:
 
