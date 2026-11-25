@@ -62,6 +62,8 @@ refreshes derived values and reports runtime stages. Missing results stay empty;
 `getval` uses the standard `todonotes` inline placeholder when a value is missing.
 Counts and thresholds retain their plain numeric representation for explicit
 formatting in the paper. Existing analysis workflows are never imported or run.
+See [counter/OS revision values and greedy outlier preparation](docs/PAPER_COUNTER_VALUES.md).
+
 See [Paper values](docs/PAPER_VALUES.md)
 for the key schema, EU archive export, and limitations.
 

@@ -146,6 +146,12 @@ prepare-random-reproducibility:
 prepare-paper-review:
 	$(PYTHON_INTERPRETER) -B -m paper_values.tcp_review --campaign "$(CAMPAIGN_ID)" $(ARGS)
 
+## Prepare only EU ICMP RT outlier scores; --dry-run reads reports/footers only
+.PHONY: prepare-paper-outliers
+prepare-paper-outliers:
+	@test -n "$(CAMPAIGN_ID)" || { echo 'Usage: make prepare-paper-outliers CAMPAIGN_ID=...'; exit 2; }
+	$(PYTHON_INTERPRETER) -B -m paper_values.outliers --campaign "$(CAMPAIGN_ID)" $(ARGS)
+
 ## Prepare missing pinned Full TCP scalars; keep all historical sample values
 .PHONY: prepare-paper-full
 prepare-paper-full:

@@ -300,6 +300,62 @@ def _increment_constraints(
     return evaluated, missing, violations
 
 
+def counter_groups(cfg: MeasurementConfig, strategy: str, *, skip_first=False):
+    """Original measurement positions and exact counter bounds; never reindex holes."""
+    positions = np.arange(cfg.sequence_length)
+    if skip_first:
+        positions = positions[cfg.connection_count :]
+    if strategy == "PER_DESTINATION":
+        return (positions[0::2], positions[1::2]), 1, 1
+    if strategy == "SINGLE":
+        return (positions,), 1, MAX_INC
+    if strategy in ("PER_CONNECTION", "PER_BUCKET"):
+        return (
+            tuple(positions[i :: cfg.connection_count] for i in range(cfg.connection_count)),
+            1,
+            1 if strategy == "PER_CONNECTION" else MAX_INC,
+        )
+    raise ValueError("expected a deterministic counter strategy")
+
+
+def greedy_outlier_scores(sequences: np.ndarray, strategies: np.ndarray, cfg: MeasurementConfig):
+    """Count rejected IP-ID values, keeping the last accepted value per rule stream.
+
+    First observations initialize their streams. A rejected value never moves
+    the reference; increments use modulo 2**16 and the production rule bounds.
+    This is deliberately greedy, not a minimum-deletion or bad-edge count.
+    """
+    if (
+        sequences.ndim != 2
+        or sequences.shape[1] != cfg.sequence_length
+        or len(strategies) != len(sequences)
+    ):
+        raise ValueError("outlier sequences do not match the measurement layout")
+    if np.any((sequences < 0) | (sequences >= MODULUS)):
+        raise ValueError("outlier analysis requires complete 16-bit IP-ID sequences")
+    allowed = ("SINGLE", "PER_DESTINATION", "PER_BUCKET")
+    if set(strategies.tolist()) - set(allowed):
+        raise ValueError("unexpected FI strategy in outlier cohort")
+    scores = np.zeros(len(sequences), dtype=np.int32)
+    for strategy in allowed:
+        selected = np.flatnonzero(strategies == strategy)
+        matrix = sequences[selected].astype(np.int64)
+        counts = np.zeros(len(selected), dtype=np.int32)
+        groups, low, high = counter_groups(cfg, strategy)
+        for group in groups:
+            if not len(group):
+                continue
+            last = matrix[:, group[0]]
+            for position in group[1:]:
+                current = matrix[:, position]
+                delta = (current - last) % MODULUS
+                valid = (delta >= low) & (delta <= high)
+                counts += ~valid
+                last = np.where(valid, current, last)
+        scores[selected] = counts
+    return scores
+
+
 def rule_diagnostics(
     sequence: np.ndarray,
     cfg: MeasurementConfig,
@@ -320,10 +376,6 @@ def rule_diagnostics(
         cfg,
         skip_first=skip_first,
     )
-    trimmed_positions = np.arange(cfg.sequence_length)
-    if skip_first:
-        trimmed_positions = trimmed_positions[cfg.connection_count :]
-
     if strategy == "REFLECTION":
         valid = trimmed >= 0
         offsets = (trimmed[valid] - pattern[valid]) % MODULUS
@@ -344,24 +396,7 @@ def rule_diagnostics(
         evaluated = int(observed.size)
         missing_constraints = int(trimmed.size - observed.size)
     else:
-        if strategy == "PER_DESTINATION":
-            groups = (trimmed_positions[0::2], trimmed_positions[1::2])
-            lower, upper = 1, 1
-        elif strategy == "PER_CONNECTION":
-            groups = tuple(
-                trimmed_positions[index :: cfg.connection_count]
-                for index in range(cfg.connection_count)
-            )
-            lower, upper = 1, 1
-        elif strategy == "SINGLE":
-            groups = (trimmed_positions,)
-            lower, upper = 1, MAX_INC
-        else:  # PER_BUCKET
-            groups = tuple(
-                trimmed_positions[index :: cfg.connection_count]
-                for index in range(cfg.connection_count)
-            )
-            lower, upper = 1, MAX_INC
+        groups, lower, upper = counter_groups(cfg, strategy, skip_first=skip_first)
         evaluated, missing_constraints, violations = _increment_constraints(
             sequence,
             groups,

@@ -138,4 +138,27 @@ def load(artifacts):
                 "Excludes original RT failures; not the ZMap target count or final success count",
                 combined_sources,
             )
+            coverage = get("rt-base", "coverage")
+            targets = coverage.data.get("zmap_ip_count") if coverage else None
+            if targets is not None and (
+                type(targets) is not int
+                or targets < 0
+                or combined is not None
+                and combined > targets
+            ):
+                errors.append(
+                    dict(
+                        source=prefix + ".rt-fi.success-all.pct",
+                        error="invalid original ZMap denominator",
+                    )
+                )
+                targets = None
+            values[prefix + ".rt-fi.success-all.pct"] = record(
+                percentage(combined, targets)
+                if combined is not None and targets is not None
+                else None,
+                "percent",
+                "100 * RT/FI success-all.count / original RT ZMap targets; same once-per-IP population as success-all.count",
+                [*combined_sources, *([coverage.name] if coverage else [])],
+            )
     return values, errors

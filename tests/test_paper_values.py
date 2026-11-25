@@ -306,7 +306,7 @@ class PaperValuesTest(unittest.TestCase):
 
     def test_automated_paper_keys_and_six_vps_remain(self):
         result = self.f.run(strict=True)
-        self.assertEqual(len(result["values"]), 2190)  # +414 additive plot-population metrics
+        self.assertEqual(len(result["values"]), 2262)  # +72 net counter/OS extension keys
         self.assertEqual(result["available"], 0)
         self.assertFalse(result["input_errors"])
         self.assertTrue(
@@ -337,7 +337,7 @@ class PaperValuesTest(unittest.TestCase):
             self.assertNotIn(key, result["values"])
             self.assertNotIn(r"\setval{" + key + "}", tex)
         definitions = load_metrics()["metrics"]
-        self.assertEqual(len(definitions), 365)
+        self.assertEqual(len(definitions), 403)  # 38 explicitly requested adjusted OS metrics.
         self.assertEqual(sum(m["unit"] == "pdf-path" for m in definitions), 39)
         self.assertEqual(
             {m["key"].split(".")[0] for m in definitions},
@@ -966,7 +966,7 @@ class PaperValuesTest(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("2190 empty", result.stdout)
+        self.assertIn("2262 empty", result.stdout)
         self.assertNotIn("Operations (", result.stdout)
         profiled = subprocess.run(
             [*result.args, "--timings"], cwd=self.f.root, text=True, capture_output=True
@@ -1002,7 +1002,7 @@ class PaperValuesTest(unittest.TestCase):
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("2190 empty", result.stdout)
+            self.assertIn("2262 empty", result.stdout)
 
 
 class DerivedCacheTest(unittest.TestCase):

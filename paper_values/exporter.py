@@ -306,6 +306,11 @@ def export(
         diagnostics=details,
     )
     readers = Readers(valid, processed_root, raw_root, cache, errors, validation_root)
+    from paper_values.adjusted_os import AdjustedOSReader
+
+    adjusted_os = AdjustedOSReader(
+        valid, campaign, reports_root, followups_root=followups_root, archive=archive is not None
+    )
     derive_start = perf_counter()
     if diagnostics:
         # Include snapshot I/O and parsing without changing calculation code or
@@ -334,6 +339,8 @@ def export(
                         raw, sources = (
                             choose_plot(spec, scope, plots, valid)
                             if spec["reader"] == "plot"
+                            else adjusted_os.read(spec, scope)
+                            if spec["reader"] == "adjusted-os"
                             else readers.read(spec, scope)
                         )
                         if raw is not None:
@@ -386,6 +393,12 @@ def export(
         raise ValueError("Full review keys conflict with existing values")
     values.update(full_review_values)
     errors.extend(full_review_errors)
+    from paper_values.outliers import read_prepared as read_outliers
+
+    try:
+        values.update(read_outliers(processed_root, campaign, valid, archive=archive is not None))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        errors.append({"source": "EU ICMP RT outlier scores", "error": str(exc)})
     for path in additional_reports:
         verify_file(path)
         document = json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -412,13 +425,18 @@ def export(
     timings = {**inputs.timings, "derive": perf_counter() - derive_start}
     write_start = perf_counter()
     tex = render(values, campaign)
+    # Preserve unrounded public scalars, including threshold-formatted ranges.
+    cache.document["paper_values"] = {
+        "campaign": campaign,
+        "values": {key: value for key, value in values.items() if value["unit"] != "pdf-path"},
+    }
     serialized_cache = cache.serialize()
     atomic_text(output, tex)
     if use_cache:
         atomic_text(cache_path, serialized_cache)
     timings.update(write=perf_counter() - write_start, total=perf_counter() - started)
-    for value in values.values():
-        value["formatted"] = formatted(value["raw"], value["unit"])
+    for key, value in values.items():
+        value["formatted"] = formatted(value["raw"], value["unit"], key)
     return {
         "available": sum(v["raw"] is not None for v in values.values()),
         "missing": sum(v["raw"] is None for v in values.values()),

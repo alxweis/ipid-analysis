@@ -56,7 +56,9 @@ def key_order(key):
     site = parts[1] if len(parts) > 1 and parts[1] in SITES else ""
     metric = (parts[0], *parts[2:]) if site else tuple(parts)
     comparison = parts[:-1] if parts[-1:] == ["full"] else parts
-    if key.startswith("results.vp-comparison.") and comparison[-2:] in (
+    if key.startswith("results.vp-comparison.") and comparison[-1:] == ["mean"]:
+        metric = (*comparison[:-1], "full" if comparison != parts else "", "mean")
+    elif key.startswith("results.vp-comparison.") and comparison[-2:] in (
         ["min", "pct"],
         ["max", "pct"],
         ["range", "pp"],
@@ -77,6 +79,8 @@ def blank_line_group(key):
         return metric[:3]  # one strategy's groups, outcomes and detail rows
     if metric[:2] == ("fig", "interprotocol"):
         return metric[:2]
+    if "rt-outlier-score" in metric:
+        return metric[: metric.index("rt-outlier-score") + 1]
     for prefix in (
         ("results", "tcp", "conn", "rt-base", "constant"),
         ("results", "tcp", "conn", "rt-base", "per-connection", "handshake"),
@@ -85,6 +89,8 @@ def blank_line_group(key):
         if metric[: len(prefix)] == prefix and len(metric) > len(prefix):
             return prefix  # retain adjacent VP lines and both historical/.full keys
     comparison = parts[:-1] if parts[-1:] == ["full"] else parts
+    if key.startswith("results.vp-comparison.") and comparison[-1:] == ["mean"]:
+        return (*comparison[:-1], "full") if comparison != parts else tuple(parts[:-1])
     if key.startswith("results.vp-comparison.") and comparison[-2:] in (
         ["min", "pct"],
         ["max", "pct"],
@@ -104,9 +110,16 @@ def blank_line_group(key):
     return key_order(key)[1]
 
 
-def formatted(raw, unit):
+def formatted(raw, unit, key=""):
     if raw is None:
         return ""
+    if (
+        key.startswith("results.vp-comparison.")
+        and re.search(r"\.range\.pp(?:\.full)?$", key)
+        and unit == "percentage-points"
+        and Decimal(str(raw)) < Decimal("0.01")
+    ):
+        return "<0.01"
     if unit in ("percent", "percentage-points"):
         return f"{Decimal(str(raw)):.2f}" + ("%" if unit == "percent" else "")
     if isinstance(raw, bool):
@@ -146,10 +159,10 @@ def render(values, campaign):
     ]
     previous = None
     for key in sorted(values, key=key_order):
-        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", key):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", key):
             raise ValueError(f"invalid paper key: {key}")
         value = values[key]
-        text = formatted(value["raw"], value["unit"])
+        text = formatted(value["raw"], value["unit"], key)
         if value["unit"] == "pdf-path" and text:
             from paper_values.inputs import validate_plot_path
 
