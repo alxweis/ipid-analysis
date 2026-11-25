@@ -36,7 +36,7 @@ def canonical_jobs(original, reports_root, campaign, sites):
 
     if not campaign:
         return original
-    root = Path(reports_root) / "continental" / campaign
+    root = (Path(reports_root) / "continental" / campaign).resolve()
     if not root.is_dir():
         return original
     contexts, _ = required_contexts(load_metrics()["metrics"])
