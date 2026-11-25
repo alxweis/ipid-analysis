@@ -22,7 +22,8 @@ their existing code identities and prepared caches.
   aggregates stay untouched. Manuscript references must be updated separately.
 - EU TCP-Connection OS additions have `.full` suffixes. They are bound to the
   registered Full completion inventory and measurement ID; no historical
-  Connection sample fallback is allowed.
+  Connection sample fallback is allowed. The global six-VP completion and the
+  selected site's inventory must agree before any Full OS scalar is exported.
 - `results.eu.tcp.no-conn.rt-fi.os.zte-aruba-mikrotik_routeros-zyxel-tp_link-pfsense-opnsense.constant.{min,max}-pct`
   compares the seven individual unrounded shares, rather than pooling counts.
 - `results.{vp}.{icmp,tcp.no-conn,udp}.rt-fi.success-all.pct` is 100 times the
