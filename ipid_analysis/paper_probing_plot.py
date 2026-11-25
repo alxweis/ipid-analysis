@@ -44,7 +44,10 @@ def _remap(path, processed_root, mode):
 
 def _context(source, report):
     """Keep connection quantiles separate from the stateless comparison."""
-    if source.name == f"c-rt-b_fi-b_{KIND}.json":
+    if source.name in (
+        f"c-rt-b_fi-b_{KIND}.json",
+        f"c-rt-b_fi-b_{KIND}__full.json",
+    ):
         target = "tcp.ipid.connection.rt-based.base+tcp.ipid.connection.fixed-interval.base"
         if tuple(
             report.get(key) for key in ("figure", "protocol", "connection_mode", "target")
@@ -64,7 +67,14 @@ def paths(source, report, processed_root=None, *, anycast=None):
     from ipid_analysis.paper_increment_plot import aggregate_path
 
     prefix, mode = _context(source, report)
-    original = aggregate_path(source, report, processed_root=processed_root, mode=mode)
+    anchor = source
+    if source.stem.endswith("__full"):
+        if anycast is None or processed_root is not None:
+            raise ValueError(
+                "full follow-up intervals require explicit anycast selection and original stored paths"
+            )
+        anchor = source.with_name(source.stem.removesuffix("__full") + source.suffix)
+    original = aggregate_path(anchor, report, processed_root=processed_root, mode=mode)
     if prefix == "c" and original.parts[-4:-1] != (
         mode,
         "comparison",
@@ -116,7 +126,10 @@ def prepare(job, *, anycast=None):
         if not recorded.is_absolute():
             raise ValueError("expected absolute original interval/map paths")
         source_paths[key] = _remap(recorded, job.processed_root, mode)
-    original, _ = paths(job.source, report, job.processed_root)
+    anchor = job.source
+    if anchor.stem.endswith("__full"):
+        anchor = anchor.with_name(anchor.stem.removesuffix("__full") + anchor.suffix)
+    original, _ = paths(anchor, report, job.processed_root)
     phase = original.parents[2]
     expected = {
         "rt_based": phase / f"rt-based-base/{prefix}-rt-b_probing-intervals.pq",

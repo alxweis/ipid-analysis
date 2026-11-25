@@ -69,7 +69,77 @@ class Job:
 
     @property
     def destination(self):
-        return self.output or self.source.with_name(self.source.stem + "__paper__anycast.pdf")
+        return self.output or self.source.with_name(destination_name(self.source))
+
+
+def destination_name(source):
+    if source.stem.endswith("__full"):
+        return source.stem.removesuffix("__full") + "__paper__full__anycast.pdf"
+    return source.stem + "__paper__anycast.pdf"
+
+
+def full_job(campaign, site, reports_root, census, processed_root=None):
+    """Select only the registered full-RT / historical-FI paired population."""
+    from ipid_analysis.artifacts import assert_complete, file_digest
+    from ipid_analysis.paper_probing_plot import KIND
+    from ipid_analysis.paper_ready import CONNECTION_PROBING_KIND
+    from paper_values.followups import COMPARISON, registration
+
+    spec = registration(campaign)
+    if spec is None:
+        raise ValueError("no registered full TCP follow-up for this campaign")
+    root = Path(reports_root).resolve()
+    relative = Path("followups") / spec["measurement_run"] / spec["analysis_id"] / site
+    directory = root / relative
+    source = (
+        directory
+        / "paired/figures"
+        / spec["zmap_ids"][site]
+        / COMPARISON
+        / f"c-rt-b_fi-b_{KIND}__full.json"
+    )
+    marker = directory / "done__full.json"
+    for path in (marker, source):
+        assert_complete(path)
+        if path.stat().st_size > 4 << 20:
+            raise ValueError("unexpected full follow-up manifest/report size")
+    done = json.loads(marker.read_text())
+    if any(
+        done.get(key) != value
+        for key, value in (
+            ("original_campaign", campaign),
+            ("site", site),
+            ("measurement_run", spec["measurement_run"]),
+            ("analysis_id", spec["analysis_id"]),
+        )
+    ):
+        raise ValueError("full follow-up completion differs from registration")
+    entries = [item for item in done["artifacts"] if Path(item["path"]) == source]
+    if (
+        len(entries) != 1
+        or entries[0]["sha256"] != file_digest(source)
+        or entries[0]["size_bytes"] != source.stat().st_size
+    ):
+        raise ValueError("full interval report differs from completion inventory")
+    report = json.loads(source.read_text())
+    processed = (
+        Path(processed_root).resolve()
+        if processed_root is not None
+        else root.parent / "data/processed"
+    )
+    expected = (
+        processed
+        / relative
+        / "paired"
+        / spec["zmap_ids"][site]
+        / COMPARISON
+        / f"c-rt-b_fi-b_{KIND}.pq"
+    )
+    if report.get("aggregate") != str(expected):
+        raise ValueError(
+            "full interval aggregate does not belong to the registered paired population"
+        )
+    return Job(source, CONNECTION_PROBING_KIND, None, census)
 
 
 def _context(job):
@@ -171,6 +241,11 @@ def main(argv=None):
     parser.add_argument("paths", nargs="*", type=Path)
     parser.add_argument("--campaign")
     parser.add_argument(
+        "--tcp-full",
+        action="store_true",
+        help="use the registered full TCP RT / historical FI paired follow-up; never the old RT sample",
+    )
+    parser.add_argument(
         "--census",
         type=Path,
         required=True,
@@ -202,13 +277,22 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not args.paths and not args.campaign:
         parser.error("supply --campaign or explicit original interval reports")
+    if args.tcp_full and (
+        args.paths
+        or not args.campaign
+        or args.protocols != ["tcp"]
+        or args.connection_mode != "connection"
+    ):
+        parser.error(
+            "--tcp-full requires --campaign, --protocols tcp, --connection-mode connection and no positional paths"
+        )
     try:
         data, _ = load_dataset(args.census)
         print(
             f"Anycast exclusion: {data['dates'][0]} through {data['dates'][-1]}; complete month={data['complete_month']}; high-confidence /24 union"
         )
         original = [job_for(path, processed_root=args.processed_root) for path in args.paths]
-        if args.campaign:
+        if args.campaign and not args.tcp_full:
             original.extend(
                 discover(
                     args.reports_root,
@@ -219,6 +303,11 @@ def main(argv=None):
                 )
             )
         jobs = []
+        if args.tcp_full:
+            jobs.extend(
+                full_job(args.campaign, site, args.reports_root, args.census, args.processed_root)
+                for site in args.sites
+            )
         for job in original:
             if job.kind in PROBING_KINDS:
                 mode = "connection" if job.kind.endswith("-connection") else "no-connection"
@@ -229,8 +318,21 @@ def main(argv=None):
                     output = args.output_root / job.source.resolve().relative_to(
                         args.reports_root.resolve()
                     )
-                    output = output.with_name(job.source.stem + "__paper__anycast.pdf")
+                    output = output.with_name(destination_name(job.source))
                 jobs.append(Job(job.source, job.kind, job.processed_root, args.census, output))
+        if args.tcp_full and args.output_root is not None:
+            jobs = [
+                Job(
+                    job.source,
+                    job.kind,
+                    job.processed_root,
+                    job.census,
+                    args.output_root
+                    / job.source.relative_to(args.reports_root.resolve()).parent
+                    / destination_name(job.source),
+                )
+                for job in jobs
+            ]
         if any(job.kind not in PROBING_KINDS for job in original) and args.paths:
             raise ValueError("only probing-intervals-by-continent reports are supported")
         if not jobs:

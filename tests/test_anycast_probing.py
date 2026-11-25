@@ -6,6 +6,7 @@ import io
 import ipaddress
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -299,6 +300,106 @@ class AnycastPlotTest(unittest.TestCase):
             self.base.source, self.base.kind, None, other, self.root / "later/anycast.pdf"
         )
         self.assertEqual(filtered.run([changed], workers=1)[0].status, "created")
+
+    def full_fixture(self):
+        from paper_values.followups import COMPARISON, registration
+
+        campaign, site = "geo-full-20261107-r1", "eu"
+        spec = registration(campaign)
+        relative = Path("followups") / spec["measurement_run"] / spec["analysis_id"] / site
+        reports = self.root / "reports"
+        root = reports / relative
+        original = fixture(self.root / "full-fixture", protocol="tcp-80", connection=True)
+        report = json.loads(original.source.read_text())
+        old = Path(report["aggregate"]).parents[3]
+        new = self.root / "data/processed" / relative / "paired" / spec["zmap_ids"][site]
+        for path in old.rglob("*.pq"):
+            destination = new / path.relative_to(old)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, destination)
+        report["aggregate"] = str(new / Path(report["aggregate"]).relative_to(old))
+        report["sources"] = {
+            key: str(new / Path(value).relative_to(old))
+            for key, value in report["sources"].items()
+        }
+        source = (
+            root
+            / "paired/figures"
+            / spec["zmap_ids"][site]
+            / COMPARISON
+            / (original.source.stem + "__full.json")
+        )
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(json.dumps(report))
+        marker = root / "done__full.json"
+        marker.write_text(
+            json.dumps(
+                dict(
+                    original_campaign=campaign,
+                    site=site,
+                    measurement_run=spec["measurement_run"],
+                    analysis_id=spec["analysis_id"],
+                    artifacts=[
+                        dict(
+                            path=str(source),
+                            size_bytes=source.stat().st_size,
+                            sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                        )
+                    ],
+                )
+            )
+        )
+        return campaign, reports, source, marker
+
+    def test_registered_full_connection_cli_uses_paired_sources_and_separate_pdf(self):
+        campaign, reports, source, marker = self.full_fixture()
+        job = filtered.full_job(campaign, "eu", reports, self.census)
+        before = {p: stamp(p) for p in self.root.rglob("*") if p.is_file()}
+        self.assertEqual(job.source, source)
+        self.assertTrue(job.destination.name.endswith("__paper__full__anycast.pdf"))
+        arguments = [
+            "--campaign",
+            campaign,
+            "--tcp-full",
+            "--census",
+            str(self.census),
+            "--reports-root",
+            str(reports),
+            "--sites",
+            "eu",
+            "--protocols",
+            "tcp",
+            "--connection-mode",
+            "connection",
+        ]
+        output = io.StringIO()
+        with redirect_stdout(output):
+            filtered.main(arguments + ["--dry-run"])
+        self.assertEqual(output.getvalue().count("would-create:"), 1)
+        result = filtered.run([job], prepare=True, workers=1)[0]
+        self.assertEqual((result.status, result.error), ("created", ""))
+        self.assertTrue(job.destination.read_bytes().startswith(b"%PDF-"))
+        aggregate, metadata = probing.paths(
+            source, json.loads(source.read_text()), anycast=self.census
+        )
+        self.assertIn("paired", aggregate.parts)
+        self.assertEqual(
+            len(probing.load_series(aggregate, metadata, source, anycast=self.census)), 14
+        )
+        self.assertEqual(before, {p: stamp(p) for p in before})
+        self.assertEqual(
+            filtered.run([job], prepare=True, workers=1)[0].status, "skipped-existing"
+        )
+
+    def test_full_selection_refuses_missing_registration_or_changed_report(self):
+        campaign, reports, source, marker = self.full_fixture()
+        with self.assertRaisesRegex(ValueError, "no registered"):
+            filtered.full_job("not-registered", "eu", reports, self.census)
+        source.write_text(source.read_text() + " ")
+        with self.assertRaisesRegex(ValueError, "completion inventory"):
+            filtered.full_job(campaign, "eu", reports, self.census)
+        with self.assertRaisesRegex(ValueError, "explicit anycast"):
+            probing.paths(source, json.loads(source.read_text()))
 
     def test_invalid_map_ip_is_rejected_instead_of_treated_as_unicast(self):
         report = json.loads(self.base.source.read_text())

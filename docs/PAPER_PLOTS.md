@@ -233,6 +233,23 @@ The stateless OS renderer retains its existing sizing algorithm.
 
 ### Anycast-excluded probing-interval sensitivity plots
 
+For EU TCP with a connection, explicitly select the registered full-RT follow-up
+paired with historical Fixed-Interval successes (not the historical RT sample):
+
+```sh
+make paper-anycast-plots CAMPAIGN_ID=geo-full-20261107-r1 \
+  ARGS="--census $census --sites eu --protocols tcp --connection-mode connection --tcp-full --dry-run"
+make paper-anycast-plots CAMPAIGN_ID=geo-full-20261107-r1 \
+  ARGS="--census $census --sites eu --protocols tcp --connection-mode connection --tcp-full --prepare --workers 1"
+```
+
+This uses the registered `reports/followups/.../eu/paired/` report and its stored
+paired per-IP interval tables. The completion inventory binds the selected report;
+missing or mismatching full inputs fail without falling back to the sample. The
+additional PDF is `c-rt-b_fi-b_probing-intervals-by-continent__paper__full__anycast.pdf`
+next to the full comparison PDF. The existing full PDFs and original reports remain
+unchanged, and paper-value/ZIP selection remains unchanged.
+
 Create an additional `__paper__anycast.pdf` beside an existing original
 probing-interval report, preserving both original and ordinary paper PDFs.
 Only this figure family is supported. The first comparison can be restricted
