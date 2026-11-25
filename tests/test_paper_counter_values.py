@@ -298,6 +298,10 @@ class PaperExtensionTest(unittest.TestCase):
             )
         )
         f.write(done_path, done)
+        global_path = f.analysis / "done__full.json"
+        complete = json.loads(global_path.read_text())
+        complete["sites"] = [done if s["site"] == "eu" else s for s in complete["sites"]]
+        f.write(global_path, complete)
         with patch.dict(
             os.environ,
             dict(
@@ -320,6 +324,10 @@ class PaperExtensionTest(unittest.TestCase):
             reader = AdjustedOSReader([], full_campaign, f.reports)
             self.assertEqual(reader.read(spec, "eu")[0], 100)
             self.assertIn(str(published), reader.read(spec, "eu")[1])
+        # A site alone must not leak values before global Full publication.
+        global_path.unlink()
+        self.assertIsNone(AdjustedOSReader([], full_campaign, f.reports).read(spec, "eu")[0])
+        f.write(global_path, complete)
         # A forged original report cannot be used even if the prepared cache exists.
         report["measurements"]["rt_based_base"] = "another-full-run"
         f.write(published, report)

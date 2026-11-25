@@ -33,10 +33,22 @@ class AdjustedOSReader:
             else Path(self.reports_root).parent.parent / "followups"
         )
         root = parent / registration["measurement_run"] / registration["analysis_id"]
+        global_marker = root / "done__full.json"
         marker = root / site / "done__full.json"
-        if not marker.is_file():
+        if not marker.is_file() or not global_marker.is_file():
             return None
+        complete = read_json(global_marker)
+        sites = complete.get("sites", [])
+        if (
+            complete.get("version") != 1
+            or complete.get("analysis_id") != registration["analysis_id"]
+            or len(sites) != len(followups.SITES)
+            or {s.get("site") for s in sites} != set(followups.SITES)
+        ):
+            raise ValueError("adjusted Full OS scalars require the complete six-VP publication")
         done = read_json(marker)
+        if done != next(s for s in sites if s["site"] == site):
+            raise ValueError("adjusted Full OS global/site inventories disagree")
         expected = dict(
             version=1,
             site=site,
