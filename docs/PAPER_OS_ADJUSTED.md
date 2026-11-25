@@ -78,7 +78,9 @@ The suffix is appended to the selected paper variant:
 
 With all six VPs available, there are 18 merged heatmaps, 18 Final OS bar plots
 and six Full heatmaps. Discovery respects the registered Full campaign and
-completion inventory. Historical connection-sample heatmaps are not adjusted
+completion inventory. Normal reports reuse the same canonical-run selection as
+`paper-values`, without depending on existing source PDFs. Historical intermediate
+run directories and connection-sample heatmaps are not adjusted
 or substituted for Full measurements.
 
 Heatmap rows are normalized by the newly split group's measured, resolved

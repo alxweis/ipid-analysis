@@ -29,13 +29,73 @@ def global_source(job):
     )
 
 
+def canonical_jobs(original, reports_root, campaign, sites):
+    """Reuse value-export run selection without requiring existing source PDFs."""
+    from paper_values.exporter import choose_plot, load_metrics, required_contexts
+    from paper_values.inputs import Inputs, identify_plot, select_artifacts
+
+    if not campaign:
+        return original
+    root = Path(reports_root) / "continental" / campaign
+    if not root.is_dir():
+        return original
+    contexts, _ = required_contexts(load_metrics()["metrics"])
+    inventory = Inputs([root], contexts=contexts, sites=sites)
+    try:
+        artifacts, conflicts = select_artifacts(list(inventory.artifacts(campaign)))
+        if conflicts:
+            raise ValueError(f"ambiguous OS source report inventory: {conflicts}")
+        if inventory.errors:
+            raise ValueError(f"OS source report inventory failed: {inventory.errors}")
+    finally:
+        inventory.close()
+    candidates, explicit = [], []
+    for job in original:
+        try:
+            relative = job.source.relative_to(root)
+        except ValueError:
+            explicit.append(job)
+            continue
+        plot = identify_plot(
+            str(job.source),
+            relative.parts[0],
+            relative.relative_to(relative.parts[0]).with_suffix(".pdf").as_posix(),
+            campaign,
+        )
+        if plot:
+            candidates.append(plot)
+    selected = set()
+    for site in sites:
+        for protocol in ("icmp", "tcp", "udp"):
+            for kind in ("itdk-role-by-os", "operating-system-group-by-strategy"):
+                _, names = choose_plot(
+                    dict(
+                        protocol=protocol,
+                        connection="no-connection",
+                        phase="rt-fi-merged",
+                        kind=kind,
+                    ),
+                    site,
+                    candidates,
+                    artifacts,
+                )
+                selected.update(names)
+    return [*explicit, *[job for job in original if str(job.source) in selected]]
+
+
 def jobs(original, reports_root, campaign, *, sites, protocols):
     from ipid_analysis.paper_ready import Job
     from paper_values import followups
     from paper_values.full_review import published
 
     result = []
-    for job in original:
+    original = [
+        job
+        for job in original
+        if job.kind
+        in ("operating-system-group-by-strategy", "itdk-role-by-os-final", "itdk-role-by-os")
+    ]
+    for job in canonical_jobs(original, reports_root, campaign, sites):
         kind = {
             "operating-system-group-by-strategy": HEATMAP,
             "itdk-role-by-os-final": BAR,

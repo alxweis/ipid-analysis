@@ -320,6 +320,14 @@ class AdjustedOSTest(unittest.TestCase):
         folder.mkdir(parents=True)
         for name in (source.name, source.name.replace(prepared.KIND, "itdk-role-by-os")):
             (folder / name).write_bytes((source.parent / name).read_bytes())
+        intermediate = (
+            reports
+            / "continental/test/eu/figures/icmp_intermediate/no-connection/merged/rt-based-base_fixed-interval-mass"
+        )
+        intermediate.mkdir(parents=True)
+        old_extra = json.loads(source.read_text())
+        old_extra.pop("aggregate")
+        (intermediate / source.name).write_text(json.dumps(old_extra))
         before = {p: stamp(p) for p in reports.rglob("*") if p.is_file()}
         proc = subprocess.run(
             [
@@ -334,10 +342,11 @@ class AdjustedOSTest(unittest.TestCase):
                 "--os-adjusted",
                 "--dry-run",
             ],
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
         )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.count("would-create:"), 2, proc.stdout)
         self.assertIn("__paper_final__adjusted.pdf", proc.stdout)
         self.assertEqual(before, {p: stamp(p) for p in before})
