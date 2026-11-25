@@ -8,6 +8,7 @@ import re
 
 from paper_values.cache import verify_file
 from paper_values.inputs import SITES, Artifact, component, identify, validate_plot_path
+from paper_values.itdk_consistency import router_strict_agreement
 from paper_values.readers import Readers, counts, validate_report
 from paper_values.review import BASE_STRATEGIES, percentage
 
@@ -116,6 +117,11 @@ def empty_values(metrics):
         result[f"results.{site}.tcp.conn.rt-base.itdk.strict-agreement.pct.full"] = record(
             "percent",
             "Full RT ITDK nodes with strict agreement / nodes with at least two classified interfaces",
+        )
+        result[f"results.{site}.tcp.conn.rt-base.itdk.router-strict-agreement.pct.full"] = record(
+            "percent",
+            "Full RT ITDK nodes with T evidence and strict agreement / nodes with T evidence "
+            "and at least two concretely classified measured interfaces; one vote per node",
         )
     for strategy in BASE_STRATEGIES:
         for stat, unit in (
@@ -246,6 +252,12 @@ def site_values(campaign, spec, site, done, root, metrics):
             percentage(strict, eligible),
             (consistency_source,),
         )
+        router_agreement = router_strict_agreement(data)
+        if router_agreement is not None:
+            result[f"results.{site}.tcp.conn.rt-base.itdk.router-strict-agreement.pct.full"] = (
+                router_agreement,
+                (consistency_source,),
+            )
     for metric in definitions(metrics):
         proposals = [readers.read(recipe, site) for recipe in metric["sources"]]
         available = [(value, sources) for value, sources in proposals if value is not None]

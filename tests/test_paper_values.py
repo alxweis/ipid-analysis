@@ -306,7 +306,7 @@ class PaperValuesTest(unittest.TestCase):
 
     def test_automated_paper_keys_and_six_vps_remain(self):
         result = self.f.run(strict=True)
-        self.assertEqual(len(result["values"]), 2263)  # Includes the combined interprotocol figure.
+        self.assertEqual(len(result["values"]), 2281)  # Includes the combined figure and 18 router-only consistency values.
         combined = result["values"]["fig.eu.interprotocol.combined.upset"]
         self.assertEqual(combined["unit"], "pdf-path")
         self.assertIsNone(combined["raw"])  # Empty input must not invent a PDF.
@@ -340,7 +340,7 @@ class PaperValuesTest(unittest.TestCase):
             self.assertNotIn(key, result["values"])
             self.assertNotIn(r"\setval{" + key + "}", tex)
         definitions = load_metrics()["metrics"]
-        self.assertEqual(len(definitions), 403)  # 38 explicitly requested adjusted OS metrics.
+        self.assertEqual(len(definitions), 406)  # Includes three router-only consistency recipes.
         self.assertEqual(sum(m["unit"] == "pdf-path" for m in definitions), 39)
         self.assertEqual(
             {m["key"].split(".")[0] for m in definitions},
@@ -969,7 +969,7 @@ class PaperValuesTest(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("2263 empty", result.stdout)
+        self.assertIn("2281 empty", result.stdout)
         self.assertNotIn("Operations (", result.stdout)
         profiled = subprocess.run(
             [*result.args, "--timings"], cwd=self.f.root, text=True, capture_output=True
@@ -1005,7 +1005,7 @@ class PaperValuesTest(unittest.TestCase):
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("2263 empty", result.stdout)
+            self.assertIn("2281 empty", result.stdout)
 
 
 class DerivedCacheTest(unittest.TestCase):

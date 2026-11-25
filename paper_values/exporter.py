@@ -16,6 +16,7 @@ from paper_values import followups, review
 from paper_values.cache import ValueCache, verify_file
 from paper_values.diagnostics import Diagnostics
 from paper_values.inputs import Inputs, select_artifacts
+from paper_values.itdk_consistency import read_router_agreement
 from paper_values.readers import Readers, ValueConflict, counts, validate_report
 from paper_values.tex import formatted, render
 
@@ -347,6 +348,8 @@ def export(
                             if spec["reader"] == "plot"
                             else adjusted_os.read(spec, scope)
                             if spec["reader"] == "adjusted-os"
+                            else read_router_agreement(spec, scope, readers)
+                            if spec["reader"] == "itdk-router"
                             else readers.read(spec, scope)
                         )
                         if raw is not None:

@@ -5958,6 +5958,63 @@
           }
         }
       }
+    },
+    {
+      "prefix": "results.{vp}.icmp.rt-fi",
+      "unit": "percent",
+      "sources": [
+        {
+          "protocol": "icmp",
+          "connection": "no-connection",
+          "phase": "rt-fi-merged",
+          "reader": "itdk-router",
+          "kind": "itdk-consistency-summary"
+        }
+      ],
+      "values": {
+        "itdk.router-strict-agreement.pct": {
+          "definition": "ITDK nodes with T evidence and strict agreement / nodes with T evidence and at least two concretely classified measured interfaces; one vote per node",
+          "reason": "requires router node counts in the existing ITDK consistency summary; zero eligible nodes is unavailable"
+        }
+      }
+    },
+    {
+      "prefix": "results.{vp}.tcp.no-conn.rt-fi",
+      "unit": "percent",
+      "sources": [
+        {
+          "protocol": "tcp",
+          "connection": "no-connection",
+          "phase": "rt-fi-merged",
+          "reader": "itdk-router",
+          "kind": "itdk-consistency-summary"
+        }
+      ],
+      "values": {
+        "itdk.router-strict-agreement.pct": {
+          "definition": "ITDK nodes with T evidence and strict agreement / nodes with T evidence and at least two concretely classified measured interfaces; one vote per node",
+          "reason": "requires router node counts in the existing ITDK consistency summary; zero eligible nodes is unavailable"
+        }
+      }
+    },
+    {
+      "prefix": "results.{vp}.udp.rt-fi",
+      "unit": "percent",
+      "sources": [
+        {
+          "protocol": "udp",
+          "connection": "no-connection",
+          "phase": "rt-fi-merged",
+          "reader": "itdk-router",
+          "kind": "itdk-consistency-summary"
+        }
+      ],
+      "values": {
+        "itdk.router-strict-agreement.pct": {
+          "definition": "ITDK nodes with T evidence and strict agreement / nodes with T evidence and at least two concretely classified measured interfaces; one vote per node",
+          "reason": "requires router node counts in the existing ITDK consistency summary; zero eligible nodes is unavailable"
+        }
+      }
     }
   ]
 }
