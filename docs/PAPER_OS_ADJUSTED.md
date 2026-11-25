@@ -91,7 +91,10 @@ counts. The heatmap y-label is exactly
 The ITDK bars retain the Final populations: Router is the unchanged exact-IP
 `T=true` set; All Other is the entire measured population minus Router.
 Both bars additionally require resolved OS evidence. Each bar normalizes
-independently. The existing top-nine-plus-Other group selection is applied
+independently. The ten strongest groups are selected using the existing mean
+of the two role percentages; the remaining groups are combined into Other.
+If at most ten groups occur, all are shown without an empty Other segment.
+This top-ten-plus-Other selection is applied
 to the new groups, so small groups may be combined into the display's Other
 segment; complete counts remain in the adjusted cache.
 The bar y-label remains `Device Type`, and its x-label becomes exactly
@@ -99,9 +102,10 @@ The bar y-label remains `Device Type`, and its x-label becomes exactly
 
 Linux Libertine 7 pt, 3.33-inch width, fixed 10-pt heatmap row heights and
 pastel colors are reused. Bar legends retain aligned column pairs, 4-pt squares,
-1.2-pt label gaps and automatic column gaps capped at 4 pt. Longer adjusted
-labels use fewer legend columns/additional rows when necessary, keeping the
-font size, physical bar geometry and page width unchanged.
+1.2-pt label gaps and automatic column gaps capped at 4 pt. The adjusted OS
+bar legend uses four columns and three rows, filled down each column, with
+the complete block centered. The font size, physical bar geometry and page
+width remain unchanged. Older non-adjusted bar styles retain their defaults.
 
 ## Figure exports
 

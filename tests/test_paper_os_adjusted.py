@@ -184,6 +184,86 @@ class AdjustedOSTest(unittest.TestCase):
             if group not in SPLITS:
                 self.assertEqual(TAGS[key], group)
 
+    def test_adjusted_bars_use_top_ten_plus_other_and_centered_four_by_three_legend(self):
+        from matplotlib import pyplot as plt
+        from matplotlib.patches import Rectangle
+
+        from ipid_analysis import paper_plot_style as style
+        from ipid_analysis.paper_os_taxonomy import GROUPS, ORDER
+        from ipid_analysis.plot_itdk_os import _role_plot_data
+
+        named = (
+            "ubuntu",
+            "centos",
+            "windows",
+            "cisco",
+            "mikrotik-routeros",
+            "mikrotik-swos",
+            "router",
+            "server",
+            "hpe-comware",
+            "hpe-network",
+        )
+        counts = {group: 100 + index for index, group in enumerate(named)}
+        counts.update(juniper=2, fortinet=1)
+        rows = [(role, group, count) for role in style.ROLES for group, count in counts.items()]
+        data = _role_plot_data(rows, group_info=GROUPS, group_order=ORDER, top_n=10)
+        self.assertEqual(set(data.groups), {*named, "__other__"})
+        for role in style.ROLES:
+            self.assertEqual(data.counts[role]["__other__"], 3)
+            self.assertEqual(data.role_totals[role], sum(counts.values()))
+            self.assertAlmostEqual(sum(data.percentages[role].values()), 100)
+        # A tenth named category is retained even when only eleven groups occur.
+        eleven = [row for row in rows if row[1] != "fortinet"]
+        self.assertEqual(
+            len(_role_plot_data(eleven, group_info=GROUPS, group_order=ORDER, top_n=10).groups),
+            11,
+        )
+        ten = [row for row in eleven if row[1] != "juniper"]
+        self.assertNotIn(
+            "__other__",
+            _role_plot_data(ten, group_info=GROUPS, group_order=ORDER, top_n=10).groups,
+        )
+        captured = []
+        original = style._legend
+
+        def inspect(fig, font, **kwargs):
+            self.assertEqual((kwargs["columns"], kwargs["rows"]), (4, 3))
+            texts = original(fig, font, **kwargs)
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+            x_positions = sorted({t.get_position()[0] for t in texts})
+            self.assertEqual(len(x_positions), 4)
+            self.assertEqual(len({t.get_position()[1] for t in texts}), 3)
+            columns = [[t for t in texts if t.get_position()[0] == x] for x in x_positions]
+            self.assertEqual([len(c) for c in columns], [3, 3, 3, 2])
+            factor = 72 / fig.dpi
+            left = x_positions[0] * style.WIDTH * 72 - 5.2
+            right = max(t.get_window_extent(renderer).x1 for t in texts) * factor
+            self.assertGreaterEqual(left, 0)
+            self.assertLessEqual(right, style.WIDTH * 72)
+            # Renderer advance boxes include bearings beyond TextPath's ink widths.
+            self.assertAlmostEqual(left, style.WIDTH * 72 - right, delta=1)
+            for previous, current in zip(columns, columns[1:]):
+                end = max(t.get_window_extent(renderer).x1 for t in previous) * factor
+                start = current[0].get_position()[0] * style.WIDTH * 72 - 5.2
+                self.assertGreaterEqual(start - end, -1)
+                self.assertLessEqual(start - end, 5)
+            squares = [a for a in fig.artists if isinstance(a, Rectangle)]
+            self.assertEqual(len(squares), 11)
+            for square in squares:
+                self.assertAlmostEqual(square.get_width() * style.WIDTH * 72, 4)
+                self.assertAlmostEqual(square.get_height() * fig.get_size_inches()[1] * 72, 4)
+            captured.extend(t.get_text() for t in texts)
+            return texts
+
+        with patch.object(style, "_legend", side_effect=inspect):
+            adjusted.draw(adjusted.BAR, data, self.root / "top-ten-os.pdf")
+        self.assertEqual(len(captured), 11)
+        self.assertIn("Other", captured)
+        self.assertIn("MikroTik RouterOS", captured)
+        self.assertEqual(plt.get_fignums(), [])
+
     def test_prepare_recomputes_exact_counts_and_final_all_other_without_source_writes(self):
         source, role = fixture(self.root / "original")
         before = {p: stamp(p) for p in source.parent.rglob("*") if p.is_file()}

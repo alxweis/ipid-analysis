@@ -143,6 +143,8 @@ def _select_groups(
     counts: dict[str, dict[str, int]],
     role_totals: dict[str, int],
     group_order=None,
+    *,
+    top_n=None,
 ) -> tuple[str, ...]:
     order = PAPER_OS_GROUP_ORDER if group_order is None else group_order
 
@@ -152,7 +154,9 @@ def _select_groups(
     represented = {
         group for role in ROLE_ORDER for group, count in counts[role].items() if count > 0
     }
-    if len(represented) <= MAX_LEGEND_GROUPS:
+    limit = MAX_LEGEND_GROUPS if top_n is None else top_n
+    named_count = MAX_NAMED_GROUPS if top_n is None else top_n
+    if len(represented) <= limit:
         return tuple(sorted(represented, key=order_index))
 
     def mean_role_percentage(group: str) -> float:
@@ -166,12 +170,12 @@ def _select_groups(
     strongest = sorted(
         represented,
         key=lambda group: (-mean_role_percentage(group), order_index(group)),
-    )[:MAX_NAMED_GROUPS]
+    )[:named_count]
     return (*sorted(strongest, key=order_index), OTHER_GROUP)
 
 
 def _role_plot_data(
-    rows: list[tuple[str, str, int]], *, group_info=None, group_order=None
+    rows: list[tuple[str, str, int]], *, group_info=None, group_order=None, top_n=None
 ) -> OSRolePlotData:
     group_info = GROUP_INFO if group_info is None else group_info
     counts = {role: {} for role in ROLE_ORDER}
@@ -180,7 +184,7 @@ def _role_plot_data(
             continue
         counts[role][group] = counts[role].get(group, 0) + int(count)
     role_totals = {role: sum(counts[role].values()) for role in ROLE_ORDER}
-    groups = _select_groups(counts, role_totals, group_order)
+    groups = _select_groups(counts, role_totals, group_order, top_n=top_n)
     percentages = {role: {} for role in ROLE_ORDER}
     plot_counts = {role: {} for role in ROLE_ORDER}
     named = set(groups) - {OTHER_GROUP}

@@ -198,7 +198,7 @@ def load_data(job):
             for role, counts in (("Transit-Observed", router), ("No Transit Evidence", other))
             for g, n in counts.items()
         ]
-        data = _role_plot_data(rows, group_info=GROUPS, group_order=ORDER)
+        data = _role_plot_data(rows, group_info=GROUPS, group_order=ORDER, top_n=10)
     return data, cache, inputs, doc["original_report_sha256"]
 
 
@@ -214,5 +214,7 @@ def draw(kind, data, output):
             os_group_info=GROUPS,
             os_colors=COLORS,
             os_xlabel=BAR_X_LABEL,
+            os_legend_columns=4,
+            os_legend_rows=3,
         )
     return heatmap.draw("operating-system-group-by-strategy", data, output)
