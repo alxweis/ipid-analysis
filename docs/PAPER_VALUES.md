@@ -917,3 +917,10 @@ Existing paper PDFs are preserved on repeated runs. The new figure keys are
 `fig.eu.interprotocol.<per-destination|single|per-bucket>.upset`: paper PDFs are
 preferred, with original-PDF fallback. They enter paper-figures.zip automatically
 with the same reports-relative paths as every other figure key.
+
+Campaign discovery additionally creates the approved 3.33-inch combined figure,
+`interprotocol-upset-combined__paper.pdf`, with Per-Destination, Single and
+Per-Bucket side by side in a single ACM column and one common legend. Its separate key is
+`fig.eu.interprotocol.combined.upset`; it is exported when that PDF exists and
+is included in the ZIP without replacing the three existing figure keys.
+It reads the same small summary and preserves every cohort/outcome denominator.

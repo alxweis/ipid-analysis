@@ -198,7 +198,7 @@ def discover(
             if final:
                 jobs.append(final)
         if "eu" in sites and set(protocols) == set(PROTOCOLS):
-            from paper_values.review import COUNTERS, figure_destination, find_summary
+            from paper_values.review import FIGURE_STRATEGIES, figure_destination, find_summary
 
             processed = Path(processed_root or reports_root.parent / "data/processed")
             scope = (
@@ -208,7 +208,7 @@ def discover(
             )
             summary = find_summary(scope)
             if summary:
-                for strategy in COUNTERS:
+                for strategy in FIGURE_STRATEGIES:
                     from paper_values.inputs import component
 
                     kind = "interprotocol-upset-" + component(strategy)
@@ -390,11 +390,19 @@ def worker(job: Job) -> Result:
             ):
                 profile_bytes += Path(__file__).with_name(name).read_bytes()
         elif job.kind.startswith("interprotocol-upset-"):
-            from ipid_analysis.paper_interprotocol_plot import draw
             from paper_values.review import validate_summary
 
             data = validate_summary(report)
-            profile_bytes += Path(__file__).with_name("paper_interprotocol_plot.py").read_bytes()
+            if job.kind == "interprotocol-upset-combined":
+                from ipid_analysis.paper_interprotocol_combined import draw
+
+                names = ("paper_interprotocol_combined.py", "paper_heatmap_style.py")
+            else:
+                from ipid_analysis.paper_interprotocol_plot import draw
+
+                names = ("paper_interprotocol_plot.py",)
+            for name in (*names, "interprotocol_outcomes.py"):
+                profile_bytes += Path(__file__).with_name(name).read_bytes()
         elif job.kind in PROBING_KINDS:
             from ipid_analysis.paper_probing_plot import draw, load_series, paths
 

@@ -306,7 +306,10 @@ class PaperValuesTest(unittest.TestCase):
 
     def test_automated_paper_keys_and_six_vps_remain(self):
         result = self.f.run(strict=True)
-        self.assertEqual(len(result["values"]), 2262)  # +72 net counter/OS extension keys
+        self.assertEqual(len(result["values"]), 2263)  # Includes the combined interprotocol figure.
+        combined = result["values"]["fig.eu.interprotocol.combined.upset"]
+        self.assertEqual(combined["unit"], "pdf-path")
+        self.assertIsNone(combined["raw"])  # Empty input must not invent a PDF.
         self.assertEqual(result["available"], 0)
         self.assertFalse(result["input_errors"])
         self.assertTrue(
@@ -966,7 +969,7 @@ class PaperValuesTest(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("2262 empty", result.stdout)
+        self.assertIn("2263 empty", result.stdout)
         self.assertNotIn("Operations (", result.stdout)
         profiled = subprocess.run(
             [*result.args, "--timings"], cwd=self.f.root, text=True, capture_output=True
@@ -1002,7 +1005,7 @@ class PaperValuesTest(unittest.TestCase):
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("2262 empty", result.stdout)
+            self.assertIn("2263 empty", result.stdout)
 
 
 class DerivedCacheTest(unittest.TestCase):

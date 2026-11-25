@@ -464,8 +464,14 @@ class RevisionValuesTest(unittest.TestCase):
         processed = self.root / "data/processed/continental" / CAMPAIGN
         reports.mkdir(parents=True)
         jobs = paper_ready.discover(self.root / "reports", CAMPAIGN)
-        self.assertEqual(len(jobs), 3)
+        self.assertEqual(len(jobs), 4)
         self.assertTrue(all(job.kind.startswith("interprotocol-upset-") for job in jobs))
+        self.assertTrue(
+            all(r.status == "would-create" for r in paper_ready.run(jobs, dry_run=True))
+        )
+        self.assertFalse(any(job.destination.exists() for job in jobs))
+        self.assertFalse(paper_ready.discover(self.root / "reports", CAMPAIGN, sites=("na",)))
+        self.assertFalse(paper_ready.discover(self.root / "reports", CAMPAIGN, protocols=("tcp",)))
         for job in jobs:
             job.destination.parent.mkdir(parents=True, exist_ok=True)
             job.destination.write_bytes(b"%PDF-1.4\nfixture")
@@ -487,7 +493,16 @@ class RevisionValuesTest(unittest.TestCase):
             .as_posix(),
         )
         archive = bundle(repository_root=self.root)
-        self.assertEqual(archive["pdfs"], 3)
+        self.assertEqual(archive["pdfs"], 4)
+        self.assertEqual(
+            result["values"]["fig.eu.interprotocol.combined.upset"]["raw"],
+            "reports/continental/"
+            + CAMPAIGN
+            + "/"
+            + figure_destination(path, processed, reports, "combined")
+            .relative_to(reports)
+            .as_posix(),
+        )
         self.assertTrue(all(job.destination.exists() for job in jobs))
 
     def test_real_upset_worker_embeds_paper_font_and_preserves_summary(self):
@@ -505,7 +520,7 @@ class RevisionValuesTest(unittest.TestCase):
             self.assertTrue(job.destination.read_bytes().startswith(b"%PDF-"))
             content = job.destination.read_bytes()
             self.assertIn(b"Libertine", content)
-            self.assertIn(b"239.76", content)  # 3.33in MediaBox, without tight-box rescaling
+            self.assertIn(b"239.76", content)  # Exact 3.33in width in both paper layouts.
             stamp = hashlib.sha256(content).hexdigest()
             self.assertEqual(paper_ready.worker(job).status, "skipped-existing")
             self.assertEqual(hashlib.sha256(job.destination.read_bytes()).hexdigest(), stamp)
