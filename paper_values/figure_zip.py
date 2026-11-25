@@ -20,7 +20,7 @@ def figure_paths(text):
     selected = {}
     for number, line in enumerate(text.splitlines(), 1):
         line = line.strip()
-        match = re.fullmatch(r"\\setval\{([a-z0-9][a-z0-9.-]*)\}\{(.*)\}", line)
+        match = re.fullmatch(r"\\setval\{([a-z0-9][a-z0-9_.-]*)\}\{(.*)\}", line)
         if match is None:
             if line.startswith(r"\setval{fig."):
                 raise ValueError(f"unsupported figure assignment at values.tex line {number}")

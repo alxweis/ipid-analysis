@@ -2,6 +2,7 @@
 
 from collections import Counter
 import json
+import math
 from pathlib import Path
 
 from paper_values.cache import verify_file
@@ -19,6 +20,9 @@ STRATEGIES = (
     "RANDOM",
     "UNCLASSIFIED",
     "NOT_ENOUGH_SAMPLES",
+)
+BASE_STRATEGIES = tuple(
+    s for s in STRATEGIES if s not in ("MULTI", "RANDOM", "NOT_ENOUGH_SAMPLES")
 )
 COUNTERS = ("PER_DESTINATION", "SINGLE", "PER_BUCKET")
 GROUPS = ("icmp-tcp", "icmp-udp", "tcp-udp", "icmp-tcp-udp")
@@ -89,7 +93,7 @@ def vp_values(artifacts):
     }
     result = {}
     for protocol, mode, phase, family in POPULATIONS:
-        for strategy in STRATEGIES:
+        for strategy in BASE_STRATEGIES if mode == "connection" else STRATEGIES:
             shares, sources = [], []
             for site in SITES:
                 artifact = index.get((site, protocol, mode, phase))
@@ -106,10 +110,12 @@ def vp_values(artifacts):
                 )
                 shares.append(value)
             complete = all(value is not None for value in shares)
-            for stat in ("min", "max", "range"):
+            for stat in ("min", "max", "range", "mean"):
                 raw = (
                     (
-                        max(shares) - min(shares)
+                        math.fsum(shares) / len(shares)
+                        if stat == "mean"
+                        else max(shares) - min(shares)
                         if stat == "range"
                         else min(shares)
                         if stat == "min"
@@ -119,7 +125,12 @@ def vp_values(artifacts):
                     else None
                 )
                 result[
-                    f"results.vp-comparison.{family}.{component(strategy)}.{stat}.{'pp' if stat == 'range' else 'pct'}"
+                    f"results.vp-comparison.{family}.{component(strategy)}."
+                    + (
+                        "mean"
+                        if stat == "mean"
+                        else f"{stat}.{'pp' if stat == 'range' else 'pct'}"
+                    )
                 ] = record(
                     raw,
                     "percentage-points" if stat == "range" else "percent",

@@ -9,8 +9,13 @@ make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
 
 Uppercase `ARGS` takes precedence over lowercase `args`. The command writes only
 `tmp/values.tex` and `tmp/values.json`. It reads the existing campaign data; it
-does not run a workflow, start measurements, import `ipid_analysis`, or rebuild
-large raw-data joins. Existing analysis workers can continue running.
+does not run a workflow, start measurements, execute the classifier, or rebuild
+large raw-data joins. For prepared adjusted OS values, the exporter additionally
+uses the existing OS-cache validation helpers; these never rebuild joins.
+Existing analysis workers can continue running, provided the checkout is not
+changed underneath them. See [counter/OS revision values](PAPER_COUNTER_VALUES.md)
+for the new scalar keys, applicability rules and the explicit one-off EU outlier
+preparation. OS/TCP preparations from earlier PRs remain reusable.
 
 ## ZIP the figures referenced by values.tex
 

@@ -353,7 +353,7 @@
       ],
       "values": {
         "os.matched.count": {
-          "definition": "Resolved OS groups joined to sufficient-sample strategy rows",
+          "definition": "Resolved OS groups joined to all measured strategy rows (including Unclassified/Not Enough Samples)",
           "read": {
             "stat": "os.matched.count"
           }
@@ -539,26 +539,28 @@
             "stat": "min-share-pct"
           }
         },
-        "os.mikrotik-zyxel.constant.max-pct": {
-          "definition": "max constant share over the explicitly defined mikrotik-zyxel OS group members",
+        "os.mikrotik_routeros-zyxel.constant.max-pct": {
+          "definition": "max constant share over the explicitly defined mikrotik_routeros-zyxel OS group members",
           "read": {
             "groups": [
-              "mikrotik",
+              "mikrotik-routeros",
               "zyxel"
             ],
             "strategy": "CONSTANT",
-            "stat": "max-share-pct"
+            "stat": "max-share-pct",
+            "reader": "adjusted-os"
           }
         },
-        "os.mikrotik-zyxel.constant.min-pct": {
-          "definition": "min constant share over the explicitly defined mikrotik-zyxel OS group members",
+        "os.mikrotik_routeros-zyxel.constant.min-pct": {
+          "definition": "min constant share over the explicitly defined mikrotik_routeros-zyxel OS group members",
           "read": {
             "groups": [
-              "mikrotik",
+              "mikrotik-routeros",
               "zyxel"
             ],
             "strategy": "CONSTANT",
-            "stat": "min-share-pct"
+            "stat": "min-share-pct",
+            "reader": "adjusted-os"
           }
         }
       }
@@ -598,7 +600,7 @@
       ],
       "values": {
         "os.matched.count": {
-          "definition": "Resolved OS groups joined to sufficient-sample strategy rows",
+          "definition": "Resolved OS groups joined to all measured strategy rows (including Unclassified/Not Enough Samples)",
           "read": {
             "stat": "os.matched.count"
           }
@@ -725,7 +727,7 @@
       ],
       "values": {
         "os.matched.count": {
-          "definition": "Resolved OS groups joined to sufficient-sample strategy rows",
+          "definition": "Resolved OS groups joined to all measured strategy rows (including Unclassified/Not Enough Samples)",
           "read": {
             "stat": "os.matched.count"
           }
@@ -2077,7 +2079,7 @@
       ],
       "values": {
         "os.cisco.reflection.pct": {
-          "definition": "reflection / sufficient-sample strategy rows in resolved OS group cisco",
+          "definition": "reflection / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group cisco",
           "read": {
             "group": "cisco",
             "strategy": "REFLECTION",
@@ -2085,7 +2087,7 @@
           }
         },
         "os.debian.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group debian",
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group debian",
           "read": {
             "group": "debian",
             "strategy": "PER_BUCKET",
@@ -2093,7 +2095,7 @@
           }
         },
         "os.freebsd.multi.pct": {
-          "definition": "multi / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "multi / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "MULTI",
@@ -2101,7 +2103,7 @@
           }
         },
         "os.freebsd.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "PER_BUCKET",
@@ -2109,7 +2111,7 @@
           }
         },
         "os.freebsd.random.pct": {
-          "definition": "random / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "random / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "RANDOM",
@@ -2117,7 +2119,7 @@
           }
         },
         "os.freebsd.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "SINGLE",
@@ -2125,31 +2127,33 @@
           }
         },
         "os.huawei.reflection.pct": {
-          "definition": "reflection / sufficient-sample strategy rows in resolved OS group huawei",
+          "definition": "reflection / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group huawei",
           "read": {
             "group": "huawei",
             "strategy": "REFLECTION",
             "stat": "share-pct"
           }
         },
-        "os.mikrotik.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group mikrotik",
+        "os.mikrotik_routeros.per-bucket.pct": {
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group MikroTik RouterOS (exact OS_TAG=mikrotik-routeros)",
           "read": {
-            "group": "mikrotik",
+            "group": "mikrotik-routeros",
             "strategy": "PER_BUCKET",
-            "stat": "share-pct"
+            "stat": "share-pct",
+            "reader": "adjusted-os"
           }
         },
-        "os.mikrotik.per-destination.pct": {
-          "definition": "per-destination / sufficient-sample strategy rows in resolved OS group mikrotik",
+        "os.mikrotik_routeros.per-destination.pct": {
+          "definition": "per-destination / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group MikroTik RouterOS (exact OS_TAG=mikrotik-routeros)",
           "read": {
-            "group": "mikrotik",
+            "group": "mikrotik-routeros",
             "strategy": "PER_DESTINATION",
-            "stat": "share-pct"
+            "stat": "share-pct",
+            "reader": "adjusted-os"
           }
         },
         "os.openbsd.random.pct": {
-          "definition": "random / sufficient-sample strategy rows in resolved OS group openbsd",
+          "definition": "random / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group openbsd",
           "read": {
             "group": "openbsd",
             "strategy": "RANDOM",
@@ -2157,7 +2161,7 @@
           }
         },
         "os.sonicwall.random.pct": {
-          "definition": "random / sufficient-sample strategy rows in resolved OS group sonicwall",
+          "definition": "random / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group sonicwall",
           "read": {
             "group": "sonicwall",
             "strategy": "RANDOM",
@@ -2165,7 +2169,7 @@
           }
         },
         "os.sonicwall.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group sonicwall",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group sonicwall",
           "read": {
             "group": "sonicwall",
             "strategy": "SINGLE",
@@ -2173,7 +2177,7 @@
           }
         },
         "os.ubuntu.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group ubuntu",
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group ubuntu",
           "read": {
             "group": "ubuntu",
             "strategy": "PER_BUCKET",
@@ -2181,7 +2185,7 @@
           }
         },
         "os.windows.constant.pct": {
-          "definition": "constant / sufficient-sample strategy rows in resolved OS group windows",
+          "definition": "constant / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group windows",
           "read": {
             "group": "windows",
             "strategy": "CONSTANT",
@@ -2189,7 +2193,7 @@
           }
         },
         "os.windows.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group windows",
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group windows",
           "read": {
             "group": "windows",
             "strategy": "PER_BUCKET",
@@ -2197,7 +2201,7 @@
           }
         },
         "os.windows.per-destination.pct": {
-          "definition": "per-destination / sufficient-sample strategy rows in resolved OS group windows",
+          "definition": "per-destination / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group windows",
           "read": {
             "group": "windows",
             "strategy": "PER_DESTINATION",
@@ -2205,7 +2209,7 @@
           }
         },
         "os.windows.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group windows",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group windows",
           "read": {
             "group": "windows",
             "strategy": "SINGLE",
@@ -2213,7 +2217,7 @@
           }
         },
         "os.zyxel.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group zyxel",
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group zyxel",
           "read": {
             "group": "zyxel",
             "strategy": "PER_BUCKET",
@@ -2221,7 +2225,7 @@
           }
         },
         "os.zyxel.per-destination.pct": {
-          "definition": "per-destination / sufficient-sample strategy rows in resolved OS group zyxel",
+          "definition": "per-destination / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group zyxel",
           "read": {
             "group": "zyxel",
             "strategy": "PER_DESTINATION",
@@ -2364,7 +2368,7 @@
       ],
       "values": {
         "os.cisco.random.pct": {
-          "definition": "random / sufficient-sample strategy rows in resolved OS group cisco",
+          "definition": "random / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group cisco",
           "read": {
             "group": "cisco",
             "strategy": "RANDOM",
@@ -2372,7 +2376,7 @@
           }
         },
         "os.freebsd.constant.pct": {
-          "definition": "constant / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "constant / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "CONSTANT",
@@ -2380,7 +2384,7 @@
           }
         },
         "os.freebsd.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "PER_BUCKET",
@@ -2388,7 +2392,7 @@
           }
         },
         "os.freebsd.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "SINGLE",
@@ -2396,7 +2400,7 @@
           }
         },
         "os.huawei.constant.pct": {
-          "definition": "constant / sufficient-sample strategy rows in resolved OS group huawei",
+          "definition": "constant / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group huawei",
           "read": {
             "group": "huawei",
             "strategy": "CONSTANT",
@@ -2404,7 +2408,7 @@
           }
         },
         "os.huawei.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group huawei",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group huawei",
           "read": {
             "group": "huawei",
             "strategy": "SINGLE",
@@ -2412,7 +2416,7 @@
           }
         },
         "os.sonicwall.constant.pct": {
-          "definition": "constant / sufficient-sample strategy rows in resolved OS group sonicwall",
+          "definition": "constant / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group sonicwall",
           "read": {
             "group": "sonicwall",
             "strategy": "CONSTANT",
@@ -2420,7 +2424,7 @@
           }
         },
         "os.sonicwall.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group sonicwall",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group sonicwall",
           "read": {
             "group": "sonicwall",
             "strategy": "SINGLE",
@@ -2428,7 +2432,7 @@
           }
         },
         "os.windows.per-destination.pct": {
-          "definition": "per-destination / sufficient-sample strategy rows in resolved OS group windows",
+          "definition": "per-destination / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group windows",
           "read": {
             "group": "windows",
             "strategy": "PER_DESTINATION",
@@ -2566,7 +2570,7 @@
       ],
       "values": {
         "os.cisco.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group cisco",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group cisco",
           "read": {
             "group": "cisco",
             "strategy": "SINGLE",
@@ -2574,7 +2578,7 @@
           }
         },
         "os.freebsd.constant.pct": {
-          "definition": "constant / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "constant / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "CONSTANT",
@@ -2582,7 +2586,7 @@
           }
         },
         "os.freebsd.multi.pct": {
-          "definition": "multi / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "multi / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "MULTI",
@@ -2590,7 +2594,7 @@
           }
         },
         "os.freebsd.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "PER_BUCKET",
@@ -2598,7 +2602,7 @@
           }
         },
         "os.freebsd.random.pct": {
-          "definition": "random / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "random / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "RANDOM",
@@ -2606,7 +2610,7 @@
           }
         },
         "os.freebsd.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group freebsd",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group freebsd",
           "read": {
             "group": "freebsd",
             "strategy": "SINGLE",
@@ -2614,23 +2618,24 @@
           }
         },
         "os.huawei.single.pct": {
-          "definition": "single / sufficient-sample strategy rows in resolved OS group huawei",
+          "definition": "single / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group huawei",
           "read": {
             "group": "huawei",
             "strategy": "SINGLE",
             "stat": "share-pct"
           }
         },
-        "os.mikrotik.per-destination.pct": {
-          "definition": "per-destination / sufficient-sample strategy rows in resolved OS group mikrotik",
+        "os.mikrotik_routeros.per-destination.pct": {
+          "definition": "per-destination / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group MikroTik RouterOS (exact OS_TAG=mikrotik-routeros)",
           "read": {
-            "group": "mikrotik",
+            "group": "mikrotik-routeros",
             "strategy": "PER_DESTINATION",
-            "stat": "share-pct"
+            "stat": "share-pct",
+            "reader": "adjusted-os"
           }
         },
         "os.openbsd.random.pct": {
-          "definition": "random / sufficient-sample strategy rows in resolved OS group openbsd",
+          "definition": "random / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group openbsd",
           "read": {
             "group": "openbsd",
             "strategy": "RANDOM",
@@ -2638,7 +2643,7 @@
           }
         },
         "os.windows.per-destination.pct": {
-          "definition": "per-destination / sufficient-sample strategy rows in resolved OS group windows",
+          "definition": "per-destination / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group windows",
           "read": {
             "group": "windows",
             "strategy": "PER_DESTINATION",
@@ -2646,7 +2651,7 @@
           }
         },
         "os.zyxel.per-bucket.pct": {
-          "definition": "per-bucket / sufficient-sample strategy rows in resolved OS group zyxel",
+          "definition": "per-bucket / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group zyxel",
           "read": {
             "group": "zyxel",
             "strategy": "PER_BUCKET",
@@ -2654,7 +2659,7 @@
           }
         },
         "os.zyxel.per-destination.pct": {
-          "definition": "per-destination / sufficient-sample strategy rows in resolved OS group zyxel",
+          "definition": "per-destination / all measured strategy rows (including Unclassified/Not Enough Samples) in resolved OS group zyxel",
           "read": {
             "group": "zyxel",
             "strategy": "PER_DESTINATION",
@@ -5529,6 +5534,424 @@
             ]
           },
           "reason": "requires verified production-profile validation paper metadata"
+        }
+      }
+    },
+    {
+      "prefix": "results.eu.icmp.rt-fi",
+      "unit": "percent",
+      "sources": [
+        {
+          "protocol": "icmp",
+          "connection": "no-connection",
+          "phase": "rt-fi-merged",
+          "reader": "adjusted-os",
+          "kind": "operating-system-group-by-strategy"
+        }
+      ],
+      "values": {
+        "os.zte.per-destination.pct": {
+          "definition": "per-destination / all measured resolved OS-group zte IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "zte",
+            "strategy": "PER_DESTINATION",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.zte.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group zte IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "zte",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.hpe_comware.single.pct": {
+          "definition": "single / all measured resolved OS-group hpe_comware IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "hpe-comware",
+            "strategy": "SINGLE",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.aruba.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group aruba IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "aruba",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.aruba.single.pct": {
+          "definition": "single / all measured resolved OS-group aruba IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "aruba",
+            "strategy": "SINGLE",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.draytek.single.pct": {
+          "definition": "single / all measured resolved OS-group draytek IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "draytek",
+            "strategy": "SINGLE",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.tp_link.per-destination.pct": {
+          "definition": "per-destination / all measured resolved OS-group tp_link IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "tp-link",
+            "strategy": "PER_DESTINATION",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.tp_link.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group tp_link IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "tp-link",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.f5.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group f5 IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "f5",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.f5.constant.pct": {
+          "definition": "constant / all measured resolved OS-group f5 IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "f5",
+            "strategy": "CONSTANT",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.check_point.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group check_point IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "check-point",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.check_point.per-destination.pct": {
+          "definition": "per-destination / all measured resolved OS-group check_point IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "check-point",
+            "strategy": "PER_DESTINATION",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.pfsense.random.pct": {
+          "definition": "random / all measured resolved OS-group pfsense IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "pfsense",
+            "strategy": "RANDOM",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.opnsense.random.pct": {
+          "definition": "random / all measured resolved OS-group opnsense IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "opnsense",
+            "strategy": "RANDOM",
+            "stat": "share-pct",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "prefix": "results.eu.udp.rt-fi",
+      "unit": "percent",
+      "sources": [
+        {
+          "protocol": "udp",
+          "connection": "no-connection",
+          "phase": "rt-fi-merged",
+          "reader": "adjusted-os",
+          "kind": "operating-system-group-by-strategy"
+        }
+      ],
+      "values": {
+        "os.hpe_comware.single.pct": {
+          "definition": "single / all measured resolved OS-group hpe_comware IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "hpe-comware",
+            "strategy": "SINGLE",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.mikrotik_routeros.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group mikrotik_routeros IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "mikrotik-routeros",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.mikrotik_routeros.random.pct": {
+          "definition": "random / all measured resolved OS-group mikrotik_routeros IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "mikrotik-routeros",
+            "strategy": "RANDOM",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.draytek.per-destination.pct": {
+          "definition": "per-destination / all measured resolved OS-group draytek IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "draytek",
+            "strategy": "PER_DESTINATION",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.zyxel.constant.pct": {
+          "definition": "constant / all measured resolved OS-group zyxel IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "zyxel",
+            "strategy": "CONSTANT",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.f5.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group f5 IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "f5",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.opnsense.constant.pct": {
+          "definition": "constant / all measured resolved OS-group opnsense IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "opnsense",
+            "strategy": "CONSTANT",
+            "stat": "share-pct",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "prefix": "results.eu.tcp.no-conn.rt-fi",
+      "unit": "percent",
+      "sources": [
+        {
+          "protocol": "tcp",
+          "connection": "no-connection",
+          "phase": "rt-fi-merged",
+          "reader": "adjusted-os",
+          "kind": "operating-system-group-by-strategy"
+        }
+      ],
+      "values": {
+        "os.openbsd.random.pct": {
+          "definition": "random / all measured resolved OS-group openbsd IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "openbsd",
+            "strategy": "RANDOM",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.openbsd.not-enough-samples.pct": {
+          "definition": "not-enough-samples / all measured resolved OS-group openbsd IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "openbsd",
+            "strategy": "NOT_ENOUGH_SAMPLES",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.hpe_comware.single.pct": {
+          "definition": "single / all measured resolved OS-group hpe_comware IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "hpe-comware",
+            "strategy": "SINGLE",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.hpe_comware.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group hpe_comware IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "hpe-comware",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.draytek.single.pct": {
+          "definition": "single / all measured resolved OS-group draytek IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "draytek",
+            "strategy": "SINGLE",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.draytek.constant.pct": {
+          "definition": "constant / all measured resolved OS-group draytek IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "draytek",
+            "strategy": "CONSTANT",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.f5.per-bucket.pct": {
+          "definition": "per-bucket / all measured resolved OS-group f5 IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "f5",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.check_point.random.pct": {
+          "definition": "random / all measured resolved OS-group check_point IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "check-point",
+            "strategy": "RANDOM",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.check_point.constant.pct": {
+          "definition": "constant / all measured resolved OS-group check_point IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "check-point",
+            "strategy": "CONSTANT",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.check_point.not-enough-samples.pct": {
+          "definition": "not-enough-samples / all measured resolved OS-group check_point IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy",
+          "read": {
+            "group": "check-point",
+            "strategy": "NOT_ENOUGH_SAMPLES",
+            "stat": "share-pct",
+            "full": false
+          }
+        },
+        "os.zte-aruba-mikrotik_routeros-zyxel-tp_link-pfsense-opnsense.constant.min-pct": {
+          "definition": "min of the individual unrounded Constant percentages in ZTE/Aruba/RouterOS/Zyxel/TP-Link/pfSense/OPNsense; not a pooled share",
+          "read": {
+            "groups": [
+              "zte",
+              "aruba",
+              "mikrotik-routeros",
+              "zyxel",
+              "tp-link",
+              "pfsense",
+              "opnsense"
+            ],
+            "strategy": "CONSTANT",
+            "stat": "min-share-pct",
+            "full": false
+          }
+        },
+        "os.zte-aruba-mikrotik_routeros-zyxel-tp_link-pfsense-opnsense.constant.max-pct": {
+          "definition": "max of the individual unrounded Constant percentages in ZTE/Aruba/RouterOS/Zyxel/TP-Link/pfSense/OPNsense; not a pooled share",
+          "read": {
+            "groups": [
+              "zte",
+              "aruba",
+              "mikrotik-routeros",
+              "zyxel",
+              "tp-link",
+              "pfsense",
+              "opnsense"
+            ],
+            "strategy": "CONSTANT",
+            "stat": "max-share-pct",
+            "full": false
+          }
+        }
+      }
+    },
+    {
+      "prefix": "results.eu.tcp.conn.rt-base",
+      "unit": "percent",
+      "sources": [
+        {
+          "protocol": "tcp",
+          "connection": "connection",
+          "phase": "rt-base",
+          "reader": "adjusted-os",
+          "kind": "operating-system-group-by-strategy"
+        }
+      ],
+      "values": {
+        "os.hpe_comware.per-bucket.pct.full": {
+          "definition": "per-bucket / all measured resolved OS-group hpe_comware IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy; pinned Full TCP RT cohort",
+          "read": {
+            "group": "hpe-comware",
+            "strategy": "PER_BUCKET",
+            "stat": "share-pct",
+            "full": true
+          }
+        },
+        "os.hpe_comware.single.pct.full": {
+          "definition": "single / all measured resolved OS-group hpe_comware IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy; pinned Full TCP RT cohort",
+          "read": {
+            "group": "hpe-comware",
+            "strategy": "SINGLE",
+            "stat": "share-pct",
+            "full": true
+          }
+        },
+        "os.sonicwall.single.pct.full": {
+          "definition": "single / all measured resolved OS-group sonicwall IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy; pinned Full TCP RT cohort",
+          "read": {
+            "group": "sonicwall",
+            "strategy": "SINGLE",
+            "stat": "share-pct",
+            "full": true
+          }
+        },
+        "os.sonicwall.per-connection.pct.full": {
+          "definition": "per-connection / all measured resolved OS-group sonicwall IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy; pinned Full TCP RT cohort",
+          "read": {
+            "group": "sonicwall",
+            "strategy": "PER_CONNECTION",
+            "stat": "share-pct",
+            "full": true
+          }
+        },
+        "os.check_point.per-connection.pct.full": {
+          "definition": "per-connection / all measured resolved OS-group check_point IPs, including Unclassified/Not Enough Samples; adjusted OS_TAG taxonomy; pinned Full TCP RT cohort",
+          "read": {
+            "group": "check-point",
+            "strategy": "PER_CONNECTION",
+            "stat": "share-pct",
+            "full": true
+          }
         }
       }
     }
