@@ -1,5 +1,9 @@
 # Additional paper-ready plots
 
+For optional OS_TAG-aware vendor splits and the new group/vendor axis labels,
+see [additional adjusted OS figures](PAPER_OS_ADJUSTED.md). Their explicit one-off
+preparation and `__adjusted` outputs leave these original plot families intact.
+
 The paper renderer reads existing small JSON reports and compact histogram or
 quantile Parquet. By default it does not run
 classification, open per-IP Parquet files, perform CAIDA joins, reconstruct data

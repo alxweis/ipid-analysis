@@ -89,6 +89,11 @@ FINAL_KINDS = {
     "itdk-role-by-strategy-final": ("itdk-role-by-strategy", "__paper__final"),
     "itdk-role-by-os-final": ("itdk-role-by-os", "__paper_final"),
 }
+ADJUSTED_KINDS = (
+    "operating-system-group-by-strategy-adjusted",
+    "operating-system-group-by-strategy-connection-adjusted",
+    "itdk-role-by-os-final-adjusted",
+)
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,18 @@ class Job:
 
     @property
     def destination(self):
+        if self.kind in ADJUSTED_KINDS and self.output is None:
+            stem = self.source.stem
+            if self.kind == "operating-system-group-by-strategy-connection-adjusted":
+                return self.source.with_name(
+                    stem.removesuffix("__full") + "__paper__full__adjusted.pdf"
+                )
+            suffix = (
+                "__paper_final__adjusted"
+                if self.kind == "itdk-role-by-os-final-adjusted"
+                else "__paper__adjusted"
+            )
+            return self.source.with_name(stem + suffix + ".pdf")
         suffix = FINAL_KINDS[self.kind][1] if self.kind in FINAL_KINDS else "__paper"
         return self.output or self.source.with_name(self.source.stem + suffix + ".pdf")
 
@@ -338,7 +355,22 @@ def worker(job: Job) -> Result:
         report = json.loads(content)
         profile = Path(__file__).with_name("paper_plot_style.py")
         profile_bytes = profile.read_bytes()
-        if job.kind in FINAL_KINDS:
+        if job.kind in ADJUSTED_KINDS:
+            from ipid_analysis.paper_os_adjusted import draw, load_data
+
+            data, cache, dependencies, original_sha = load_data(job)
+            for dependency in dict.fromkeys([cache, *dependencies]):
+                if dependency not in inputs:
+                    inputs.append(dependency)
+                    before.append(fingerprint(dependency))
+            for name in (
+                "paper_os_adjusted.py",
+                "paper_os_taxonomy.py",
+                "paper_os_group_plot.py",
+                "plot_itdk_os.py",
+            ):
+                profile_bytes += Path(__file__).with_name(name).read_bytes()
+        elif job.kind in FINAL_KINDS:
             from ipid_analysis.paper_itdk_final import COMPANIONS, draw, load_data
 
             companion = job.source.with_name(f"n-rt-b_fi-m_{COMPANIONS[job.kind]}.json")
@@ -436,6 +468,9 @@ def worker(job: Job) -> Result:
         if job.kind in FINAL_KINDS:
             parameters["population"] = data.populations
             parameters["companion_report_sha256"] = hashlib.sha256(payload).hexdigest()
+        if job.kind in ADJUSTED_KINDS:
+            parameters["operation"] = "paper-os-adjusted-v1"
+            parameters["adjusted_original_report_sha256"] = original_sha
         # A competing renderer may have published while this report was read.
         if os.path.lexists(destination):
             status = (
@@ -530,6 +565,16 @@ def main(argv=None):
     parser.add_argument("--protocols", nargs="+", choices=PROTOCOLS, default=list(PROTOCOLS))
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument(
+        "--os-adjusted",
+        action="store_true",
+        help="render additional tag-split OS heatmaps and Final OS bars only",
+    )
+    parser.add_argument(
+        "--prepare-os-adjusted",
+        action="store_true",
+        help="explicit one-off OS_TAG regrouping into separate cached aggregates; requires --os-adjusted",
+    )
+    parser.add_argument(
         "--final-only",
         action="store_true",
         help="create only the two Final ITDK complement variants; existing paper PDFs stay untouched",
@@ -552,6 +597,10 @@ def main(argv=None):
         parser.error("supply --campaign, --validation or explicit report paths")
     if args.workers < 1:
         parser.error("--workers must be positive")
+    if args.prepare_os_adjusted and not args.os_adjusted:
+        parser.error("--prepare-os-adjusted requires --os-adjusted")
+    if args.os_adjusted and (args.final_only or args.validation):
+        parser.error("--os-adjusted cannot be combined with --final-only or --validation")
     try:
         if args.validation:
             from ipid_analysis.paper_validation import discover as discover_validation
@@ -575,9 +624,29 @@ def main(argv=None):
             )
         if args.final_only:
             jobs = [final for job in jobs if (final := final_job(job)) is not None]
+        if args.os_adjusted:
+            from ipid_analysis.paper_os_adjusted import jobs as adjusted_jobs
+
+            jobs = adjusted_jobs(
+                jobs, args.reports_root, args.campaign, sites=args.sites, protocols=args.protocols
+            )
         if not jobs:
             raise ValueError("no supported paper-plot reports found")
         start = perf_counter()
+        if args.prepare_os_adjusted and not args.dry_run:
+            from ipid_analysis.os_adjusted_data import prepare
+            from ipid_analysis.paper_os_adjusted import BAR, global_source
+
+            sources = {}
+            for job in jobs:
+                if not job.destination.exists():
+                    source = global_source(job)
+                    sources[source] = sources.get(source, False) or job.kind == BAR
+            for source, need_roles in sorted(sources.items()):
+                print(f"preparing adjusted OS groups: {source}", flush=True)
+                print(
+                    f"adjusted OS aggregate: {prepare(source, need_roles=need_roles)}", flush=True
+                )
         if args.prepare_probing_intervals and not args.dry_run:
             from ipid_analysis.paper_probing_plot import prepare
 

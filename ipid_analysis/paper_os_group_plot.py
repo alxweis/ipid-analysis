@@ -57,8 +57,24 @@ def load_data(path, report, *, connection_base=False):
         if not source.schema_arrow.equals(AGGREGATE_SCHEMA, check_metadata=False):
             raise ValueError("unexpected OS-group aggregate schema")
         rows = source.read().to_pylist()
+    return data_from_rows(rows, report, connection_base=connection_base)
+
+
+def data_from_rows(
+    rows, report, *, connection_base=False, group_info=None, selection=None, y_label=None
+):
+    """Reuse complete aggregate validation for separately prepared OS taxonomies."""
+    if report.get("figure") != "operating-system-group-by-strategy":
+        raise ValueError("expected the OS-group strategy report")
+    if connection_base and tuple(
+        report.get(k) for k in ("protocol", "connection_mode", "target")
+    ) != ("tcp", "connection", "tcp.ipid.connection.rt-based.base"):
+        raise ValueError("expected the connection-oriented TCP RT-base OS-group report")
+    custom = group_info is not None or selection is not None or y_label is not None
+    group_info = GROUP_INFO if group_info is None else group_info
+    selection = SELECTION if selection is None else selection
     groups = report.get("groups")
-    if not isinstance(groups, dict) or not groups or set(groups) - set(GROUP_INFO):
+    if not isinstance(groups, dict) or not groups or set(groups) - set(group_info):
         raise ValueError("unknown or missing OS groups in report")
     indices = {strategy: i for i, strategy in enumerate(HEATMAP_STRATEGIES)}
     seen, totals, counts, percentages = set(), {}, {}, {}
@@ -67,7 +83,7 @@ def load_data(path, report, *, connection_base=False):
         if group not in groups or strategy not in indices or (group, strategy) in seen:
             raise ValueError("unknown/duplicate OS-group strategy cell")
         seen.add((group, strategy))
-        section, label = GROUP_INFO[group]
+        section, label = group_info[group]
         count, total, share = row["COUNT"], row["OS_GROUP_TOTAL"], row["PERCENTAGE"]
         if (row["OS_SECTION"], row["OS_GROUP_LABEL"]) != (section, label):
             raise ValueError("OS-group labels/sections disagree with canonical taxonomy")
@@ -120,7 +136,7 @@ def load_data(path, report, *, connection_base=False):
                 "counts": np.asarray([counts.get(g, np.zeros(10, dtype=np.int64)) for g in keys]),
                 "percentages": np.asarray([percentages.get(g, np.zeros(10)) for g in keys]),
             }
-            for title, keys in SELECTION
+            for title, keys in selection
         ]
     }
     if connection_base:
@@ -129,6 +145,8 @@ def load_data(path, report, *, connection_base=False):
         for section in result["sections"]:
             for field in ("counts", "percentages"):
                 section[field] = section[field][:, columns]
+    if custom:
+        result.update(group_info=group_info, y_label=y_label or Y_LABEL)
     return result
 
 
@@ -154,6 +172,7 @@ def _draw(data, output, *, wrap_width=None):
     DPI, HEIGHT = 300, 4.6
     font, _ = _font()
     connection_base = data.get("connection_base", False)
+    group_info = data.get("group_info", GROUP_INFO)
     strategies = data.get("strategies", HEATMAP_STRATEGIES)
     column_count = len(strategies)
     LABELS = [STRATEGY_PRETTY[key] for key in strategies]
@@ -164,7 +183,7 @@ def _draw(data, output, *, wrap_width=None):
             section["title"],
             [
                 (
-                    GROUP_INFO[key],
+                    group_info[key],
                     shares,
                     [format_percentage(share, count) for count, share in zip(counts, shares)],
                 )
@@ -204,7 +223,7 @@ def _draw(data, output, *, wrap_width=None):
                 cell_width_px, cell_height_px = np.asarray(BASE_CELL_POINTS) * DPI / 72
             labels_by_section = [
                 [
-                    f"{GROUP_INFO[key][1]} ({format_population(total)})"
+                    f"{group_info[key][1]} ({format_population(total)})"
                     for key, total in zip(section["groups"], section["totals"])
                 ]
                 for section in data["sections"]
@@ -239,7 +258,10 @@ def _draw(data, output, *, wrap_width=None):
             matrix_width = column_count * cell_width_px / DPI
             row_height = cell_height_px / DPI
             left, bottom, section_gap = 1.04, 0.9, 0.20
-            network_height, general_height = 12 * row_height, 8 * row_height
+            network_height, general_height = (
+                len(data["sections"][1]["groups"]) * row_height,
+                len(data["sections"][0]["groups"]) * row_height,
+            )
             height_needed = bottom + network_height + section_gap + general_height + 0.24
             HEIGHT = max(HEIGHT, height_needed)
             fig.set_size_inches(WIDTH, HEIGHT)
@@ -294,7 +316,7 @@ def _draw(data, output, *, wrap_width=None):
             ylabel = fig.text(
                 0.07 / WIDTH,
                 (bottom + total_height / 2) / HEIGHT,
-                Y_LABEL,
+                data.get("y_label", Y_LABEL),
                 rotation=90,
                 ha="center",
                 va="center",
@@ -360,7 +382,10 @@ def _draw(data, output, *, wrap_width=None):
                         or b.y1 > fig.bbox.height + 0.5
                     ):
                         raise ValueError(f"paper label would be clipped: {text.get_text()}")
-            assert sum(len(a.texts) for a in axes) == 20 * column_count
+            assert (
+                sum(len(a.texts) for a in axes)
+                == sum(len(section["groups"]) for section in data["sections"]) * column_count
+            )
             image = np.asarray(fig.canvas.buffer_rgba())[:, :, :3]
             ys = np.flatnonzero(np.any(image < 250, axis=2).any(axis=1))
             crop_bottom = max(0, (len(image) - ys[-1] - 1) / DPI - 1 / DPI)
@@ -372,7 +397,10 @@ def _draw(data, output, *, wrap_width=None):
                 pad_inches=0,
                 metadata={
                     "Title": "Operating-system groups by strategy",
-                    "Subject": "3.33 inches; Linux Libertine 7 pt; original aggregate percentages",
+                    "Subject": data.get(
+                        "subject",
+                        "3.33 inches; Linux Libertine 7 pt; original aggregate percentages",
+                    ),
                 },
             )
         finally:

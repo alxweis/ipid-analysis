@@ -27,6 +27,11 @@ The two stateless merged ITDK role figures also get Final variants with
 (resolved OS IPs only for the OS figure). Render just these additions with
 `make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--final-only --workers 4"`.
 They read existing small aggregate JSONs; no raw scan or ITDK join is required.
+Additional `__adjusted` OS heatmaps and Final OS bars split MikroTik RouterOS /
+SwOS and HPE Comware / remaining HPE Network OS using existing resolved OS tags.
+Use `ARGS="--os-adjusted --prepare-os-adjusted --workers 4"` once, then
+`ARGS="--os-adjusted --workers 4"` for cached rendering. See
+[adjusted OS figures](docs/PAPER_OS_ADJUSTED.md) for populations, labels and Full inputs.
 See [Paper-ready plots](docs/PAPER_PLOTS.md)
 for selection, RAM/S3 publication, the design profile and read-only repeat runs.
 Global classifier-validation figures are available with

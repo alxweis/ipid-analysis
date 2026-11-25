@@ -237,6 +237,12 @@ PDF paths; copy `reports/` without changing its relative structure.
 
 ### Paper-ready figure paths
 
+Prepared/rendered [adjusted OS figures](PAPER_OS_ADJUSTED.md) are preferred before
+Final/paper/original siblings for their existing figure keys. TCP-Connection
+Full OS figures keep their `.full` keys and are bound to the registered Full
+source report. Historical numeric OS keys retain their previous combined-group
+definitions; generating adjusted plots does not change those scalar values.
+
 For each selected `fig.*` value, the exporter prefers the sibling
 `<original-stem>__paper.pdf` when present; otherwise it exports the original PDF.
 For the two merged stateless ITDK role figures it first prefers
