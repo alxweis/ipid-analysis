@@ -1,4 +1,4 @@
-"""Approved two-column EU counter UpSet, from the existing small summary only."""
+"""Approved single-column EU counter UpSet, from the existing small summary only."""
 
 from decimal import ROUND_HALF_UP, Decimal
 from io import BytesIO
@@ -19,8 +19,12 @@ LABELS = {
     "STRATEGY_CHANGED": "Selection Strategy changed",
     "NOT_ENOUGH_SAMPLES": "Not Enough Samples",
 }
-WIDTH, HEIGHT = 7.0, 2.2
+WIDTH, HEIGHT = 3.33, 2.8
 AXIS_WIDTH, X_TICK_LENGTH = 0.45, 2.5
+FRAME_WIDTH_POINTS = 65.58145833333333  # Fixed physical width of the approved subplots.
+BAR_GAP_POINTS = FRAME_EDGE_POINTS = 2
+MATRIX_COUNT_GAP_POINTS = 1
+LEGEND_ROW_PITCH_POINTS = 8.5
 
 
 def segment_label(count, total):
@@ -57,8 +61,8 @@ def draw(kind, summary, output: Path):
     ):
         fig = plt.figure(figsize=(WIDTH, HEIGHT))
         try:
-            _draw(fig, summary, font)
-            _save(fig, output)
+            protocol_label = _draw(fig, summary, font)
+            _save(fig, output, protocol_label)
         finally:
             plt.close(fig)
 
@@ -74,6 +78,11 @@ def _draw(fig, summary, font):
     from ipid_analysis.paper_plot_style import COLORS
 
     wp, hp = WIDTH * 72, HEIGHT * 72
+    frame_width = FRAME_WIDTH_POINTS
+    bar_width_points = (frame_width - 3 * BAR_GAP_POINTS - 2 * FRAME_EDGE_POINTS) / 4
+    bar_pitch_points = bar_width_points + BAR_GAP_POINTS
+    bar_width = bar_width_points / bar_pitch_points
+    edge_extent = (bar_width_points / 2 + FRAME_EDGE_POINTS) / bar_pitch_points
     membership = np.array(
         [[protocol in group.split("-") for group in GROUPS] for protocol in ("icmp", "tcp", "udp")]
     )
@@ -96,11 +105,10 @@ def _draw(fig, summary, font):
         values = np.divide(
             100.0 * counts, totals, out=np.zeros_like(counts, dtype=float), where=totals > 0
         )
-        sizes = membership @ totals
-        left, frame_width = 63 + panel * 160, 110
-        bars = fig.add_axes([left / wp, 60 / hp, frame_width / wp, 64 / hp])
+        left = 27 + panel * 70
+        bars = fig.add_axes([left / wp, 78 / hp, frame_width / wp, 64 / hp])
         bar_axes.append(bars)
-        matrix = fig.add_axes([left / wp, 19 / hp, frame_width / wp, 25 / hp], sharex=bars)
+        matrix = fig.add_axes([left / wp, 37 / hp, frame_width / wp, 25 / hp], sharex=bars)
         matrices.append(matrix)
         x = np.arange(4)
         bottom = np.zeros(4)
@@ -109,7 +117,7 @@ def _draw(fig, summary, font):
                 x,
                 segment,
                 bottom=bottom,
-                width=0.7,
+                width=bar_width,
                 facecolor=color,
                 edgecolor="none",
                 linewidth=0,
@@ -132,8 +140,15 @@ def _draw(fig, summary, font):
         for i in range(4):
             boundaries = np.unique(np.cumsum(values[:, i])[:-1])
             boundaries = boundaries[(boundaries > 1e-9) & (boundaries < 100 - 1e-9)]
-            bars.hlines(boundaries, i - 0.35, i + 0.35, color="#222222", linewidth=0.2, zorder=4)
-        bars.set(xlim=(-0.5, 3.5), ylim=(0, 100), yticks=np.arange(0, 101, 20))
+            bars.hlines(
+                boundaries,
+                i - bar_width / 2,
+                i + bar_width / 2,
+                color="#222222",
+                linewidth=0.2,
+                zorder=4,
+            )
+        bars.set(xlim=(-edge_extent, 3 + edge_extent), ylim=(0, 100), yticks=np.arange(0, 101, 20))
         bars.set_axisbelow(True)
         bars.grid(axis="y", color="#BDBDBD", linewidth=0.35, linestyle="--", alpha=0.7)
         bars.set_xticks(x)
@@ -152,7 +167,7 @@ def _draw(fig, summary, font):
         titles.append(
             fig.text(
                 (left + frame_width / 2) / wp,
-                131 / hp,
+                149 / hp,
                 title,
                 ha="center",
                 va="center",
@@ -162,11 +177,12 @@ def _draw(fig, summary, font):
         count_labels.append(
             [
                 fig.text(
-                    (left + (i + 0.5) * frame_width / 4) / wp,
+                    (left + FRAME_EDGE_POINTS + bar_width_points / 2 + i * bar_pitch_points) / wp,
                     52 / hp,
                     "(" + format_population(int(n)) + ")",
                     ha="center",
                     va="top",
+                    rotation=90,
                     fontproperties=font,
                 )
                 for i, n in enumerate(totals)
@@ -183,10 +199,7 @@ def _draw(fig, summary, font):
         matrix.set(
             ylim=(2.6, -0.6),
             yticks=range(3),
-            yticklabels=[
-                p.upper() + " (" + format_population(int(n)) + ")"
-                for p, n in zip(("icmp", "tcp", "udp"), sizes)
-            ],
+            yticklabels=[p.upper() if panel == 0 else "" for p in ("icmp", "tcp", "udp")],
         )
         matrix.tick_params(axis="both", length=0, pad=1)
         matrix.tick_params(axis="x", labelbottom=False)
@@ -194,9 +207,9 @@ def _draw(fig, summary, font):
             spine.set_visible(False)
 
     protocol_label = fig.text(
-        12 / wp,
+        26 / wp,
         31.5 / hp,
-        "Protocol\n(#IP Addr.)",
+        "Protocol",
         rotation=90,
         ha="center",
         va="center",
@@ -210,17 +223,24 @@ def _draw(fig, summary, font):
         va="top",
         fontproperties=font,
     )
-    # One centered row, 4pt squares, 1.2pt swatch/label gaps, 11pt between entries.
+    # One column-major two-column legend, 4pt squares and 1.2pt swatch/label gaps.
     widths = [TextPath((0, 0), label, prop=font).get_extents().width for _, label in categories]
     item_widths = [4 + 1.2 + width for width in widths]
-    total_width = sum(item_widths) + 11 * (len(item_widths) - 1)
+    legend_rows = (len(item_widths) + 1) // 2
+    column_widths = [
+        max(item_widths[col * legend_rows : (col + 1) * legend_rows]) for col in range(2)
+    ]
+    total_width = sum(column_widths) + 11
     if total_width >= wp - 4:
         raise ValueError("combined UpSet legend does not fit at 7pt")
-    cursor = (wp - total_width) / 2
+    legend_left = (wp - total_width) / 2
     legend_texts, legend_patches = [], []
-    for (_, label), color, item_width in zip(categories, colors, item_widths):
+    for i, ((_, label), color) in enumerate(zip(categories, colors)):
+        col, row = i // legend_rows, i % legend_rows
+        cursor = legend_left + (column_widths[0] + 11 if col else 0)
+        legend_y = hp - 15 - row * LEGEND_ROW_PITCH_POINTS
         patch = Rectangle(
-            (cursor / wp, 148 / hp),
+            (cursor / wp, (legend_y - 2) / hp),
             4 / wp,
             4 / hp,
             transform=fig.transFigure,
@@ -231,9 +251,8 @@ def _draw(fig, summary, font):
         fig.add_artist(patch)
         legend_patches.append(patch)
         legend_texts.append(
-            fig.text((cursor + 5.2) / wp, 150 / hp, label, va="center", fontproperties=font)
+            fig.text((cursor + 5.2) / wp, legend_y / hp, label, va="center", fontproperties=font)
         )
-        cursor += item_width + 11
     for text in fig.findobj(Text):
         text.set_fontproperties(font)
     fig.canvas.draw()
@@ -250,7 +269,8 @@ def _draw(fig, summary, font):
         matrix.set_position(
             [
                 position.x0,
-                (count_bottom - 2 * fig.dpi / 72) / fig.bbox.height - position.height,
+                (count_bottom - MATRIX_COUNT_GAP_POINTS * fig.dpi / 72) / fig.bbox.height
+                - position.height,
                 position.width,
                 position.height,
             ]
@@ -273,6 +293,41 @@ def _draw(fig, summary, font):
         patch.set_y(patch.get_y() + shift)
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
+    bounds = [text.get_window_extent(renderer) for text in legend_texts]
+    if any(bounds[i].x1 >= bounds[i + legend_rows].x0 for i in range(len(bounds) - legend_rows)):
+        raise ValueError("combined UpSet legend labels overlap")
+    # Keep the approved frame sizes, fitting their labels into the column width.
+    outer_pad = 72 / 300
+    first_frame = bar_axes[0].get_window_extent(renderer)
+    protocol_box = protocol_label.get_window_extent(renderer)
+    bar_label_space = (
+        (first_frame.x0 - bar_axes[0].yaxis.label.get_window_extent(renderer).x0) * 72 / fig.dpi
+    )
+    tick_left = min(t.get_window_extent(renderer).x0 for t in matrices[0].get_yticklabels())
+    matrix_label_space = (
+        matrices[0].get_window_extent(renderer).x0 - tick_left + protocol_box.width
+    ) * 72 / fig.dpi + 2
+    left_edge = outer_pad + max(bar_label_space, matrix_label_space)
+    right_edge = wp - outer_pad - AXIS_WIDTH / 2
+    frame_gap = (right_edge - left_edge - 3 * frame_width) / 2
+    if frame_gap < 0:
+        raise ValueError("combined UpSet frames and labels do not fit the column width")
+    for panel, (bars, matrix, title, labels) in enumerate(
+        zip(bar_axes, matrices, titles, count_labels)
+    ):
+        left = left_edge + panel * (frame_width + frame_gap)
+        for ax in (bars, matrix):
+            position = ax.get_position()
+            ax.set_position([left / wp, position.y0, frame_width / wp, position.height])
+        title.set_x((left + frame_width / 2) / wp)
+        for i, text in enumerate(labels):
+            text.set_x(
+                (left + FRAME_EDGE_POINTS + bar_width_points / 2 + i * bar_pitch_points) / wp
+            )
+    protocol_label.set_x((outer_pad + protocol_box.width * 72 / fig.dpi / 2) / wp)
+    xlabel.set_x((left_edge + 1.5 * frame_width + frame_gap) / wp)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
     for text in fig.findobj(Text):
         if not text.get_visible() or not text.get_text().strip():
             continue
@@ -284,27 +339,35 @@ def _draw(fig, summary, font):
             or box.y1 > fig.bbox.height + 0.5
         ):
             raise ValueError(f"combined UpSet label would be clipped: {text.get_text()}")
-    bounds = [text.get_window_extent(renderer) for text in legend_texts]
-    if any(a.x1 >= b.x0 for a, b in zip(bounds, bounds[1:])):
-        raise ValueError("combined UpSet legend labels overlap")
+    return protocol_label
 
 
-def _save(fig, output):
-    """Crop vertical whitespace only; retain the full 7in vector PDF and font size."""
+def _save(fig, output, protocol_label):
+    """Crop vertical whitespace only; retain the full 3.33in vector PDF and font size."""
     from matplotlib.transforms import Bbox
     from PIL import Image, ImageChops
 
     dpi = 300
-    # Inspect a small in-memory preview, like the shared paper bars' ink-row crop.
-    # This is only a page-bound calculation; the exported PDF remains vector.
-    with BytesIO() as buffer:
-        fig.savefig(buffer, format="png", dpi=dpi)
-        buffer.seek(0)
-        with Image.open(buffer) as preview:
-            rgb = preview.convert("RGB")
-            bounds = ImageChops.difference(rgb, Image.new("RGB", rgb.size, "white")).getbbox()
-            low = max(0, (rgb.height - bounds[3] - 1) / dpi)
-            high = min(HEIGHT, (rgb.height - bounds[1] + 1) / dpi)
+
+    def ink_bounds():
+        # Preview only: the final PDF remains vector and uses the embedded font.
+        with BytesIO() as buffer:
+            fig.savefig(buffer, format="png", dpi=dpi)
+            buffer.seek(0)
+            with Image.open(buffer) as preview:
+                rgb = preview.convert("RGB")
+                bounds = ImageChops.difference(rgb, Image.new("RGB", rgb.size, "white")).getbbox()
+                return bounds, rgb.height
+
+    bounds, height = ink_bounds()
+    # Rotated font metrics include blank ascent space. Align its actual ink,
+    # without hard-coding a font-bearing correction or moving any subplot.
+    protocol_label.set_x(protocol_label.get_position()[0] + (1 - bounds[0]) / dpi / WIDTH)
+    bounds, height = ink_bounds()
+    if bounds[0] < 1:
+        raise ValueError("combined UpSet protocol label would be clipped")
+    low = max(0, (height - bounds[3] - 1) / dpi)
+    high = min(HEIGHT, (height - bounds[1] + 1) / dpi)
     fig.savefig(
         output,
         format="pdf",

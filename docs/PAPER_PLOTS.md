@@ -14,9 +14,10 @@ Supported input/output pairs, in the same directory:
 Campaign discovery also reads the existing EU
 `interprotocol-campaign-summary.json` and creates
 `interprotocol-upset-combined__paper.pdf` beside the three individual counter
-UpSets in their reports figure directory. The combined addition is 7 inches wide
-for a two-column ACM figure, ordered Per-Destination, Single, Per-Bucket, with
-one common legend. Existing individual and original PDFs are retained.
+UpSets in their reports figure directory. The combined addition is 3.33 inches
+wide for a single-column ACM figure: Per-Destination, Single and Per-Bucket
+remain horizontally aligned, with one common two-column, column-major legend.
+Existing individual and original PDFs are retained.
 
 Its approved design uses Linux Libertine 7 pt, 4-pt bordered legend squares with
 1.2-pt label gaps, 0.45-pt frames/ticks, 0.35-pt gray dashed gridlines at 70%
@@ -25,7 +26,13 @@ only for segments whose exact share is **at least 10%**, before rounding (half
 away from zero). Cohort totals, including insufficient samples, remain the
 denominators. Zero-population cohorts are empty rather than divided by zero.
 Vertical whitespace is cropped to about one pixel at 300 dpi without rescaling
-the vector content or changing the 7-inch width.
+the vector content or changing the 3.33-inch width. The approved subplot frames
+retain their fixed 65.581458-pt width and 64-pt height. Bars have 2-pt gaps and
+2-pt inset from both frame edges. IP counts below the bars are rotated 90 degrees;
+the matrix follows them with a 1-pt minimum gap. Only the first matrix repeats
+the ICMP/TCP/UDP labels; no protocol set counts are shown. The shared y-label is
+`Protocol`. The x-label is centered on the middle subplot, and the legend has
+8.5-pt row pitch. Horizontal ink margins are approximately one pixel at 300 dpi.
 
 No per-IP Parquet, new measurement, classification or preparation step is needed:
 

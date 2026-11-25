@@ -2,7 +2,7 @@
 
 Revision exports now include per-measurement coverage, six-VP strategy shares and
 min/max/spread, EU interprotocol details, three paper-ready counter UpSets and
-their combined two-column paper figure.
+their combined single-column paper figure.
 Run `make prepare-paper-review CAMPAIGN_ID=geo-full-20261107-r1` once to cache EU
 TCP Constant/DF and same-run SYN-ACK values plus local-reference coverage; ordinary
 paper exports never trigger those raw scans. See

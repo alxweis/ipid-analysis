@@ -466,7 +466,9 @@ class RevisionValuesTest(unittest.TestCase):
         jobs = paper_ready.discover(self.root / "reports", CAMPAIGN)
         self.assertEqual(len(jobs), 4)
         self.assertTrue(all(job.kind.startswith("interprotocol-upset-") for job in jobs))
-        self.assertTrue(all(r.status == "would-create" for r in paper_ready.run(jobs, dry_run=True)))
+        self.assertTrue(
+            all(r.status == "would-create" for r in paper_ready.run(jobs, dry_run=True))
+        )
         self.assertFalse(any(job.destination.exists() for job in jobs))
         self.assertFalse(paper_ready.discover(self.root / "reports", CAMPAIGN, sites=("na",)))
         self.assertFalse(paper_ready.discover(self.root / "reports", CAMPAIGN, protocols=("tcp",)))
@@ -518,8 +520,7 @@ class RevisionValuesTest(unittest.TestCase):
             self.assertTrue(job.destination.read_bytes().startswith(b"%PDF-"))
             content = job.destination.read_bytes()
             self.assertIn(b"Libertine", content)
-            width = b"504" if job.kind == "interprotocol-upset-combined" else b"239.76"
-            self.assertIn(width, content)  # Exact 7in combined / 3.33in single-panel width.
+            self.assertIn(b"239.76", content)  # Exact 3.33in width in both paper layouts.
             stamp = hashlib.sha256(content).hexdigest()
             self.assertEqual(paper_ready.worker(job).status, "skipped-existing")
             self.assertEqual(hashlib.sha256(job.destination.read_bytes()).hexdigest(), stamp)
