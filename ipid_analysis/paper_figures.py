@@ -516,6 +516,7 @@ def aggregate_probing_intervals(
     compression: str | None = "zstd",
     threads: int = 0,
     upper_quantile: float = 0.995,
+    exclude_prefixes: Path | None = None,
 ) -> dict:
     """Aggregate per-IP medians; p99.5 remains the original default.
 
@@ -537,6 +538,18 @@ def aggregate_probing_intervals(
     )
     finite_sql = " AND isfinite(p.INTERVAL_MS)" if paper else ""
     with connect(config={"threads": threads} if threads else {}) as con:
+        geo_source = "read_parquet($geo)"
+        exclusion = {}
+        if exclude_prefixes is not None:
+            if not paper:
+                raise ValueError(
+                    "anycast filtering is only supported for the separate p99.9 paper variant"
+                )
+            from ipid_analysis.anycast_probing import filtered_continent_map
+
+            geo_source, exclusion = filtered_continent_map(
+                con, continent_map_path, exclude_prefixes
+            )
         table = con.execute(
             f"""
             WITH per_ip AS (
@@ -550,13 +563,13 @@ def aggregate_probing_intervals(
             ),
             located AS (
                 SELECT g.CONTINENT_CODE, g.CONTINENT, p.MODE, p.INTERVAL_MS
-                FROM per_ip p JOIN read_parquet($geo) g USING (IP_ADDR)
+                FROM per_ip p JOIN {geo_source} g USING (IP_ADDR)
                 WHERE g.CONTINENT_CODE <> 'ZZ' AND p.INTERVAL_MS IS NOT NULL AND p.INTERVAL_MS >= 0
                 {finite_sql}
             ),
             union_counts AS (
                 SELECT CONTINENT_CODE, count(*)::BIGINT AS IP_COUNT_UNION
-                FROM read_parquet($geo) WHERE CONTINENT_CODE <> 'ZZ' GROUP BY 1
+                FROM {geo_source} WHERE CONTINENT_CODE <> 'ZZ' GROUP BY 1
             )
             SELECT l.CONTINENT_CODE, any_value(l.CONTINENT) AS CONTINENT, l.MODE,
                    count(*)::BIGINT AS IP_COUNT_MODE, u.IP_COUNT_UNION,
@@ -566,7 +579,11 @@ def aggregate_probing_intervals(
             GROUP BY l.CONTINENT_CODE, l.MODE, u.IP_COUNT_UNION
             ORDER BY l.CONTINENT_CODE, l.MODE
             """,
-            {"rt": str(rt_path), "fixed": str(fixed_path), "geo": str(continent_map_path)},
+            {
+                "rt": str(rt_path),
+                "fixed": str(fixed_path),
+                **({"geo": str(continent_map_path)} if exclude_prefixes is None else {}),
+            },
         ).to_arrow_table()
         con.close()
         if paper:
@@ -586,6 +603,7 @@ def aggregate_probing_intervals(
             ),
             "groups": table.num_rows,
             "quantile_points": quantile_points,
+            **exclusion,
             **({"upper_quantile": upper_quantile} if paper else {}),
         }
 

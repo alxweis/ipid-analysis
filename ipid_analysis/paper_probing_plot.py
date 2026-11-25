@@ -1,6 +1,8 @@
 """Approved p99.9 split violins; explicit preparation, compact read-only rendering."""
 
+from functools import lru_cache
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -13,6 +15,19 @@ KIND = "probing-intervals-by-continent"
 QUANTILE_POINTS, UPPER_QUANTILE = 256, 0.999
 HEIGHT, AXES_HEIGHT = 1.74, 0.88
 MAX_AGGREGATE_BYTES = 1 << 20
+
+
+@lru_cache(maxsize=1)
+def _anycast_calculation_digest():
+    from ipid_analysis.anycast_probing import filtered_continent_map
+    from ipid_analysis.paper_figures import aggregate_probing_intervals
+
+    return hashlib.sha256(
+        (
+            inspect.getsource(aggregate_probing_intervals)
+            + inspect.getsource(filtered_continent_map)
+        ).encode()
+    ).hexdigest()
 
 
 def _remap(path, processed_root, mode):
@@ -44,7 +59,7 @@ def _context(source, report):
     return "n", "no-connection"
 
 
-def paths(source, report, processed_root=None):
+def paths(source, report, processed_root=None, *, anycast=None):
     """Resolve separate paper aggregates without changing the original report."""
     from ipid_analysis.paper_increment_plot import aggregate_path
 
@@ -56,11 +71,18 @@ def paths(source, report, processed_root=None):
         "rt-based-base_fixed-interval-base",
     ):
         raise ValueError("expected the connection RT-base/FI-base comparison aggregate")
-    aggregate = original.with_name(original.stem + "__paper.pq")
+    aggregate = original.with_name(
+        original.stem + ("__paper__anycast" if anycast else "__paper") + ".pq"
+    )
+    if anycast is not None:
+        from ipid_analysis.artifacts import file_digest
+
+        identity = file_digest(Path(anycast))[:16] + "-" + _anycast_calculation_digest()[:12]
+        aggregate = aggregate.parent / "anycast" / identity / aggregate.name
     return aggregate, aggregate.with_suffix(".json")
 
 
-def prepare(job):
+def prepare(job, *, anycast=None):
     """One-off opt-in aggregation from stored intervals; never replace an artifact."""
     from ipid_analysis.artifacts import (
         assert_complete,
@@ -73,7 +95,7 @@ def prepare(job):
     from ipid_analysis.paper_figures import aggregate_probing_intervals
     from ipid_analysis.runtime import exclusive_lock, scratch_root, validate_storage
 
-    if os.path.lexists(job.destination):
+    if os.path.lexists(job.destination) and anycast is None:
         return "skipped-existing"
     assert_complete(job.source)
     if job.source.stat().st_size > 4 << 20:
@@ -82,28 +104,43 @@ def prepare(job):
     if report.get("figure") != KIND:
         raise ValueError("expected the original probing-interval report")
     prefix, mode = _context(job.source, report)
-    aggregate, metadata = paths(job.source, report, job.processed_root)
+    aggregate, metadata = paths(job.source, report, job.processed_root, anycast=anycast)
+    census, excluded = None, None
+    if anycast is not None:
+        from ipid_analysis.anycast_census import load_dataset
+
+        census, excluded = load_dataset(anycast)
     source_paths = {}
     for key in ("rt_based", "fixed_interval", "continent_map"):
         recorded = Path(report["sources"][key])
         if not recorded.is_absolute():
             raise ValueError("expected absolute original interval/map paths")
         source_paths[key] = _remap(recorded, job.processed_root, mode)
-    phase = aggregate.parents[2]
+    original, _ = paths(job.source, report, job.processed_root)
+    phase = original.parents[2]
     expected = {
         "rt_based": phase / f"rt-based-base/{prefix}-rt-b_probing-intervals.pq",
         "fixed_interval": phase / f"fixed-interval-base/{prefix}-fi-b_probing-intervals.pq",
-        "continent_map": aggregate.with_name(f"{prefix}-rt-b_fi-b_ip-continents.pq"),
+        "continent_map": original.with_name(f"{prefix}-rt-b_fi-b_ip-continents.pq"),
     }
     if source_paths != expected:
         raise ValueError("probing-interval sources do not belong to the original comparison")
     inputs = [job.source, *source_paths.values()]
+    if anycast is not None:
+        inputs.extend((Path(anycast), excluded))
     parameters = {
         "operation": "paper-probing-quantiles-v1",
         "quantile_points": QUANTILE_POINTS,
         "upper_quantile": UPPER_QUANTILE,
         "quartiles": [0.25, 0.5, 0.75],
     }
+    if census is not None:
+        parameters.update(
+            operation="paper-anycast-probing-quantiles-v1",
+            census_sha256=file_digest(Path(anycast)),
+            prefixes_sha256=file_digest(excluded),
+            calculation_sha256=_anycast_calculation_digest(),
+        )
     validate_storage()
     with exclusive_lock("paper-probing-prepare:" + str(aggregate.resolve())):
         before = [fingerprint(path) for path in inputs]
@@ -117,7 +154,7 @@ def prepare(job):
                 and cache_current(aggregate, inputs, parameters)
                 and cache_current(metadata, [aggregate], parameters)
             ):
-                load_series(aggregate, metadata, job.source)
+                load_series(aggregate, metadata, job.source, anycast=anycast)
                 return "skipped-current"
             raise FileExistsError("existing/incomplete paper quantile aggregate left untouched")
         with tempfile.TemporaryDirectory(prefix="paper-probing-", dir=scratch_root()) as directory:
@@ -129,6 +166,7 @@ def prepare(job):
                 temporary,
                 quantile_points=QUANTILE_POINTS,
                 upper_quantile=UPPER_QUANTILE,
+                **({"exclude_prefixes": excluded} if excluded is not None else {}),
             )
             meta = {
                 "figure": KIND,
@@ -139,9 +177,22 @@ def prepare(job):
                 "methodology": report.get("methodology", {})
                 | {"display_limit": "99.9th percentile separately per continent and probing mode"},
             }
+            if census is not None:
+                meta["anycast_census"] = {
+                    "manifest_sha256": file_digest(Path(anycast)),
+                    "prefixes_sha256": file_digest(excluded),
+                    "filter": census["filter"],
+                    "revision": census["revision"],
+                    "dates": census["dates"],
+                    "missing_dates": census["missing_dates"],
+                    "complete_month": census["complete_month"],
+                    "prefix_count": census["prefix_count"],
+                    "calculation_sha256": _anycast_calculation_digest(),
+                    "action": "exclude monthly union of detected IPv4 /24s",
+                }
             temporary_meta = Path(directory) / "quantiles.json"
             temporary_meta.write_text(json.dumps(meta, indent=2) + "\n")
-            load_series(temporary, temporary_meta, job.source)
+            load_series(temporary, temporary_meta, job.source, anycast=anycast)
             if [fingerprint(path) for path in inputs] != before:
                 raise ValueError("source changed during preparation; refusing publication")
             publish_new_file(temporary, aggregate, inputs=inputs, parameters=parameters)
@@ -149,7 +200,7 @@ def prepare(job):
     return "created"
 
 
-def load_series(aggregate, metadata, source):
+def load_series(aggregate, metadata, source, *, anycast=None):
     """Read only a bounded prepared aggregate; refuse p99.5 instead of extrapolating."""
     from ipid_analysis.artifacts import assert_complete
     from ipid_analysis.paper_figures import CONTINENT_NAMES, MODES, PAPER_INTERVAL_SCHEMA
@@ -165,6 +216,23 @@ def load_series(aggregate, metadata, source):
                 "expected a compact probing-interval aggregate/metadata (at most 1 MiB)"
             )
     meta = json.loads(metadata.read_text())
+    if anycast is not None:
+        from ipid_analysis.anycast_census import load_dataset
+        from ipid_analysis.artifacts import file_digest
+
+        census, excluded = load_dataset(anycast)
+        actual = meta.get("anycast_census", {})
+        if (
+            actual.get("manifest_sha256") != file_digest(Path(anycast))
+            or actual.get("prefixes_sha256") != file_digest(excluded)
+            or actual.get("dates") != census["dates"]
+            or actual.get("calculation_sha256") != _anycast_calculation_digest()
+        ):
+            raise ValueError(
+                "anycast quantiles belong to a different census; existing files left untouched"
+            )
+    elif "anycast_census" in meta:
+        raise ValueError("filtered quantiles cannot replace the original unfiltered paper plot")
     if (
         meta.get("figure") != KIND
         or meta.get("upper_quantile") != UPPER_QUANTILE
@@ -443,8 +511,14 @@ def draw(kind, rows, output):
                 bbox_inches=Bbox.from_extents(0, bottom, WIDTH, top),
                 pad_inches=0,
                 metadata={
-                    "Title": "Probing intervals by continent",
-                    "Subject": "p99.9; 256 quantiles; population Q1/median/Q3; Linux Libertine 7 pt; 3.33 inches",
+                    "Title": "Probing intervals by continent"
+                    + (" (detected anycast /24s excluded)" if kind.endswith("-anycast") else ""),
+                    "Subject": "p99.9; 256 quantiles; population Q1/median/Q3; Linux Libertine 7 pt; 3.33 inches"
+                    + (
+                        "; high-confidence monthly anycast-prefix union excluded"
+                        if kind.endswith("-anycast")
+                        else ""
+                    ),
                 },
             )
         finally:

@@ -231,6 +231,72 @@ annotations use decimal ties away from zero; the rounded `100.0` endpoint is sho
 so its text fits the approved fixed-width cells. Source values remain exact.
 The stateless OS renderer retains its existing sizing algorithm.
 
+### Anycast-excluded probing-interval sensitivity plots
+
+Create an additional `__paper__anycast.pdf` beside an existing original
+probing-interval report, preserving both original and ordinary paper PDFs.
+Only this figure family is supported. The first comparison can be restricted
+to EU ICMP, TCP SYN (no connection) and UDP:
+
+```bash
+make prepare-anycast-census \
+  ARGS="--month 2026-11 --revision 841f1285ff6f563a40f629cfe4338329388f0ac3 --allow-partial"
+
+census="$PWD/references/anycast-census/2026-11/841f1285ff6f563a40f629cfe4338329388f0ac3/dataset.json"
+make paper-anycast-plots CAMPAIGN_ID=geo-full-20261107-r1 \
+  ARGS="--census $census --sites eu --protocols icmp tcp udp --connection-mode no-connection --dry-run"
+make paper-anycast-plots CAMPAIGN_ID=geo-full-20261107-r1 \
+  ARGS="--census $census --sites eu --protocols icmp tcp udp --connection-mode no-connection --prepare --workers 3"
+```
+
+The pinned example uses **24 available daily snapshots, November 1--24, 2026**,
+not a complete November. `--allow-partial` is mandatory for incomplete months;
+the manifest lists every included/missing date and preserves `complete_month=false`.
+Omit `--revision` only when intentionally selecting the then-current census commit.
+All daily downloads within one run are pinned to one Git commit and checked
+against their Git blob hashes. Missing dates never silently become unicast data.
+
+The [LACeS recommendations](https://github.com/ut-dacs/anycast-census#data-recommendations)
+define high confidence as `max(AB) > 3 OR max(GCD) > 1`, across IPv4 protocols.
+Filter each snapshot first, then take the union over the included days. Use
+the candidate IPv4 `/24` in `prefix`, **not** the broader `backing_prefix` or
+the routed-prefix CSV. For this pinned November subset the union contains
+18,720 /24s. Both per-protocol evidence columns and the published AB/GCD
+summary schema are supported; IPv6 scores are not mixed into IPv4 detection.
+
+Prefix exclusion occurs before per-continent population counts, population
+quartiles and p99.9 quantiles. The query reads the existing processed per-IP
+probing-interval tables and stored continent map; it does not send probes,
+read raw measurement files, fetch MaxMind or repeat geolocation. Preparation
+is sequential and uses the existing bounded DuckDB/RAM-scratch runtime.
+PDF workers only read compact prepared aggregates and use the existing
+3.33-inch, Linux Libertine 7-pt renderer. This retains the original definition:
+**median probing interval per IP**, not pure propagation RTT. Each filtered
+continent/mode computes its own p99.9, as in the unfiltered paper variant.
+
+New aggregate/metadata files are stored under an `anycast/<identity>/`
+subdirectory beside the comparison aggregates. The identity binds both the
+census manifest and scientific aggregation code. Repeated rendering reuses
+them; pure renderer/design changes do not invalidate the expensive preparation.
+Metadata records the source hashes, included census dates/filter, and exact
+original/excluded/retained IP counts for each continent (including unknown
+geolocation separately). Existing PDFs are immutable. A different census or
+rendering profile cannot silently reuse an existing `__paper__anycast.pdf`;
+use `--output-root reports/anycast-comparison/<new-name>` to retain both
+comparisons with their original relative hierarchy.
+
+This is a sensitivity filter for **detected anycast prefixes**. A selected /24
+can contain unicast and anycast addresses, and absence from the census does
+not prove unicast. A monthly union also includes detections outside a particular
+scan's exact interval. Report these limits when interpreting changes; exclusion
+alone does not establish why a geolocation/interval observation was anomalous.
+
+The census cache is local/generated and excluded from Git. Its manifest retains
+source URLs/hashes and the dataset's CC BY-NC-SA 4.0 attribution. Cite the
+[LACeS IMC 2025 paper](https://doi.org/10.1145/3730567.3764484) when using the results.
+Normal `paper-plots`, figure keys, `values.tex` and `paper-figures.zip` selection
+remain unchanged; no anycast variant is automatically substituted into the paper.
+
 The probing-interval violin uses the approved **p99.9 upper limit and 256 quantile
 points**. The old p99.5 aggregate cannot recover that tail. An explicit one-off
 preparation reads the already stored RT-base/FI-base probing intervals and

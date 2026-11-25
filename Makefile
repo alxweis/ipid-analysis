@@ -94,6 +94,15 @@ paper-figures-zip:
 paper-plots:
 	$(PYTHON_INTERPRETER) -B -m ipid_analysis.paper_ready $(if $(CAMPAIGN_ID),--campaign "$(CAMPAIGN_ID)",) $(ARGS)
 
+## Pin a monthly LACeS IPv4 /24 exclusion set; incomplete months require --allow-partial
+.PHONY: prepare-anycast-census paper-anycast-plots
+prepare-anycast-census:
+	$(PYTHON_INTERPRETER) -B -m ipid_analysis.anycast_census $(ARGS)
+
+## Additional interval plots only; existing plots/values remain unchanged
+paper-anycast-plots:
+	$(PYTHON_INTERPRETER) -B -m ipid_analysis.anycast_probing $(if $(CAMPAIGN_ID),--campaign "$(CAMPAIGN_ID)",) $(ARGS)
+
 ## Download/import and cache RIPE Atlas traceroute roles for one campaign
 ##   usage: make prepare-ripe-atlas ARGS="--campaign-start 2026-09-21T02:09:12Z"
 .PHONY: prepare-ripe-atlas
