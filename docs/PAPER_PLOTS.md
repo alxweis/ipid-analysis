@@ -11,6 +11,36 @@ from PDFs, download reference datasets, or start analysis workflow tasks.
 
 Supported input/output pairs, in the same directory:
 
+Campaign discovery also reads the existing EU
+`interprotocol-campaign-summary.json` and creates
+`interprotocol-upset-combined__paper.pdf` beside the three individual counter
+UpSets in their reports figure directory. The combined addition is 7 inches wide
+for a two-column ACM figure, ordered Per-Destination, Single, Per-Bucket, with
+one common legend. Existing individual and original PDFs are retained.
+
+Its approved design uses Linux Libertine 7 pt, 4-pt bordered legend squares with
+1.2-pt label gaps, 0.45-pt frames/ticks, 0.35-pt gray dashed gridlines at 70%
+opacity, and 0.2-pt dark segment separators. Black integer percentages appear
+only for segments whose exact share is **at least 10%**, before rounding (half
+away from zero). Cohort totals, including insufficient samples, remain the
+denominators. Zero-population cohorts are empty rather than divided by zero.
+Vertical whitespace is cropped to about one pixel at 300 dpi without rescaling
+the vector content or changing the 7-inch width.
+
+No per-IP Parquet, new measurement, classification or preparation step is needed:
+
+```sh
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--sites eu --dry-run"
+make paper-plots CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--sites eu --workers 4"
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
+```
+
+The additional `fig.eu.interprotocol.combined.upset` value references this PDF
+when it exists, so the ZIP includes it automatically with its reports-relative
+path. Existing destinations are skipped, never overwritten. The three existing
+single-panel figure keys keep their previous selection/fallback behavior.
+
 | Existing report JSON | New output |
 | --- | --- |
 | `n-rt-b_fi-m_measurement-type-by-strategy.json` | `n-rt-b_fi-m_measurement-type-by-strategy__paper.pdf` |

@@ -25,6 +25,7 @@ BASE_STRATEGIES = tuple(
     s for s in STRATEGIES if s not in ("MULTI", "RANDOM", "NOT_ENOUGH_SAMPLES")
 )
 COUNTERS = ("PER_DESTINATION", "SINGLE", "PER_BUCKET")
+FIGURE_STRATEGIES = (*COUNTERS, "combined")
 GROUPS = ("icmp-tcp", "icmp-udp", "tcp-udp", "icmp-tcp-udp")
 UNCHANGED = {
     "REFLECTION": ("SAME_PARAMETER", "PARTIALLY_MATCHING_PARAMETERS", "DIFFERENT_PARAMETERS"),
@@ -559,7 +560,7 @@ def load(artifacts, processed_root, reports_root, campaign, *, archive=False, ra
         values.update(selection_values(artifacts, values, None if archive else raw_root))
     except (OSError, ValueError, KeyError, TypeError) as exc:
         errors.append(dict(source="TCP SYN-ACK selection", error=str(exc)))
-    for strategy in COUNTERS:
+    for strategy in FIGURE_STRATEGIES:
         values[f"fig.eu.interprotocol.{component(strategy)}.upset"] = record(
             None, "pdf-path", "EU interprotocol UpSet; paper PDF preferred"
         )
@@ -576,10 +577,10 @@ def load(artifacts, processed_root, reports_root, campaign, *, archive=False, ra
             if path:
                 values.update(interprotocol_values(path))
                 if reports_root is not None:
-                    for strategy in COUNTERS:
+                    for strategy in FIGURE_STRATEGIES:
                         choices = [
                             figure_destination(path, processed_root, reports_root, strategy, p)
-                            for p in (True, False)
+                            for p in ((True,) if strategy == "combined" else (True, False))
                         ]
                         selected = next((p for p in choices if p.is_file()), None)
                         if selected:
