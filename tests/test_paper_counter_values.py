@@ -110,6 +110,46 @@ class GreedyScoreTest(unittest.TestCase):
 
 
 class PaperExtensionTest(unittest.TestCase):
+    def test_eu_os_export_uses_only_eu_even_when_other_vps_disagree(self):
+        recipes = [
+            m
+            for m in load_metrics()["metrics"]
+            if m["key"].startswith("results.eu.")
+            and any(s["reader"] == "adjusted-os" for s in m["sources"])
+        ]
+        self.assertEqual(len(recipes), 38)
+        for metric in recipes:
+            self.assertTrue(all(s.get("site") == "eu" for s in metric["sources"]))
+        for eu_available in (True, False):
+            with (
+                self.subTest(eu_available=eu_available),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                fixture = Fixture(Path(directory))
+
+                def read(spec, site):
+                    if site == "eu" and not eu_available:
+                        return None, ()
+                    return (12.5 if site == "eu" else 90.0), (f"{site}-adjusted-cache",)
+
+                with patch.object(AdjustedOSReader, "read", side_effect=read) as reads:
+                    result = fixture.run(strict=True)
+                self.assertEqual(result["input_errors"], [])
+                for metric in recipes:
+                    entry = result["values"][metric["key"]]
+                    self.assertEqual(entry["raw"], 12.5 if eu_available else None)
+                    self.assertEqual(
+                        entry["sources"], ["eu-adjusted-cache"] if eu_available else []
+                    )
+                # The five existing {vp} recipes still read all six sites.
+                self.assertEqual(len(reads.call_args_list), 38 + 5 * 6)
+                self.assertEqual(
+                    result["values"]["results.na.icmp.rt-fi.os.mikrotik_routeros.per-bucket.pct"][
+                        "raw"
+                    ],
+                    90.0,
+                )
+
     def test_success_all_percentage_retains_phase_two_failures_once_and_zmap_denominator(self):
         reports = [
             SimpleNamespace(

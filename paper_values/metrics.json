@@ -5546,7 +5546,8 @@
           "connection": "no-connection",
           "phase": "rt-fi-merged",
           "reader": "adjusted-os",
-          "kind": "operating-system-group-by-strategy"
+          "kind": "operating-system-group-by-strategy",
+          "site": "eu"
         }
       ],
       "values": {
@@ -5687,7 +5688,8 @@
           "connection": "no-connection",
           "phase": "rt-fi-merged",
           "reader": "adjusted-os",
-          "kind": "operating-system-group-by-strategy"
+          "kind": "operating-system-group-by-strategy",
+          "site": "eu"
         }
       ],
       "values": {
@@ -5765,7 +5767,8 @@
           "connection": "no-connection",
           "phase": "rt-fi-merged",
           "reader": "adjusted-os",
-          "kind": "operating-system-group-by-strategy"
+          "kind": "operating-system-group-by-strategy",
+          "site": "eu"
         }
       ],
       "values": {
@@ -5904,7 +5907,8 @@
           "connection": "connection",
           "phase": "rt-base",
           "reader": "adjusted-os",
-          "kind": "operating-system-group-by-strategy"
+          "kind": "operating-system-group-by-strategy",
+          "site": "eu"
         }
       ],
       "values": {

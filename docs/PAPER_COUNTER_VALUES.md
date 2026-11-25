@@ -126,3 +126,20 @@ I/O: unsorted Parquet rowgroups may still require most projected column data
 from the S3 mount. No unmeasured runtime/speedup is promised. Candidate/cohort
 stages and scored-batch progress are logged separately so the VM run can be
 measured before making any larger changes.
+
+If preparation completed but PR179's export stopped with `conflicting paper
+value: results.eu.icmp.rt-fi.os.zte.per-destination.pct`, retain the prepared
+outlier JSON. The EU-only OS recipes now explicitly select the EU site rather
+than combining all six VPs under one EU key. After updating to the scope fix,
+rerun only the exports:
+
+```bash
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
+```
+
+The fix changes
+neither the outlier calculation identity nor its inputs, so no new outlier
+preparation, OS regrouping or plot rendering is needed. The failed export
+retained the previous `values.tex`/`values.json`; the shell's `set -e` prevented
+the subsequent ZIP command from running.
