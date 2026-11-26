@@ -48,6 +48,14 @@ def pipeline_order(metric):
             ):
                 phase = metric[phase_index]
                 ranks[phase_index] = PHASES.index(phase) if phase in PHASES else len(PHASES)
+    if "anycast" in metric:
+        for i, part in enumerate(metric):
+            if (
+                i
+                and metric[i - 1] in ("addresses", "prefixes", "unlocated")
+                and part in ("original", "excluded", "retained")
+            ):
+                ranks[i] = ("original", "excluded", "retained").index(part)
     return tuple(zip(ranks, metric))
 
 
@@ -75,6 +83,10 @@ def key_order(key):
 def blank_line_group(key):
     parts = key.split(".")
     metric = (parts[0], *parts[2:]) if len(parts) > 1 and parts[1] in SITES else tuple(parts)
+    if "anycast" in metric:
+        if "continent" in metric:
+            return metric[: metric.index("continent") + 2]
+        return metric[: metric.index("anycast") + 1]
     if metric[:2] == ("results", "interprotocol") and len(metric) > 3:
         return metric[:3]  # one strategy's groups, outcomes and detail rows
     if metric[:2] == ("fig", "interprotocol"):
