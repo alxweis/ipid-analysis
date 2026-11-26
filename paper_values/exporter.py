@@ -373,6 +373,15 @@ def export(
         raise ValueError("follow-up keys conflict with original campaign keys")
     values.update(followup_values)
     errors.extend(followup_errors)
+    from paper_values.anycast_figures import load as load_anycast_figures
+
+    anycast_values, anycast_errors = load_anycast_figures(
+        values, campaign=campaign, archive=archive is not None
+    )
+    if values.keys() & anycast_values.keys():
+        raise ValueError("Anycast figure keys conflict with existing values")
+    values.update(anycast_values)
+    errors.extend(anycast_errors)
     revision_values, revision_errors = review.load(
         valid,
         processed_root,

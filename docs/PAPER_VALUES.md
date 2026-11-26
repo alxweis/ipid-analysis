@@ -957,3 +957,40 @@ Per-Bucket side by side in a single ACM column and one common legend. Its separa
 `fig.eu.interprotocol.combined.upset`; it is exported when that PDF exists and
 is included in the ZIP without replacing the three existing figure keys.
 It reads the same small summary and preserves every cohort/outcome denominator.
+
+### Optional EU Anycast sensitivity figures
+
+When the four separately generated Anycast-excluded interval figures exist,
+`make paper-values` additionally exports these independent keys:
+
+```text
+fig.eu.icmp.rt-vs-fi-base.intervals-by-continent.anycast
+fig.eu.tcp.no-conn.rt-vs-fi-base.intervals-by-continent.anycast
+fig.eu.udp.rt-vs-fi-base.intervals-by-continent.anycast
+fig.eu.tcp.conn.rt-vs-fi-base.intervals-by-continent.anycast.full
+```
+
+Existing unfiltered figure keys and scalar values remain unchanged. Missing
+optional PDFs do not fall back to unfiltered figures. Selection follows the
+existing canonical EU comparison run and, for TCP with a connection, the
+registered Full comparison on jointly successful Full-RT/historical-FI IPs.
+The historical connection sample is never used for the new Full key.
+
+Export reads only the existing PDFs, small original comparison reports and
+publication receipts. It verifies the PDF bytes/signature, Anycast operation,
+Census/profile identities and binding to the unchanged source report. It does
+not compare the producing style hash with the current code, so the already
+published sensitivity plots remain usable after unrelated PRs. It never reads
+per-IP tables, downloads Census snapshots, recomputes quantiles or renders PDFs.
+Optional malformed/stale publications reject strict export before output writes.
+Archive-only exports do not implicitly mix in live Anycast files.
+
+`make paper-figures-zip` automatically includes the four new paths from
+`values.tex`, alongside the unfiltered variants, preserving their existing
+`reports/continental/...` and `reports/followups/...` paths. Nothing is written
+to the Paper repository. After deployment, run only:
+
+```sh
+make paper-values CAMPAIGN_ID=geo-full-20261107-r1 ARGS="--strict --timings"
+make paper-figures-zip
+```
