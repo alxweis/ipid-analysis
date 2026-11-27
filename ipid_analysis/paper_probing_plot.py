@@ -1,5 +1,6 @@
 """Approved p99.9 split violins; explicit preparation, compact read-only rendering."""
 
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 import hashlib
 import inspect
@@ -352,6 +353,22 @@ def _place_legend(fig, ax, legend):
     return best[2]
 
 
+def _anycast_count(value):
+    """Format integer populations without stripping significant integer zeros."""
+    if value < 1_000:
+        return str(value)
+    if value >= 1_000_000:
+        scale, suffix, precision = 1_000_000, "M", "0.1"
+    else:
+        scale, suffix = 1_000, "k"
+        precision = "0.1" if value < 100_000 else "1"
+    rounded = (Decimal(value) / scale).quantize(Decimal(precision), rounding=ROUND_HALF_UP)
+    text = format(rounded, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text + suffix
+
+
 def draw(kind, rows, output):
     from matplotlib.legend_handler import HandlerPatch
     from matplotlib.patches import Patch, Rectangle
@@ -381,6 +398,8 @@ def draw(kind, rows, output):
                 )
             ]
 
+    anycast = kind.endswith("-anycast")
+    format_count = _anycast_count if anycast else _abbreviate_count
     font, _ = _font()
     colors = dict(zip(MODES, (COLORS["CONSTANT"], COLORS["SINGLE"])))
     codes = [code for code in CONTINENT_ORDER if any(r["CONTINENT_CODE"] == code for r in rows)]
@@ -433,7 +452,8 @@ def draw(kind, rows, output):
                         for y in yy
                     ]
                 )
-                for key in ("Q1_MS", "MEDIAN_MS", "Q3_MS"):
+                quartiles = ("Q1_MS", "MEDIAN_MS", "Q3_MS") if side or not anycast else ()
+                for key in quartiles:
                     value = row[key]
                     edge = np.interp(value, yy, xx)
                     start, end = sorted((center, edge))
@@ -452,7 +472,7 @@ def draw(kind, rows, output):
             labels = [
                 names.get(code, CONTINENT_NAMES[code])
                 + "\n("
-                + _abbreviate_count(
+                + format_count(
                     next(r["IP_COUNT_UNION"] for r in rows if r["CONTINENT_CODE"] == code)
                 )
                 + ")"
@@ -532,7 +552,9 @@ def draw(kind, rows, output):
                 metadata={
                     "Title": "Probing intervals by continent"
                     + (" (detected anycast /24s excluded)" if kind.endswith("-anycast") else ""),
-                    "Subject": "p99.9; 256 quantiles; population Q1/median/Q3; Linux Libertine 7 pt; 3.33 inches"
+                    "Subject": "p99.9; 256 quantiles; "
+                    + ("RT-based " if anycast else "")
+                    + "population Q1/median/Q3; Linux Libertine 7 pt; 3.33 inches"
                     + (
                         "; high-confidence monthly anycast-prefix union excluded"
                         if kind.endswith("-anycast")

@@ -44,6 +44,15 @@ filtering, retaining the approved p99.9/256-quantile design, separately per
 continent/probing mode. Rendering uses a small process pool only after the
 sequential numerical preparation.
 
+All four Anycast PDFs show Q1/median/Q3 marks only on the RT-based half;
+the Fixed-Interval half retains its violin without these marks. Stored
+quartiles and numerical populations remain unchanged. Continent IP counts
+use whole integers below 1,000, one-decimal `k` below 100,000, whole-number
+`k` below 1,000,000, and one-decimal `M` thereafter. Rounding is half up;
+decimal trailing zeros are omitted (7,857 becomes `7.9k`, 53,000 becomes
+`53k`, 100,000 becomes `100k`, and 1,200,000 becomes `1.2M`). Unit selection
+uses the unrounded count. Unfiltered plots keep their existing design.
+
 `--include-tcp-full` selects exactly the three EU stateless comparisons plus the
 registered TCP Connection **Full** comparison. Its population remains jointly
 successful new Full RT-based and historical Fixed-Interval IPs. It never uses
