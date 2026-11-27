@@ -39,13 +39,32 @@ blob. No external measurement is run.
 
 Preparation sequentially reads each comparison's existing processed per-IP
 intervals and stored continent map, never raw IP-ID sequences or a new
-geolocation database. Quantiles and population quartiles are recomputed after
-filtering, retaining the approved p99.9/256-quantile design, separately per
-continent/probing mode. Rendering uses a small process pool only after the
-sequential numerical preparation.
+geolocation database. Existing p99.9/256 summaries and population quartiles
+are reused when available; otherwise they are prepared once, separately per
+continent/probing mode. A separate content-addressed Parquet aggregate counts
+actual per-IP median intervals in **10-ms classes**, not quantile samples.
+Rendering uses a small process pool only after sequential numerical preparation.
+
+The four Anycast PDFs use stepped half-histograms without KDE, bandwidth
+selection or curve interpolation. Classes are `[0,10)`, `[10,20)`, etc., in ms;
+an observation of exactly 20 ms belongs to `[20,30)`. Each IP contributes once,
+through its median stored interval. Null, nonfinite and negative medians are
+excluded, just as in the existing summaries. Each bin's percentage divides by
+**all valid IPs in that continent/mode**, including the tail above the display
+limit. The whole bin containing p99.9 is drawn, even if it extends slightly
+beyond that percentile; a constant 20-ms population therefore occupies one
+10-ms class rather than a degenerate line. Empty classes have zero width.
+
+Each half is independently normalized to the same maximum width (0.41
+category units). Equal visible widths across groups do **not** imply equal
+percentages or equal populations. Exact bin bounds, IP counts and percentages
+are saved in `BINS` in the new aggregate, alongside full-population summaries,
+displayed/tail counts and methodology/provenance in the JSON sidecar. Rendering
+and Paper Values export never rescan per-IP data. The initial histogram
+preparation reuses previous quantile caches and leaves them untouched.
 
 All four Anycast PDFs show Q1/median/Q3 marks only on the RT-based half;
-the Fixed-Interval half retains its violin without these marks. Stored
+the Fixed-Interval half has no quartile marks. Stored
 quartiles and numerical populations remain unchanged. Continent IP counts
 use whole integers below 1,000, one-decimal `k` below 100,000, whole-number
 `k` below 1,000,000, and one-decimal `M` thereafter. Rounding is half up;
@@ -74,7 +93,9 @@ metadata, source fingerprints and unchanged destinations before publishing
 the first replacement with the existing native storage transport. Source
 reports, original/unfiltered PDFs, old aggregates and campaign inventories are
 preserved. A failed stage never replaces canonical PDFs. Completed reruns reuse
-prepared quantiles and skip matching PDF/metadata pairs.
+prepared histograms and skip matching PDF/metadata pairs. Old quantile-only
+Anycast PDFs need an explicit `--refresh --prepare`; a regular render cannot
+silently fall back to KDE or start a bulk aggregation.
 
 Do not run export or another refresh concurrently. Publication of the four PDFs
 is sequential, not a multi-object S3 transaction; the backup and per-file writing

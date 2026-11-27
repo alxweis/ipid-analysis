@@ -286,9 +286,11 @@ class AnycastPlotTest(unittest.TestCase):
             self.assertEqual(filtered.run([self.job], workers=1)[0].status, "skipped-existing")
 
     def test_different_census_keeps_separate_quantiles_and_cannot_replace_pdf(self):
-        probing.prepare(self.job, anycast=self.census)
+        from ipid_analysis.anycast_histogram import prepare
+
+        prepare(self.job, anycast=self.census)
         other = dataset(self.root, ("192.1.0.0/24",))
-        self.assertEqual(probing.prepare(self.job, anycast=other), "created")
+        self.assertEqual(prepare(self.job, anycast=other), "created")
         report = json.loads(self.job.source.read_text())
         first = probing.paths(self.job.source, report, anycast=self.census)[0]
         second = probing.paths(self.job.source, report, anycast=other)[0]

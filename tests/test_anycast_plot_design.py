@@ -50,6 +50,12 @@ class AnycastPlotDesignTest(unittest.TestCase):
                 Q1_MS=64.0,
                 MEDIAN_MS=128.0,
                 Q3_MS=192.0,
+                CUTOFF_MS=256.0,
+                BINS=[
+                    dict(LOWER_MS=60, UPPER_MS=70, IP_COUNT=1, PERCENT=25.0),
+                    dict(LOWER_MS=120, UPPER_MS=130, IP_COUNT=2, PERCENT=50.0),
+                    dict(LOWER_MS=190, UPPER_MS=200, IP_COUNT=1, PERCENT=25.0),
+                ],
             )
             for code, count in zip(CONTINENT_ORDER, counts)
             for mode in MODES
