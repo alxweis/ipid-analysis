@@ -129,8 +129,9 @@ class AnycastMetadataExportTest(unittest.TestCase):
             self.assertEqual(raw("continent.na.addresses.excluded.pct"), 100)
             self.assertEqual(raw("continent.eu.prefixes.original.count"), 2)
             self.assertEqual(raw("unlocated.original.count"), 1)
-        self.assertEqual(values["params.anycast.census.start-date"]["raw"], "2026-11-07")
-        self.assertEqual(values["params.anycast.census.snapshots.count"]["raw"], 16)
+        self.assertFalse(any(key.startswith("params.anycast.census.") for key in values))
+        tex = (self.helper.f.root / "tmp/values.tex").read_text()
+        self.assertNotIn("params.anycast.census.", tex)
         self.assertEqual(values["results.anycast.census.prefixes.count"]["raw"], 100)
         with zipfile.ZipFile(self.helper.f.root / "tmp/paper-figures.zip") as archive:
             self.assertEqual(sum(name.endswith("__anycast.pdf") for name in archive.namelist()), 4)

@@ -183,24 +183,12 @@ def read(pdf, report, base_key):
 
 
 def global_values(shared, sources):
-    values = {}
-    for suffix, raw, unit in (
-        ("start-date", shared["period_start"], "date"),
-        ("end-date", shared["period_end"], "date"),
-        ("snapshots.count", shared["snapshots"], "count"),
-        ("expected-snapshots.count", shared["expected_snapshots"], "count"),
-        ("complete-period", True, "boolean"),
-        ("confidence", "high-confidence", "string"),
-        ("revision", shared["revision"], "string"),
-        ("rule", "AB > 3 OR GCD > 1", "string"),
-    ):
-        values["params.anycast.census." + suffix] = record(
-            raw, unit, "Census metadata shared by the selected Anycast comparisons", sources
+    # Period, confidence, thresholds and provenance stay in the JSON sidecars.
+    return {
+        "results.anycast.census.prefixes.count": record(
+            shared["prefix_count"],
+            "count",
+            "distinct high-confidence /24s in the selected-period global Census union; not measured affected prefixes",
+            sources,
         )
-    values["results.anycast.census.prefixes.count"] = record(
-        shared["prefix_count"],
-        "count",
-        "distinct high-confidence /24s in the selected-period global Census union; not measured affected prefixes",
-        sources,
-    )
-    return values
+    }

@@ -120,23 +120,21 @@ groups exclude it. Counts describe the union map before p99.9 clipping, not
 KDE samples, packets, all ZMap targets or all campaign measurements. Quartile
 valid-sample counts remain separately stored in the numerical aggregate.
 
-Shared metadata keys:
+The shared worldwide Census prefix count is exported as:
 
 ```text
-params.anycast.census.start-date
-params.anycast.census.end-date
-params.anycast.census.snapshots.count
-params.anycast.census.expected-snapshots.count
-params.anycast.census.complete-period
-params.anycast.census.confidence
-params.anycast.census.rule
-params.anycast.census.revision
 results.anycast.census.prefixes.count
 ```
 
-The last value is 18,512 for this frozen selection, **not** the number of affected
+This value is 18,512 for this frozen selection, **not** the number of affected
 measured prefixes. Percentages use unrounded counts. Zero original populations
 do not acquire fabricated percentages. Related rows stay together in values.tex.
+
+Dates, used/expected snapshot counts, period completeness, confidence, rule and
+Census revision remain in the full JSON metadata only. No
+`params.anycast.census.*` keys are written to values.tex or the public scalar
+table in values.json. These metadata still participate in validation and
+mixed-period checks.
 
 Export reads only bounded PDFs, reports, receipts and sidecars; it does not open
 per-IP files or rerun preparation. Legacy v1 PDFs keep their existing figure
