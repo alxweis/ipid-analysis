@@ -960,6 +960,10 @@ It reads the same small summary and preserves every cohort/outcome denominator.
 
 ### Optional EU Anycast sensitivity figures
 
+For the explicit 7–22 November High-Confidence refresh, same-name PDF/JSON
+publication and new per-continent IP/prefix impact values, see
+[ANYCAST_ANALYSIS.md](ANYCAST_ANALYSIS.md). Existing figure keys are retained.
+
 When the four separately generated Anycast-excluded interval figures exist,
 `make paper-values` additionally exports these independent keys:
 

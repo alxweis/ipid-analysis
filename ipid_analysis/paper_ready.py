@@ -506,10 +506,11 @@ def worker(job: Job) -> Result:
         )
 
 
-def run(jobs, *, workers=4, dry_run=False):
+def run(jobs, *, workers=4, dry_run=False, worker_fn=None):
     """Existing outputs are immutable, including stale/legacy paper variants."""
     if workers < 1:
         raise ValueError("workers must be positive")
+    worker_fn = worker_fn or worker
     jobs = sorted(set(jobs), key=lambda job: str(job.source))
     results, pending = [], []
     for job in jobs:
@@ -539,7 +540,7 @@ def run(jobs, *, workers=4, dry_run=False):
             bytecode = sys.dont_write_bytecode
             try:
                 _initialize_worker(directory)
-                results.extend(worker(job) for job in pending)
+                results.extend(worker_fn(job) for job in pending)
             finally:
                 os.environ.clear()
                 os.environ.update(previous)
@@ -551,7 +552,7 @@ def run(jobs, *, workers=4, dry_run=False):
                 initializer=_initialize_worker,
                 initargs=(directory,),
             ) as pool:
-                results.extend(pool.map(worker, pending))
+                results.extend(pool.map(worker_fn, pending))
     return sorted(results, key=lambda result: result.destination)
 
 

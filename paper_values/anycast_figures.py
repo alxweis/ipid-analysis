@@ -74,7 +74,7 @@ def _validate(pdf, report, source_member):
 
 def load(values, *, campaign=None, archive=False):
     """Follow the already validated canonical/Full figure selection, add separate keys."""
-    result, errors = {}, []
+    result, errors, censuses, metadata_contexts = {}, [], set(), []
     if archive:
         return result, errors  # Never mix an archived campaign with live optional PDFs.
     for base_key in KEYS:
@@ -104,6 +104,8 @@ def load(values, *, campaign=None, archive=False):
             report = original.with_name(report_name)
             source_member = str(member.with_name(report_name))
             sources = _validate(pdf, report, source_member)
+            receipt = json.loads(marker.read_text())
+            censuses.add(receipt["parameters"]["census_sha256"])
             if full:
                 from paper_values.followups import COMPARISON, read_json, registration
                 from paper_values.full_review import published
@@ -128,6 +130,32 @@ def load(values, *, campaign=None, archive=False):
                 + ("; paired Full RT and historical Fixed-Interval successes" if full else ""),
                 sources=sources,
             )
+            from paper_values.anycast_metadata import read as read_impact
+
+            numbers, context = read_impact(pdf, report, base_key)
+            result.update(numbers)
+            if context is not None:
+                metadata_contexts.append(context)
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             errors.append({"source": key, "error": str(exc)})
+    if (
+        len(censuses) > 1
+        or metadata_contexts
+        and any(context[0] != metadata_contexts[0][0] for context in metadata_contexts)
+    ):
+        return {}, [
+            *errors,
+            {
+                "source": "EU Anycast comparisons",
+                "error": "different Census periods across plots; finish the four-plot --refresh before exporting",
+            },
+        ]
+    if metadata_contexts:
+        from paper_values.anycast_metadata import global_values
+
+        result.update(
+            global_values(
+                metadata_contexts[0][0], [p for _, sources in metadata_contexts for p in sources]
+            )
+        )
     return result, errors
