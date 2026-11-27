@@ -20,6 +20,7 @@ def _state(path):
 
 
 def refresh(jobs, *, prepare=False, workers=4, backup_root=None):
+    from ipid_analysis.anycast_histogram import prepare as prepare_histogram
     from ipid_analysis.anycast_probing import Job, _context, existing, worker
     from ipid_analysis.artifacts import (
         assert_complete,
@@ -27,7 +28,6 @@ def refresh(jobs, *, prepare=False, workers=4, backup_root=None):
         fingerprints,
         publish_file,
     )
-    from ipid_analysis.paper_probing_plot import prepare as prepare_quantiles
     from ipid_analysis.paper_ready import Result
     from ipid_analysis.paper_ready import run as render
     from ipid_analysis.runtime import exclusive_lock, validate_storage
@@ -100,8 +100,11 @@ def refresh(jobs, *, prepare=False, workers=4, backup_root=None):
         (batch / "before.json").write_text(json.dumps(states, indent=2))
         for job in pending:
             if prepare:
-                print(f"Preparing selected-period Anycast quantiles: {job.source}", flush=True)
-                print(prepare_quantiles(job, anycast=job.census), flush=True)
+                print(
+                    f"Preparing selected-period Anycast 10-ms frequencies: {job.source}",
+                    flush=True,
+                )
+                print(prepare_histogram(job, anycast=job.census), flush=True)
         staged = [
             Job(
                 j.source,

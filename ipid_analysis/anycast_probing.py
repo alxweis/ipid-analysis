@@ -1,4 +1,4 @@
-"""Additional probing-interval violins with detected anycast /24s excluded."""
+"""10-ms probing-interval histograms with detected anycast /24s excluded."""
 
 import argparse
 from dataclasses import dataclass
@@ -174,8 +174,8 @@ def full_job(campaign, site, reports_root, census, processed_root=None):
 
 def _context(job):
     from ipid_analysis.anycast_census import load_dataset
+    from ipid_analysis.anycast_histogram import paths
     from ipid_analysis.artifacts import file_digest
-    from ipid_analysis.paper_probing_plot import paths
 
     census, prefixes = load_dataset(job.census)
     report = json.loads(job.source.read_text())
@@ -187,6 +187,7 @@ def _context(job):
             Path(__file__).read_bytes()
             + Path(__file__).with_name("paper_probing_plot.py").read_bytes()
             + Path(__file__).with_name("paper_plot_style.py").read_bytes()
+            + Path(__file__).with_name("anycast_histogram.py").read_bytes()
         ).hexdigest(),
     )
     if census["schema_version"] == 2:
@@ -201,8 +202,8 @@ def _context(job):
 
 
 def existing(job):
+    from ipid_analysis.anycast_histogram import load_series
     from ipid_analysis.artifacts import cache_current, completion_path
-    from ipid_analysis.paper_probing_plot import load_series
 
     if not os.path.lexists(job.destination):
         if os.path.lexists(completion_path(job.destination)):
@@ -214,7 +215,9 @@ def existing(job):
         raise FileExistsError(
             "existing anycast PDF belongs to another census/profile; use --output-root to keep both comparisons"
         )
-    load_series(aggregate, metadata, job.source, anycast=job.census)
+    load_series(
+        aggregate, metadata, job.source, anycast=job.census, processed_root=job.processed_root
+    )
     if not cache_current(job.destination, inputs, parameters):
         raise FileExistsError(
             "existing anycast PDF is bound to other inputs/profile; choose a separate output location, never overwrite"
@@ -234,8 +237,9 @@ def existing(job):
 
 
 def worker(job):
+    from ipid_analysis.anycast_histogram import load_series
     from ipid_analysis.artifacts import fingerprint, publish_new_file
-    from ipid_analysis.paper_probing_plot import draw, load_series
+    from ipid_analysis.paper_probing_plot import draw
     from ipid_analysis.paper_ready import Result
     from ipid_analysis.runtime import temporary_path
 
@@ -245,8 +249,12 @@ def worker(job):
         if existing(job):
             return Result(str(job.destination), "skipped-current")
         _, aggregate, metadata, inputs, parameters = _context(job)
+        if not aggregate.is_file() or not metadata.is_file():
+            raise ValueError("10-ms Anycast histogram missing; run with --prepare --refresh")
         before = [fingerprint(path) for path in inputs]
-        rows = load_series(aggregate, metadata, job.source, anycast=job.census)
+        rows = load_series(
+            aggregate, metadata, job.source, anycast=job.census, processed_root=job.processed_root
+        )
         if not rows:
             raise ValueError("no located finite interval populations remain after exclusion")
         temporary = temporary_path(job.destination)
@@ -272,7 +280,7 @@ def worker(job):
 
 
 def run(jobs, *, prepare=False, workers=4, dry_run=False, refresh=False):
-    from ipid_analysis.paper_probing_plot import prepare as prepare_quantiles
+    from ipid_analysis.anycast_histogram import prepare as prepare_histogram
     from ipid_analysis.paper_ready import run as render
 
     if refresh and dry_run:
@@ -293,8 +301,8 @@ def run(jobs, *, prepare=False, workers=4, dry_run=False, refresh=False):
     if not dry_run:
         for job in sorted(set(jobs), key=lambda item: str(item.source)):
             if not existing(job) and prepare:
-                print(f"Preparing anycast-filtered p99.9 quantiles: {job.source}", flush=True)
-                print(prepare_quantiles(job, anycast=job.census), flush=True)
+                print(f"Preparing anycast-filtered 10-ms frequencies: {job.source}", flush=True)
+                print(prepare_histogram(job, anycast=job.census), flush=True)
     return render(jobs, workers=workers, dry_run=dry_run, worker_fn=worker)
 
 

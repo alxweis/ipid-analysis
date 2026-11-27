@@ -422,20 +422,29 @@ def draw(kind, rows, output):
             for row in rows:
                 center = codes.index(row["CONTINENT_CODE"])
                 side = row["MODE"] == MODES[0]
-                body = ax.violinplot(
-                    [row["QUANTILES_MS"]],
-                    positions=[center],
-                    widths=0.82,
-                    showmeans=False,
-                    showmedians=False,
-                    showextrema=False,
-                )["bodies"][0]
-                vertices = body.get_paths()[0].vertices
-                vertices[:, 0] = (
-                    np.minimum(vertices[:, 0], center)
-                    if side
-                    else np.maximum(vertices[:, 0], center)
-                )
+                if anycast:
+                    from ipid_analysis.anycast_histogram import body as histogram_body
+
+                    if not row.get("BINS"):
+                        raise ValueError(
+                            "10-ms Anycast histogram missing; run with --prepare --refresh"
+                        )
+                    body = histogram_body(ax, row, center, side)
+                else:
+                    body = ax.violinplot(
+                        [row["QUANTILES_MS"]],
+                        positions=[center],
+                        widths=0.82,
+                        showmeans=False,
+                        showmedians=False,
+                        showextrema=False,
+                    )["bodies"][0]
+                    vertices = body.get_paths()[0].vertices
+                    vertices[:, 0] = (
+                        np.minimum(vertices[:, 0], center)
+                        if side
+                        else np.maximum(vertices[:, 0], center)
+                    )
                 body.set(
                     facecolor=colors[row["MODE"]],
                     edgecolor=colors[row["MODE"]],
@@ -443,19 +452,25 @@ def draw(kind, rows, output):
                     alpha=0.92,
                     zorder=2,
                 )
-                yy = np.unique(vertices[:, 1])
-                xx = np.asarray(
-                    [
-                        vertices[vertices[:, 1] == y, 0].min()
-                        if side
-                        else vertices[vertices[:, 1] == y, 0].max()
-                        for y in yy
-                    ]
-                )
+                if not anycast:
+                    yy = np.unique(vertices[:, 1])
+                    xx = np.asarray(
+                        [
+                            vertices[vertices[:, 1] == y, 0].min()
+                            if side
+                            else vertices[vertices[:, 1] == y, 0].max()
+                            for y in yy
+                        ]
+                    )
                 quartiles = ("Q1_MS", "MEDIAN_MS", "Q3_MS") if side or not anycast else ()
                 for key in quartiles:
                     value = row[key]
-                    edge = np.interp(value, yy, xx)
+                    if anycast:
+                        from ipid_analysis.anycast_histogram import quartile_edge
+
+                        edge = quartile_edge(row, center, value)
+                    else:
+                        edge = np.interp(value, yy, xx)
                     start, end = sorted((center, edge))
                     inset = 0.04 * (end - start)
                     ax.plot(
@@ -468,6 +483,8 @@ def draw(kind, rows, output):
                         dash_capstyle="butt",
                         zorder=3,
                     )
+            if anycast:
+                ax.autoscale_view()
             names = {"NA": "N. America", "SA": "S. America"}
             labels = [
                 names.get(code, CONTINENT_NAMES[code])
@@ -552,11 +569,15 @@ def draw(kind, rows, output):
                 metadata={
                     "Title": "Probing intervals by continent"
                     + (" (detected anycast /24s excluded)" if kind.endswith("-anycast") else ""),
-                    "Subject": "p99.9; 256 quantiles; "
+                    "Subject": (
+                        "10-ms histogram; no smoothing; complete bin containing p99.9; "
+                        if anycast
+                        else "p99.9; 256 quantiles; "
+                    )
                     + ("RT-based " if anycast else "")
                     + "population Q1/median/Q3; Linux Libertine 7 pt; 3.33 inches"
                     + (
-                        "; high-confidence monthly anycast-prefix union excluded"
+                        "; high-confidence selected-period anycast-prefix union excluded"
                         if kind.endswith("-anycast")
                         else ""
                     ),
